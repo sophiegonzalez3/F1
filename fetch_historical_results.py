@@ -57,6 +57,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from config import HISTORICAL_DIR, FASTF1_CACHE_DIR
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,8 +73,8 @@ log = logging.getLogger("fetch_historical")
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 FIXED_SEASONS = [2021, 2022, 2024, 2025]
-FASTF1_CACHE  = Path("cache/fastf1")          # reuse the project's FF1 cache
-DEFAULT_OUT   = Path("data/historical_results")
+FASTF1_CACHE  = Path(FASTF1_CACHE_DIR)        # reuse the project's FF1 cache
+DEFAULT_OUT   = Path(HISTORICAL_DIR)
 
 # Seconds to wait between API calls to stay polite
 INTER_SESSION_SLEEP = 1.0

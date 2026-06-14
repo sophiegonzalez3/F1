@@ -43,10 +43,13 @@ BRAKE_THRESHOLD    = 10
 THROTTLE_THRESHOLD = 95
 
 # ─────────────────────────────────────────────
-# CACHE SETTINGS
+# DATA & CACHE PATHS
 # ─────────────────────────────────────────────
-CACHE_DIR        = "cache"           # our Parquet cache
-FASTF1_CACHE_DIR = "cache/fastf1"    # FastF1's own raw-data cache
+# Persistent, app-readable Parquet datasets live under data/.
+# Only FastF1's opaque raw-API cache lives under cache/.
+SESSIONS_DIR     = "data/sessions"             # per-session Parquet (data_loader.py)
+HISTORICAL_DIR   = "data/historical_results"   # historical race/quali results
+FASTF1_CACHE_DIR = "cache/fastf1"              # FastF1's own raw-data cache
 
 # ─────────────────────────────────────────────
 # DASHBOARD LAYOUT

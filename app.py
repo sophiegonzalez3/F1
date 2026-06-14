@@ -23,6 +23,7 @@ from config import (
     DARK_BG, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     SPEED_PERCENTILE, get_min_laps_for_compound,
     MIN_LAPS_SOFT, MIN_LAPS_MEDIUM, MIN_LAPS_HARD,
+    HISTORICAL_DIR,
 )
 from data_loader import load_sessions, cache_summary
 from processing import (
@@ -83,7 +84,7 @@ except FileNotFoundError:
     print("WARNING: data/circuit_characteristics.csv not found — Track Info tab will be limited")
 
 # ── Historical results (race + quali) ────────────────────────
-_HIST_BASE = Path("data/historical_results")
+_HIST_BASE = Path(HISTORICAL_DIR)
 def _load_hist(filename):
     p = _HIST_BASE / filename
     if p.exists():

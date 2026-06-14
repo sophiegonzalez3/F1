@@ -10,7 +10,7 @@ Two-layer caching
 Layer 1 – FastF1's own disk cache (set via FASTF1_CACHE_DIR in config.py).
            FastF1 caches the raw API responses as pickle files so repeated
            loads of the same session are near-instant.
-Layer 2 – Our own Parquet cache (CACHE_DIR in config.py).
+Layer 2 – Our own Parquet store (SESSIONS_DIR in config.py).
            Stores the *already-mapped* DataFrames so app startup only
            reads Parquet — no FastF1 overhead at all on a cache hit.
 
@@ -65,7 +65,7 @@ except ImportError:
     logging.warning("fastf1 not installed — only cached data will be available.  "
                     "Run: pip install fastf1")
 
-from config import CACHE_DIR, FASTF1_CACHE_DIR
+from config import SESSIONS_DIR, FASTF1_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ def _session_name(season: str, meeting: str, session: str) -> str:
 
 
 def _cache_paths(key: str) -> dict[str, Path]:
-    base = Path(CACHE_DIR)
+    base = Path(SESSIONS_DIR)
     return {
         "laps":         base / f"{key}__laps.parquet",
         "telemetry":    base / f"{key}__telemetry.parquet",
@@ -121,7 +121,7 @@ def _cache_paths(key: str) -> dict[str, Path]:
 
 
 def _ensure_dirs() -> None:
-    Path(CACHE_DIR).mkdir(parents=True, exist_ok=True)
+    Path(SESSIONS_DIR).mkdir(parents=True, exist_ok=True)
     Path(FASTF1_CACHE_DIR).mkdir(parents=True, exist_ok=True)
 
 
@@ -538,7 +538,7 @@ def load_sessions(
 # ─────────────────────────────────────────────────────────────
 
 def list_cached_sessions() -> list[dict]:
-    base = Path(CACHE_DIR)
+    base = Path(SESSIONS_DIR)
     if not base.exists():
         return []
     sessions = []
@@ -559,11 +559,11 @@ def is_cached(season: str, meeting: str, session: str) -> bool:
 
 def clear_cache(season: str = None, meeting: str = None, session: str = None) -> int:
     """
-    Remove Parquet cache files.
+    Remove per-session Parquet files from SESSIONS_DIR.
     Does NOT touch FastF1's own cache (FASTF1_CACHE_DIR).
     To clear FastF1's cache too: fastf1.Cache.clear_cache(FASTF1_CACHE_DIR)
     """
-    base = Path(CACHE_DIR)
+    base = Path(SESSIONS_DIR)
     if not base.exists():
         return 0
     if season and meeting and session:

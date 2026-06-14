@@ -1,0 +1,300 @@
+2026-03-10 19:28:15 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-10 19:28:15 - livef1 - INFO - Got the meeting.
+2026-03-10 19:28:15 - livef1 - INFO - Selected meeting/session is:
+	session_name : Practice 1
+2026-03-10 19:28:15 - livef1 - INFO - The session was received successfully.
+2026-03-10 19:28:16 - livef1 - INFO - Fetching drivers.
+2026-03-10 19:28:17 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-10 19:28:17 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-10 19:28:17 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-10 19:28:17 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-10 19:28:17 - livef1 - INFO - Topics to be loaded : ['CarData.z', 'TyreStintSeries', 'track_regions', 'TimingData', 'RaceControlMessages', 'TrackStatus', 'Position.z', 'SessionStatus']
+2026-03-10 19:28:21 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-10 19:28:21 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-10 19:28:22 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-10 19:28:23 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-10 19:28:23 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-10 19:28:26 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-10 19:28:26 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-10 19:28:30 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-10 19:28:30 - livef1 - INFO - Silver tables are being generated.
+2026-03-10 19:28:31 - livef1 - INFO - 'laps' has been generated and saved to the silver lake. You can access it from 'session.laps'.
+2026-03-10 19:28:46 - livef1 - INFO - 'carTelemetry' has been generated and saved to the silver lake. You can access it from 'session.carTelemetry'.
+2026-03-10 19:28:46 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+2026-03-10 19:28:50 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-10 19:28:50 - livef1 - INFO - Got the meeting.
+2026-03-10 19:28:50 - livef1 - INFO - Selected meeting/session is:
+	session_name : Practice 2
+2026-03-10 19:28:50 - livef1 - INFO - The session was received successfully.
+2026-03-10 19:28:50 - livef1 - INFO - Fetching drivers.
+2026-03-10 19:28:52 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-10 19:28:52 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-10 19:28:52 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-10 19:28:52 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-10 19:28:52 - livef1 - INFO - Topics to be loaded : ['CarData.z', 'TyreStintSeries', 'track_regions', 'TimingData', 'RaceControlMessages', 'TrackStatus', 'Position.z', 'SessionStatus']
+2026-03-10 19:28:55 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-10 19:28:55 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-10 19:28:57 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-10 19:28:58 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-10 19:28:58 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-10 19:29:01 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-10 19:29:01 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-10 19:29:04 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-10 19:29:04 - livef1 - INFO - Silver tables are being generated.
+2026-03-10 19:29:06 - livef1 - INFO - 'laps' has been generated and saved to the silver lake. You can access it from 'session.laps'.
+2026-03-10 19:29:21 - livef1 - INFO - 'carTelemetry' has been generated and saved to the silver lake. You can access it from 'session.carTelemetry'.
+2026-03-10 19:29:21 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+2026-03-10 19:29:24 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-10 19:29:24 - livef1 - INFO - Got the meeting.
+2026-03-10 19:29:24 - livef1 - INFO - Selected meeting/session is:
+	session_name : Practice 3
+2026-03-10 19:29:24 - livef1 - INFO - The session was received successfully.
+2026-03-10 19:29:24 - livef1 - INFO - Fetching drivers.
+2026-03-10 19:29:25 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-10 19:29:25 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-10 19:29:25 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-10 19:29:25 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-10 19:29:25 - livef1 - INFO - Topics to be loaded : ['CarData.z', 'TyreStintSeries', 'track_regions', 'TimingData', 'RaceControlMessages', 'TrackStatus', 'Position.z', 'SessionStatus']
+2026-03-10 19:29:28 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-10 19:29:28 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-10 19:29:29 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-10 19:29:29 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-10 19:29:29 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-10 19:29:32 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-10 19:29:33 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-10 19:29:36 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-10 19:29:36 - livef1 - INFO - Silver tables are being generated.
+2026-03-10 19:29:37 - livef1 - INFO - 'laps' has been generated and saved to the silver lake. You can access it from 'session.laps'.
+2026-03-10 19:29:51 - livef1 - INFO - 'carTelemetry' has been generated and saved to the silver lake. You can access it from 'session.carTelemetry'.
+2026-03-10 19:29:51 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+2026-03-13 15:47:17 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-13 15:47:17 - livef1 - INFO - Got the meeting.
+2026-03-13 15:47:17 - livef1 - INFO - The identifier couldn't be found.
+2026-03-13 15:47:17 - livef1 - ERROR - LiveF1Error - 
+The searched query 'Qualification' not found in the table. Did you mean one of these :
+
+	session_name : Qualifying
+	> Suggested search queries : [['qualifying']]
+
+	session_name : Race
+	> Suggested search queries : [['race']]
+
+	session_name : Practice 1
+	> Suggested search queries : [['practice']]
+
+
+2026-03-13 16:05:42 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-13 16:05:42 - livef1 - INFO - Got the meeting.
+2026-03-13 16:05:42 - livef1 - INFO - The identifier couldn't be found.
+2026-03-13 16:05:42 - livef1 - ERROR - LiveF1Error - 
+The searched query 'Qualification' not found in the table. Did you mean one of these :
+
+	session_name : Qualifying
+	> Suggested search queries : [['qualifying']]
+
+	session_name : Race
+	> Suggested search queries : [['race']]
+
+	session_name : Practice 1
+	> Suggested search queries : [['practice']]
+
+
+2026-03-13 16:06:20 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-13 16:06:20 - livef1 - INFO - Got the meeting.
+2026-03-13 16:06:20 - livef1 - INFO - Selected meeting/session is:
+	session_name : Qualifying
+2026-03-13 16:06:20 - livef1 - INFO - The session was received successfully.
+2026-03-13 16:06:20 - livef1 - INFO - Fetching drivers.
+2026-03-13 16:06:22 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-13 16:06:22 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-13 16:06:22 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-13 16:06:22 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-13 16:06:22 - livef1 - INFO - Topics to be loaded : ['Position.z', 'SessionStatus', 'RaceControlMessages', 'TyreStintSeries', 'TimingData', 'CarData.z', 'TrackStatus', 'track_regions']
+2026-03-13 16:06:24 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-13 16:06:24 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-13 16:06:24 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-13 16:06:24 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-13 16:06:25 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-13 16:06:27 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-13 16:06:27 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-13 16:06:32 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-13 16:06:32 - livef1 - INFO - Silver tables are being generated.
+2026-03-13 16:06:35 - livef1 - INFO - 'laps' has been generated and saved to the silver lake. You can access it from 'session.laps'.
+2026-03-13 16:07:00 - livef1 - INFO - 'carTelemetry' has been generated and saved to the silver lake. You can access it from 'session.carTelemetry'.
+2026-03-13 16:07:00 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+2026-03-13 16:09:34 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-13 16:09:34 - livef1 - INFO - Got the meeting.
+2026-03-13 16:09:34 - livef1 - INFO - Selected meeting/session is:
+	session_name : Qualifying
+2026-03-13 16:09:34 - livef1 - INFO - The session was received successfully.
+2026-03-13 16:09:34 - livef1 - INFO - Fetching drivers.
+2026-03-13 16:09:35 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-13 16:09:35 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-13 16:09:35 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-13 16:09:35 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-13 16:09:35 - livef1 - INFO - Topics to be loaded : ['TimingData', 'Position.z', 'TrackStatus', 'TyreStintSeries', 'RaceControlMessages', 'track_regions', 'SessionStatus', 'CarData.z']
+2026-03-13 16:09:35 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-13 16:09:37 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-13 16:09:37 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-13 16:09:37 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-13 16:09:37 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-13 16:09:37 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-13 16:09:39 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-13 16:09:43 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-13 16:09:43 - livef1 - INFO - Silver tables are being generated.
+2026-03-13 16:09:46 - livef1 - INFO - 'laps' has been generated and saved to the silver lake. You can access it from 'session.laps'.
+2026-03-13 16:10:04 - livef1 - INFO - 'carTelemetry' has been generated and saved to the silver lake. You can access it from 'session.carTelemetry'.
+2026-03-13 16:10:04 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+2026-03-13 16:11:22 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-13 16:11:22 - livef1 - INFO - Got the meeting.
+2026-03-13 16:11:22 - livef1 - INFO - Selected meeting/session is:
+	session_name : Qualifying
+2026-03-13 16:11:22 - livef1 - INFO - The session was received successfully.
+2026-03-13 16:11:22 - livef1 - INFO - Fetching drivers.
+2026-03-13 16:11:23 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-13 16:11:23 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-13 16:11:23 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-13 16:11:23 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-13 16:11:23 - livef1 - INFO - Topics to be loaded : ['TyreStintSeries', 'CarData.z', 'SessionStatus', 'Position.z', 'TrackStatus', 'TimingData', 'RaceControlMessages', 'track_regions']
+2026-03-13 16:11:23 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-13 16:11:25 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-13 16:11:25 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-13 16:11:26 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-13 16:11:26 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-13 16:11:27 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-13 16:11:27 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-13 16:11:31 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-13 16:11:31 - livef1 - INFO - Silver tables are being generated.
+2026-03-13 16:11:34 - livef1 - INFO - 'laps' has been generated and saved to the silver lake. You can access it from 'session.laps'.
+2026-03-13 16:11:51 - livef1 - INFO - 'carTelemetry' has been generated and saved to the silver lake. You can access it from 'session.carTelemetry'.
+2026-03-13 16:11:51 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+2026-03-13 16:17:12 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-13 16:17:12 - livef1 - INFO - Got the meeting.
+2026-03-13 16:17:12 - livef1 - INFO - Selected meeting/session is:
+	session_name : Qualifying
+2026-03-13 16:17:12 - livef1 - INFO - The session was received successfully.
+2026-03-13 16:17:12 - livef1 - INFO - Fetching drivers.
+2026-03-13 16:17:13 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-13 16:17:13 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-13 16:17:13 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-13 16:17:13 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-13 16:17:13 - livef1 - INFO - Topics to be loaded : ['track_regions', 'TimingData', 'Position.z', 'TrackStatus', 'CarData.z', 'TyreStintSeries', 'SessionStatus', 'RaceControlMessages']
+2026-03-13 16:17:13 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-13 16:17:15 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-13 16:17:15 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-13 16:17:17 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-13 16:17:17 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-13 16:17:17 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-13 16:17:17 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-13 16:17:21 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-13 16:17:21 - livef1 - INFO - Silver tables are being generated.
+2026-03-13 16:17:24 - livef1 - INFO - 'laps' has been generated and saved to the silver lake. You can access it from 'session.laps'.
+2026-03-13 16:17:42 - livef1 - INFO - 'carTelemetry' has been generated and saved to the silver lake. You can access it from 'session.carTelemetry'.
+2026-03-13 16:17:42 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+2026-03-13 16:19:06 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-13 16:19:06 - livef1 - INFO - Got the meeting.
+2026-03-13 16:19:06 - livef1 - INFO - Selected meeting/session is:
+	session_name : Qualifying
+2026-03-13 16:19:06 - livef1 - INFO - The session was received successfully.
+2026-03-13 16:19:06 - livef1 - INFO - Fetching drivers.
+2026-03-13 16:19:07 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-13 16:19:07 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-13 16:19:07 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-13 16:19:07 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-13 16:19:07 - livef1 - INFO - Topics to be loaded : ['TrackStatus', 'TimingData', 'CarData.z', 'track_regions', 'SessionStatus', 'TyreStintSeries', 'RaceControlMessages', 'Position.z']
+2026-03-13 16:19:07 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-13 16:19:07 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-13 16:19:09 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-13 16:19:09 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-13 16:19:09 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-13 16:19:09 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-13 16:19:10 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-13 16:19:15 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-13 16:19:15 - livef1 - INFO - Silver tables are being generated.
+2026-03-13 16:19:17 - livef1 - INFO - 'laps' has been generated and saved to the silver lake. You can access it from 'session.laps'.
+2026-03-13 16:19:35 - livef1 - INFO - 'carTelemetry' has been generated and saved to the silver lake. You can access it from 'session.carTelemetry'.
+2026-03-13 16:19:35 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+2026-03-13 16:19:38 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-13 16:19:38 - livef1 - INFO - Got the meeting.
+2026-03-13 16:19:38 - livef1 - INFO - Selected meeting/session is:
+	session_name : Race
+2026-03-13 16:19:38 - livef1 - INFO - The session was received successfully.
+2026-03-13 16:19:38 - livef1 - INFO - Fetching drivers.
+2026-03-13 16:19:39 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-13 16:19:39 - livef1 - INFO - Starting grid have been loaded and saved to 'session.startingGrid'.
+2026-03-13 16:19:39 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-13 16:19:39 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-13 16:19:39 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-13 16:19:39 - livef1 - INFO - Topics to be loaded : ['TrackStatus', 'TimingData', 'CarData.z', 'track_regions', 'SessionStatus', 'TyreStintSeries', 'RaceControlMessages', 'Position.z']
+2026-03-13 16:19:39 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-13 16:19:40 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-13 16:19:43 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-13 16:19:43 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-13 16:19:43 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-13 16:19:43 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-13 16:19:45 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-13 16:19:52 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-13 16:19:52 - livef1 - INFO - Silver tables are being generated.
+2026-03-13 16:19:59 - livef1 - INFO - 'PitStopSeries' has been fetched and parsed
+2026-03-13 16:20:00 - livef1 - INFO - 'laps' has been generated and saved to the silver lake. You can access it from 'session.laps'.
+2026-03-13 16:20:26 - livef1 - INFO - 'carTelemetry' has been generated and saved to the silver lake. You can access it from 'session.carTelemetry'.
+2026-03-13 16:20:27 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.
+2026-03-13 17:26:33 - livef1 - INFO - Selected meeting/session is:
+	Meeting Offname : FORMULA 1 QATAR AIRWAYS AUSTRALIAN GRAND PRIX 2026
+	Meeting Name : Australian Grand Prix
+	Meeting Circuit Shortname : Melbourne
+2026-03-13 17:26:33 - livef1 - INFO - Got the meeting.
+2026-03-13 17:26:33 - livef1 - INFO - Selected meeting/session is:
+	session_name : Practice 1
+2026-03-13 17:26:33 - livef1 - INFO - The session was received successfully.
+2026-03-13 17:26:33 - livef1 - INFO - Fetching drivers.
+2026-03-13 17:26:34 - livef1 - INFO - Session results have been loaded and saved to 'session.sessionResults'.
+2026-03-13 17:26:34 - livef1 - INFO - The callback function for the SILVER table 'laps' was set.
+2026-03-13 17:26:34 - livef1 - INFO - The callback function for the SILVER table 'carTelemetry' was set.
+2026-03-13 17:26:34 - livef1 - INFO - The callback function for the SILVER table 'raceControlMessages' was set.
+2026-03-13 17:26:34 - livef1 - INFO - Topics to be loaded : ['RaceControlMessages', 'TrackStatus', 'Position.z', 'TimingData', 'CarData.z', 'SessionStatus', 'TyreStintSeries', 'track_regions']
+2026-03-13 17:26:35 - livef1 - INFO - 'RaceControlMessages' has been fetched and parsed
+2026-03-13 17:26:35 - livef1 - INFO - 'TrackStatus' has been fetched and parsed
+2026-03-13 17:26:36 - livef1 - INFO - 'Position.z' has been fetched and parsed
+2026-03-13 17:26:36 - livef1 - INFO - 'TimingData' has been fetched and parsed
+2026-03-13 17:26:38 - livef1 - INFO - 'CarData.z' has been fetched and parsed
+2026-03-13 17:26:38 - livef1 - INFO - 'SessionStatus' has been fetched and parsed
+2026-03-13 17:26:39 - livef1 - INFO - 'TyreStintSeries' has been fetched and parsed
+2026-03-13 17:26:43 - livef1 - INFO - 'SessionData' has been fetched and parsed
+2026-03-13 17:26:43 - livef1 - INFO - Silver tables are being generated.
+2026-03-13 17:26:44 - livef1 - INFO - 'laps' has been generated and saved to the silver lake. You can access it from 'session.laps'.
+2026-03-13 17:27:00 - livef1 - INFO - 'carTelemetry' has been generated and saved to the silver lake. You can access it from 'session.carTelemetry'.
+2026-03-13 17:27:00 - livef1 - INFO - 'raceControlMessages' has been generated and saved to the silver lake. You can access it from 'session.raceControlMessages'.

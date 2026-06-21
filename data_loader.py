@@ -290,13 +290,18 @@ def _fetch_telemetry(ff1_session) -> pd.DataFrame:
     a single DataFrame with a DriverNumber column.
 
     FastF1 stores car data as a dict-like object keyed by driver number
-    string.  Each value is a Telemetry DataFrame; add_driver_info() injects
-    the DriverNumber column.
+    string.  Each value is a Telemetry DataFrame; we attach DriverNumber
+    manually (FastF1's Telemetry class has no add_driver_info method —
+    the previous version of this code silently caught AttributeError on
+    every driver and persisted empty Parquet caches).
     """
     parts = []
     for drv_num in ff1_session.drivers:
         try:
-            tel = ff1_session.car_data[drv_num].add_driver_info(drv_num)
+            tel = ff1_session.car_data[drv_num].copy()
+            if tel.empty:
+                continue
+            tel["DriverNumber"] = str(drv_num)
             parts.append(tel)
         except Exception as exc:
             logger.warning("Telemetry unavailable for driver %s: %s", drv_num, exc)
@@ -365,33 +370,44 @@ def load_session(
 
     # ── 1. Try Parquet cache ──────────────────────────────────
     if not force_reload and paths["laps"].exists() and paths["telemetry"].exists():
-        print(f"  [cache HIT]  {key}", flush=True)
         laps      = _load_df(paths["laps"])
         telemetry = _load_df(paths["telemetry"])
 
-        for df in (laps, telemetry):
-            _tag(df, session, season, meeting, sess_name)
-
-        weather      = _load_df_or_empty(paths["weather"])
-        track_status = _load_df_or_empty(paths["track_status"])
-        race_control = _load_df_or_empty(paths["race_control"])
-        results      = _load_df_or_empty(paths["results"])
-
-        for df in (weather, track_status, race_control, results):
-            if not df.empty and "session_name" not in df.columns:
+        # Empty caches happen when a prior fetch silently failed (e.g. a
+        # FastF1 API call raised inside a swallowed try/except). Treat
+        # them as a miss so we re-fetch instead of returning empty frames
+        # forever.
+        if laps.empty or telemetry.empty:
+            print(
+                f"  [cache STALE] {key} — laps={len(laps)} tel={len(telemetry)};"
+                " ignoring cache and re-fetching",
+                flush=True,
+            )
+        else:
+            print(f"  [cache HIT]  {key}", flush=True)
+            for df in (laps, telemetry):
                 _tag(df, session, season, meeting, sess_name)
 
-        return {
-            "laps":         laps,
-            "telemetry":    telemetry,
-            "weather":      weather,
-            "track_status": track_status,
-            "race_control": race_control,
-            "results":      results,
-            "session_name": sess_name,
-            "meta":         {"season": season, "meeting": meeting, "session": session},
-            "from_cache":   True,
-        }
+            weather      = _load_df_or_empty(paths["weather"])
+            track_status = _load_df_or_empty(paths["track_status"])
+            race_control = _load_df_or_empty(paths["race_control"])
+            results      = _load_df_or_empty(paths["results"])
+
+            for df in (weather, track_status, race_control, results):
+                if not df.empty and "session_name" not in df.columns:
+                    _tag(df, session, season, meeting, sess_name)
+
+            return {
+                "laps":         laps,
+                "telemetry":    telemetry,
+                "weather":      weather,
+                "track_status": track_status,
+                "race_control": race_control,
+                "results":      results,
+                "session_name": sess_name,
+                "meta":         {"season": season, "meeting": meeting, "session": session},
+                "from_cache":   True,
+            }
 
     # ── 2. Fetch via FastF1 ───────────────────────────────────
     if not FASTF1_AVAILABLE:

@@ -6,6 +6,7 @@ year and, for every round in each season, fetches:
 
   • Race results       (session identifier "R")
   • Qualifying results (session identifier "Q")
+  • Sprint results     (session identifier "S", sprint-format weekends only)
 
 Each result is the official classification table exposed by FastF1 via
 session.results — one row per driver, including finishing/qualifying
@@ -18,20 +19,32 @@ All files are written under:
     data/historical_results/
     ├── race/
     │   └── {year}_{round:02d}_{event_slug}.parquet
-    └── quali/
-        └── {year}_{round:02d}_{event_slug}.parquet
+    ├── quali/
+    │   └── {year}_{round:02d}_{event_slug}.parquet
+    └── sprint/
+        └── {year}_{round:02d}_{event_slug}.parquet   (sprint weekends only)
 
 A consolidated summary file is also written for each type:
 
     data/historical_results/race_results_all.parquet
     data/historical_results/quali_results_all.parquet
+    data/historical_results/sprint_results_all.parquet   (if any sprints fetched)
 
 These contain all rounds from all seasons stacked, with added columns:
     season       int   – calendar year
     round_number int   – round number within the season
     event_name   str   – official event name (e.g. "British Grand Prix")
     circuit_key  str   – URL-safe slug derived from event_name
-    session_type str   – "Race" or "Qualifying"
+    session_type str   – "Race", "Qualifying" or "Sprint"
+
+Finally, a per-round constructor championship table is derived from the race
+*and sprint* points and written to:
+
+    data/historical_results/constructor_standings_all.parquet
+
+with columns season, round_number, event_name, circuit_key, TeamName,
+round_points, cumulative_points and position. The dashboard reads this to show
+season-aware standings that update automatically as new rounds are fetched.
 
 Usage
 -----
@@ -142,20 +155,84 @@ def _write_parquet(df: pd.DataFrame, path: Path) -> None:
     log.info("    saved  %s  (%d rows)", path.name, len(df))
 
 
+def _build_standings(results_df: pd.DataFrame, entity_col: str,
+                     team_col: str | None = None) -> pd.DataFrame:
+    """
+    Generic per-round cumulative championship table, grouped by *entity_col*
+    (e.g. "TeamName" for constructors, "Abbreviation" for drivers).
+
+    Pass the Race results — and, for full accuracy, the Sprint results stacked on
+    top (both carry Points/round_number, so sprint points fold into the same round
+    total automatically). All of an entity's points in a round are summed,
+    accumulated across rounds within each season, and the entities ranked at every
+    round, so any (season, round) lookup gives the standings *after* that event.
+
+    When *team_col* is given (driver standings) it is carried through for colour
+    coding. Returned columns: season, round_number, event_name, circuit_key,
+    <entity_col>, [<team_col>,] round_points, cumulative_points, position.
+    """
+    if (results_df is None or results_df.empty
+            or "Points" not in results_df.columns or entity_col not in results_df.columns):
+        log.warning("  Cannot build standings — missing Points/%s.", entity_col)
+        return pd.DataFrame()
+
+    df = results_df.copy()
+    df["Points"] = pd.to_numeric(df["Points"], errors="coerce").fillna(0.0)
+    df[entity_col] = df[entity_col].astype(str).str.strip()
+
+    key = [c for c in ["season", "round_number", "event_name", "circuit_key", entity_col]
+           if c in df.columns]
+    if team_col and team_col != entity_col and team_col in df.columns:
+        df[team_col] = df[team_col].astype(str).str.strip()
+        key = key + [team_col]
+
+    per = (
+        df.groupby(key)["Points"].sum().reset_index()
+          .rename(columns={"Points": "round_points"})
+    )
+    per = per.sort_values(["season", "round_number"])
+    per["cumulative_points"] = per.groupby(["season", entity_col])["round_points"].cumsum()
+    per["position"] = (
+        per.groupby(["season", "round_number"])["cumulative_points"]
+           .rank(method="min", ascending=False).astype(int)
+    )
+    return per.sort_values(["season", "round_number", "position"]).reset_index(drop=True)
+
+
+def build_constructor_standings(results_df: pd.DataFrame) -> pd.DataFrame:
+    """Per-round cumulative constructor (team) standings. See _build_standings."""
+    return _build_standings(results_df, entity_col="TeamName")
+
+
+def build_driver_standings(results_df: pd.DataFrame) -> pd.DataFrame:
+    """Per-round cumulative drivers' standings (keyed by Abbreviation, carrying
+    TeamName for colour). See _build_standings."""
+    return _build_standings(results_df, entity_col="Abbreviation", team_col="TeamName")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Core fetcher
 # ─────────────────────────────────────────────────────────────────────────────
+
+# FastF1 session id → (output sub-dir, session_type label)
+_SESSION_LABELS = {"R": "Race", "Q": "Qualifying", "S": "Sprint"}
+
 
 def fetch_season(
     year: int,
     out_dir: Path,
     force_reload: bool = False,
-) -> tuple[list[pd.DataFrame], list[pd.DataFrame]]:
+) -> tuple[list[pd.DataFrame], list[pd.DataFrame], list[pd.DataFrame]]:
     """
-    Fetch Race and Qualifying results for every round in *year*.
+    Fetch Race, Qualifying and Sprint results for every round in *year*.
 
-    Returns (race_frames, quali_frames) – one DataFrame per round for
-    rounds that had data available.
+    The Sprint race ("S") is only attempted on sprint-format weekends (detected
+    from the schedule's EventFormat), since its points count toward the
+    constructors' championship. Sprint Qualifying / Shootout award no points and
+    are skipped.
+
+    Returns (race_frames, quali_frames, sprint_frames) – one DataFrame per round
+    for rounds that had data available.
     """
     import fastf1
 
@@ -170,16 +247,17 @@ def fetch_season(
         schedule = fastf1.get_event_schedule(year, include_testing=False)
     except Exception as exc:
         log.error("  Cannot fetch schedule for %d: %s", year, exc)
-        return [], []
+        return [], [], []
 
     if schedule.empty:
         log.warning("  Empty schedule for %d", year)
-        return [], []
+        return [], [], []
 
     log.info("  %d rounds found", len(schedule))
 
     race_frames: list[pd.DataFrame] = []
     quali_frames: list[pd.DataFrame] = []
+    sprint_frames: list[pd.DataFrame] = []
 
     for _, event in schedule.iterrows():
         round_num  = int(event.get("RoundNumber", 0))
@@ -192,12 +270,19 @@ def fetch_season(
             log.info("  Round %2d  %-40s  [future – skip]", round_num, event_name)
             continue
 
-        log.info("  Round %2d  %s", round_num, event_name)
+        is_sprint = "sprint" in str(event.get("EventFormat", "")).lower()
+        log.info("  Round %2d  %s%s", round_num, event_name,
+                 "  [sprint weekend]" if is_sprint else "")
 
-        for session_type, sub_dir, frame_list in [
+        # Race + Qualifying every weekend; Sprint only on sprint-format weekends.
+        sessions = [
             ("R", "race",  race_frames),
             ("Q", "quali", quali_frames),
-        ]:
+        ]
+        if is_sprint:
+            sessions.append(("S", "sprint", sprint_frames))
+
+        for session_type, sub_dir, frame_list in sessions:
             out_path = out_dir / sub_dir / f"{year}_{round_num:02d}_{slug}.parquet"
 
             # Skip if already fetched and not force-reloading
@@ -236,7 +321,7 @@ def fetch_season(
             res_df["round_number"] = round_num
             res_df["event_name"]   = event_name
             res_df["circuit_key"]  = slug
-            res_df["session_type"] = "Race" if session_type == "R" else "Qualifying"
+            res_df["session_type"] = _SESSION_LABELS.get(session_type, session_type)
 
             res_df = _normalise_results(res_df)
             _write_parquet(res_df, out_path)
@@ -244,7 +329,7 @@ def fetch_season(
 
             time.sleep(INTER_SESSION_SLEEP)
 
-    return race_frames, quali_frames
+    return race_frames, quali_frames, sprint_frames
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -287,23 +372,32 @@ def main(argv: list[str] | None = None) -> None:
     FASTF1_CACHE.mkdir(parents=True, exist_ok=True)
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    all_race  = []
-    all_quali = []
+    all_race   = []
+    all_quali  = []
+    all_sprint = []
 
     for year in seasons:
-        race_frames, quali_frames = fetch_season(
+        race_frames, quali_frames, sprint_frames = fetch_season(
             year, args.out_dir, force_reload=args.force_reload
         )
         all_race.extend(race_frames)
         all_quali.extend(quali_frames)
+        all_sprint.extend(sprint_frames)
 
     # ── Write consolidated summaries ──────────────────────────
     log.info("")
     log.info("Writing consolidated summary files…")
 
-    for frames, name in [(all_race, "race_results_all"), (all_quali, "quali_results_all")]:
+    race_combined:   pd.DataFrame | None = None
+    sprint_combined: pd.DataFrame | None = None
+    for frames, name in [
+        (all_race,   "race_results_all"),
+        (all_quali,  "quali_results_all"),
+        (all_sprint, "sprint_results_all"),
+    ]:
         if not frames:
-            log.warning("No data collected for %s", name)
+            if name != "sprint_results_all":   # sprints are optional
+                log.warning("No data collected for %s", name)
             continue
         try:
             combined = pd.concat(frames, ignore_index=True)
@@ -317,8 +411,38 @@ def main(argv: list[str] | None = None) -> None:
             log.info("  %s: %d total rows across %d seasons",
                      name, len(combined), combined["season"].nunique()
                      if "season" in combined.columns else "?")
+            if name == "race_results_all":
+                race_combined = combined
+            elif name == "sprint_results_all":
+                sprint_combined = combined
         except Exception as exc:
             log.error("  Failed to write %s: %s", name, exc)
+
+    # ── Constructor championship standings (race + sprint points) ──
+    if race_combined is not None and not race_combined.empty:
+        try:
+            points_source = race_combined
+            if sprint_combined is not None and not sprint_combined.empty:
+                # Stack sprint rows so their points fold into the same round total
+                shared = [c for c in points_source.columns if c in sprint_combined.columns]
+                points_source = pd.concat(
+                    [points_source[shared], sprint_combined[shared]], ignore_index=True
+                )
+                log.info("  standings include sprint points (%d sprint rows)",
+                         len(sprint_combined))
+            standings = build_constructor_standings(points_source)
+            if not standings.empty:
+                _write_parquet(standings, args.out_dir / "constructor_standings_all.parquet")
+                log.info("  constructor_standings_all: %d rows across %d seasons",
+                         len(standings), standings["season"].nunique())
+
+            drv_standings = build_driver_standings(points_source)
+            if not drv_standings.empty:
+                _write_parquet(drv_standings, args.out_dir / "driver_standings_all.parquet")
+                log.info("  driver_standings_all: %d rows across %d seasons",
+                         len(drv_standings), drv_standings["season"].nunique())
+        except Exception as exc:
+            log.error("  Failed to build standings: %s", exc)
 
     log.info("")
     log.info("Done.")

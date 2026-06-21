@@ -15,7 +15,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 import dash
-from dash import dcc, html, Input, Output, State, dash_table
+from dash import dcc, html, Input, Output, State, dash_table, ctx, no_update, ALL
 import dash_bootstrap_components as dbc
 
 from config import (
@@ -23,9 +23,9 @@ from config import (
     DARK_BG, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     SPEED_PERCENTILE, get_min_laps_for_compound,
     MIN_LAPS_SOFT, MIN_LAPS_MEDIUM, MIN_LAPS_HARD,
-    HISTORICAL_DIR,
+    HISTORICAL_DIR, FASTF1_CACHE_DIR,
 )
-from data_loader import load_sessions, cache_summary
+from data_loader import load_sessions, cache_summary, is_cached, list_cached_sessions
 from processing import (
     clean_and_enrich_laps, analyze_stints,
     identify_quali_sim_laps, best_laps_table,
@@ -37,7 +37,7 @@ from processing import (
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 
-# ── Sessions to load ─────────────────────────────────────────
+# ── Sessions to load at startup (default) ────────────────────
 SESSION_INFO_LIST = [
     {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Practice 1"},
     {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Practice 2"},
@@ -46,33 +46,218 @@ SESSION_INFO_LIST = [
     {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Race"},
 ]
 
-# ── Load data ────────────────────────────────────────────────
-print("Loading sessions (cache-first)…")
-_data            = load_sessions(SESSION_INFO_LIST)
-laps_raw         = _data["laps"]
-telemetry_raw    = _data["telemetry"]
-weather_raw      = _data["weather"]
-race_control_raw = _data["race_control"]
-results_raw      = _data["results"]
- 
-laps = clean_and_enrich_laps(laps_raw)
-laps["stint_key"] = laps["Stint"].astype("string") + "_" + laps["session_name"]
-laps = enrich_weather(laps, weather_raw)
-laps = enrich_track_limits(laps, race_control_raw)
-laps = enrich_blue_flags(laps, race_control_raw)
-laps = identify_quali_sim_laps(laps)
-laps = flag_perturbed_laps(laps, rcm=race_control_raw)
-laps = enrich_session_results(laps, results_raw)
-laps = flag_position_changes(laps)
-stints    = analyze_stints(laps)
-telemetry = enrich_telemetry(telemetry_raw, laps)
+# ── Mutable application state ─────────────────────────────────
+# These globals are (re)assigned by rebuild_state() so the Data Selection
+# tab can swap the loaded sessions at runtime without restarting the app.
+laps_raw = telemetry_raw = weather_raw = race_control_raw = results_raw = None
+laps = stints = telemetry = None
+SESSIONS = DRIVERS = COMPOUNDS = TEAMS = []
+LOADED_SESSION_INFO: list[dict] = []        # the SESSION_INFO_LIST currently loaded
+LAST_LOAD_MSG: str = ""                      # human-readable result of the last load
 
-SESSIONS  = sorted(laps["session_name"].unique())
-DRIVERS   = sorted(laps["Driver_Short"].dropna().unique())
-COMPOUNDS = [c for c in ["SOFT","MEDIUM","HARD","INTER","WET"]
-             if c in laps["Compound"].unique()]
-TEAMS     = sorted(laps["Team"].dropna().unique())
-print(f"Ready  sessions={len(SESSIONS)}  drivers={len(DRIVERS)}  teams={len(TEAMS)}")
+
+def rebuild_state(session_info_list: list[dict], force_reload: bool = False) -> str:
+    """
+    Load the given sessions (cache-first) and run the full enrichment
+    pipeline, reassigning all module-level data globals in place.
+
+    Returns a short human-readable status string (also stored in
+    LAST_LOAD_MSG). Raises nothing — failures are reported in the string.
+    """
+    global laps_raw, telemetry_raw, weather_raw, race_control_raw, results_raw
+    global laps, stints, telemetry
+    global SESSIONS, DRIVERS, COMPOUNDS, TEAMS, LOADED_SESSION_INFO, LAST_LOAD_MSG
+
+    if not session_info_list:
+        LAST_LOAD_MSG = "No sessions selected — nothing loaded."
+        return LAST_LOAD_MSG
+
+    print(f"Loading {len(session_info_list)} session(s) (cache-first)…", flush=True)
+    _data = load_sessions(session_info_list, force_reload=force_reload)
+    _laps_raw = _data["laps"]
+    if _laps_raw is None or _laps_raw.empty:
+        LAST_LOAD_MSG = ("Load failed — no lap data returned for the selected "
+                         "sessions (FastF1 fetch may have failed).")
+        return LAST_LOAD_MSG
+
+    _telemetry_raw    = _data["telemetry"]
+    _weather_raw      = _data["weather"]
+    _race_control_raw = _data["race_control"]
+    _results_raw      = _data["results"]
+
+    _laps = clean_and_enrich_laps(_laps_raw)
+    _laps["stint_key"] = _laps["Stint"].astype("string") + "_" + _laps["session_name"]
+    _laps = enrich_weather(_laps, _weather_raw)
+    _laps = enrich_track_limits(_laps, _race_control_raw)
+    _laps = enrich_blue_flags(_laps, _race_control_raw)
+    _laps = identify_quali_sim_laps(_laps)
+    _laps = flag_perturbed_laps(_laps, rcm=_race_control_raw)
+    _laps = enrich_session_results(_laps, _results_raw)
+    _laps = flag_position_changes(_laps)
+    _stints    = analyze_stints(_laps)
+    _telemetry = enrich_telemetry(_telemetry_raw, _laps)
+
+    # ── Commit to module globals atomically (after all heavy work) ──
+    laps_raw, telemetry_raw      = _laps_raw, _telemetry_raw
+    weather_raw, race_control_raw, results_raw = _weather_raw, _race_control_raw, _results_raw
+    laps, stints, telemetry      = _laps, _stints, _telemetry
+    SESSIONS  = sorted(laps["session_name"].unique())
+    DRIVERS   = sorted(laps["Driver_Short"].dropna().unique())
+    COMPOUNDS = [c for c in ["SOFT","MEDIUM","HARD","INTER","WET"]
+                 if c in laps["Compound"].unique()]
+    TEAMS     = sorted(laps["Team"].dropna().unique())
+    LOADED_SESSION_INFO = list(session_info_list)
+
+    from datetime import datetime as _dt
+    LAST_LOAD_MSG = (
+        f"Loaded {len(SESSIONS)} session(s) · {len(DRIVERS)} drivers · "
+        f"{len(TEAMS)} teams  ({_dt.now().strftime('%H:%M:%S')})"
+    )
+    print(f"Ready  sessions={len(SESSIONS)}  drivers={len(DRIVERS)}  teams={len(TEAMS)}", flush=True)
+    return LAST_LOAD_MSG
+
+
+# ── Initial load (default sessions) ──────────────────────────
+print("Loading sessions (cache-first)…")
+rebuild_state(SESSION_INFO_LIST)
+
+
+# ── Available-session discovery (for the Data Selection tab) ──
+AVAILABLE_SEASON  = 2026
+SELECTABLE_SEASONS = [2026, 2025, 2024, 2023, 2022, 2021]
+_SCHEDULE_CACHE: dict[int, list[dict]] = {}   # season → memoized session list
+
+
+def _sess_value(season, meeting, session) -> str:
+    """Encode a session triple as a single checklist value."""
+    return f"{season}|||{meeting}|||{session}"
+
+
+def _parse_sess_value(value: str) -> dict:
+    """Decode a checklist value back into a SESSION_INFO_LIST dict."""
+    season, meeting, session = value.split("|||")
+    return {"SEASON": season, "MEETING": meeting, "SESSION": session}
+
+
+def get_available_sessions(season: int = AVAILABLE_SEASON, refresh: bool = False) -> list[dict]:
+    """
+    Return every session of *season* that has already taken place (date in
+    the past), each annotated with whether it is cached locally.
+
+    Source of truth is FastF1's event schedule. If FastF1 is unavailable or
+    the network fails, fall back to whatever is in the local Parquet cache so
+    the tab still works offline.
+
+    Each item: {round, meeting, session, fmt, season, cached, value}
+    Result is memoized per-season in _SCHEDULE_CACHE (refresh=True rebuilds).
+    """
+    season = int(season)
+    if season in _SCHEDULE_CACHE and not refresh:
+        # Refresh only the cheap 'cached' flags (files may have appeared)
+        for it in _SCHEDULE_CACHE[season]:
+            it["cached"] = is_cached(str(it["season"]), it["meeting"], it["session"])
+        return _SCHEDULE_CACHE[season]
+
+    items: list[dict] = []
+    try:
+        import fastf1
+        from datetime import datetime, timezone
+        fastf1.Cache.enable_cache(str(Path(FASTF1_CACHE_DIR)))
+        sched = fastf1.get_event_schedule(season, include_testing=False)
+        now = pd.Timestamp(datetime.now(timezone.utc).replace(tzinfo=None))
+        for _, e in sched.iterrows():
+            rnd  = int(e.get("RoundNumber", 0))
+            name = str(e.get("EventName", "")).strip()
+            fmt  = str(e.get("EventFormat", "conventional"))
+            if not name:
+                continue
+            for i in range(1, 6):
+                sn = e.get(f"Session{i}")
+                sd = e.get(f"Session{i}DateUtc")
+                if pd.isna(sn) or not str(sn).strip():
+                    continue
+                try:
+                    is_past = pd.to_datetime(sd) <= now
+                except Exception:
+                    is_past = False
+                if not is_past:
+                    continue
+                items.append({
+                    "round": rnd, "meeting": name, "session": str(sn).strip(),
+                    "fmt": fmt, "season": season,
+                    "cached": is_cached(str(season), name, str(sn).strip()),
+                    "value": _sess_value(season, name, str(sn).strip()),
+                })
+    except Exception as exc:
+        print(f"  [schedule] FastF1 unavailable for {season} ({exc}); using local cache", flush=True)
+
+    if not items:
+        # Offline fallback: enumerate this season's sessions from the Parquet cache
+        for s in list_cached_sessions():
+            if str(s.get("season")) != str(season):
+                continue
+            meeting = s.get("meeting", "?"); session = s.get("session", "?")
+            items.append({
+                "round": 0, "meeting": meeting, "session": session,
+                "fmt": "conventional", "season": season, "cached": True,
+                "value": _sess_value(season, meeting, session),
+            })
+
+    items.sort(key=lambda x: (x["round"], x["meeting"], x["session"]))
+    _SCHEDULE_CACHE[season] = items
+    return items
+
+
+# ── Session-type grouping helpers (for shortcut selectors) ────
+def _session_type(session: str) -> str:
+    """Bucket a session name into Practice / Qualifying / Sprint / Race."""
+    s = session.lower()
+    if "sprint" in s:        return "Sprint"      # Sprint + Sprint Qualifying
+    if "practice" in s:      return "Practice"
+    if "qualifying" in s:    return "Qualifying"
+    if "race" in s:          return "Race"
+    return "Other"
+
+
+def _season_meetings(season: int) -> list[str]:
+    """Ordered list of unique circuit/meeting names available for *season*."""
+    seen, out = set(), []
+    for it in get_available_sessions(season):
+        if it["meeting"] not in seen:
+            seen.add(it["meeting"]); out.append(it["meeting"])
+    return out
+
+
+def _session_option_label(it: dict) -> str:
+    tag = "● cached" if it["cached"] else "○ fetch (~1–3 min)"
+    rnd = f"R{it['round']}" if it["round"] else "—"
+    spr = "  ⚡" if it["session"] in ("Sprint", "Sprint Qualifying") else ""
+    return f"{rnd} · {it['meeting']} · {it['session']}{spr}   [{tag}]"
+
+
+def _session_options(season: int) -> list[dict]:
+    return [{"label": _session_option_label(it), "value": it["value"]}
+            for it in get_available_sessions(season)]
+
+
+def _list_summary(season: int) -> str:
+    av = get_available_sessions(season)
+    n_cached = sum(1 for it in av if it["cached"])
+    return f"Season {season} · {len(av)} sessions available · {n_cached} cached · {len(av)-n_cached} to fetch"
+
+
+def _circuit_buttons(season: int) -> list:
+    """One click-to-add button per circuit for *season* (pattern-matching IDs)."""
+    btn_style = {"fontSize": "0.72rem", "marginRight": "6px", "marginBottom": "6px"}
+    out = []
+    for m in _season_meetings(season):
+        short = m.replace(" Grand Prix", "")
+        out.append(dbc.Button(
+            f"+ {short}",
+            id={"type": "data-circuit-btn", "index": m},
+            size="sm", color="info", outline=True, style=btn_style,
+        ))
+    return out
 
 # ── Circuit characteristics reference table ───────────────────
 _CIRCUIT_CHARS_PATH = Path("data/circuit_characteristics.csv")
@@ -102,6 +287,383 @@ HIST_QUALI = _load_hist("quali_results_all.parquet")
 print(f"Historical race results : {len(HIST_RACE):,} rows")
 print(f"Historical quali results: {len(HIST_QUALI):,} rows")
 
+# Sprint race results (sprint-format weekends only; may be absent).
+HIST_SPRINT = _load_hist("sprint_results_all.parquet")
+
+# Per-round constructor championship standings (season-aware). Prefer the file
+# written by fetch_historical_results.py; if it isn't there yet, derive it from
+# the race (+ sprint) results we already have so the standings widget still works.
+HIST_STANDINGS = _load_hist("constructor_standings_all.parquet")
+if HIST_STANDINGS.empty and not HIST_RACE.empty:
+    try:
+        from fetch_historical_results import build_constructor_standings
+        _pts_src = HIST_RACE
+        if not HIST_SPRINT.empty:
+            _shared = [c for c in HIST_RACE.columns if c in HIST_SPRINT.columns]
+            _pts_src = pd.concat([HIST_RACE[_shared], HIST_SPRINT[_shared]],
+                                 ignore_index=True)
+        HIST_STANDINGS = build_constructor_standings(_pts_src)
+        print("Constructor standings   : derived from race"
+              f"{'+sprint' if not HIST_SPRINT.empty else ''} results "
+              "(run fetch_historical_results.py to cache them)")
+    except Exception as _exc:
+        print(f"Constructor standings   : unavailable ({_exc})")
+print(f"Constructor standings   : {len(HIST_STANDINGS):,} rows")
+
+# Per-round drivers' championship standings (same source, keyed by driver).
+HIST_DRIVER_STANDINGS = _load_hist("driver_standings_all.parquet")
+if HIST_DRIVER_STANDINGS.empty and not HIST_RACE.empty:
+    try:
+        from fetch_historical_results import build_driver_standings
+        _dpts_src = HIST_RACE
+        if not HIST_SPRINT.empty:
+            _dshared = [c for c in HIST_RACE.columns if c in HIST_SPRINT.columns]
+            _dpts_src = pd.concat([HIST_RACE[_dshared], HIST_SPRINT[_dshared]],
+                                  ignore_index=True)
+        HIST_DRIVER_STANDINGS = build_driver_standings(_dpts_src)
+    except Exception as _exc:
+        print(f"Driver standings        : unavailable ({_exc})")
+print(f"Driver standings        : {len(HIST_DRIVER_STANDINGS):,} rows")
+
+# circuit_characteristics.csv uses French slugs (e.g. "monaco", "etats_unis")
+# while fetch_historical_results.py slugifies the official English event name
+# (e.g. "monaco_grand_prix", "united_states_grand_prix"). This map bridges
+# the two so the Historical leaderboards filter actually matches rows.
+HIST_CIRCUIT_KEY_MAP: dict[str, list[str]] = {
+    "abu_dhabi":       ["abu_dhabi_grand_prix"],
+    "arabie_saoudite": ["saudi_arabian_grand_prix"],
+    "autriche":        ["austrian_grand_prix"],
+    "azerbaidjan":     ["azerbaijan_grand_prix"],
+    "belgique":        ["belgian_grand_prix"],
+    "bresil":          ["s\xe3o_paulo_grand_prix", "brazilian_grand_prix"],
+    "canada":          ["canadian_grand_prix"],
+    "espagne":         ["spanish_grand_prix"],
+    "etats_unis":      ["united_states_grand_prix"],
+    "grande_bretagne": ["british_grand_prix"],
+    "hongrie":         ["hungarian_grand_prix"],
+    "italie":          ["italian_grand_prix"],
+    "japon":           ["japanese_grand_prix"],
+    "mexique":         ["mexico_city_grand_prix", "mexican_grand_prix"],
+    "monaco":          ["monaco_grand_prix"],
+    "pays_bas":        ["dutch_grand_prix"],
+    "qatar":           ["qatar_grand_prix"],
+    "singapour":       ["singapore_grand_prix"],
+    "australie":       ["australian_grand_prix"],
+    "bahrein":         ["bahrain_grand_prix"],
+    "chine":           ["chinese_grand_prix"],
+    "emilie_romagne":  ["emilia_romagna_grand_prix"],
+    "miami":           ["miami_grand_prix"],
+    "las_vegas":       ["las_vegas_grand_prix"],
+}
+
+# ── Constructor standings helpers (season-aware, data-driven) ─
+def _loaded_meeting_season_round() -> tuple[int | None, int | None, str | None]:
+    """
+    Infer (season, round_number, event_name) for the meeting currently loaded in
+    the Data tab. Uses LOADED_SESSION_INFO for the season + event name, then looks
+    the round number up in HIST_RACE. When several meetings are loaded, the most
+    advanced round (latest in the season) is used. Returns Nones if unresolved.
+    """
+    if not LOADED_SESSION_INFO:
+        return None, None, None
+    best = (None, None, None)   # (season, round, event)
+    for info in LOADED_SESSION_INFO:
+        try:
+            season = int(info.get("SEASON"))
+        except (TypeError, ValueError):
+            continue
+        event = str(info.get("MEETING", "")).strip()
+        rnd = None
+        if not HIST_STANDINGS.empty:
+            sub = HIST_STANDINGS[
+                (HIST_STANDINGS["season"] == season)
+                & (HIST_STANDINGS["event_name"].astype(str).str.strip() == event)
+            ]
+            if not sub.empty:
+                rnd = int(sub["round_number"].iloc[0])
+        if best[0] is None or season > best[0] or (
+            season == best[0] and (rnd or 0) > (best[1] or 0)
+        ):
+            best = (season, rnd, event)
+    return best
+
+
+def _standings_after_round(season: int, rnd: int | None) -> dict[str, float]:
+    """Constructor points (team → cumulative) standing AFTER the given round.
+    rnd=None or an unknown round falls back to the latest available round."""
+    if HIST_STANDINGS.empty or season is None:
+        return {}
+    sub = HIST_STANDINGS[HIST_STANDINGS["season"] == season]
+    if sub.empty:
+        return {}
+    rounds = sorted(int(r) for r in sub["round_number"].unique())
+    if rnd is None or rnd not in rounds:
+        rnd = max(rounds)
+    row = sub[sub["round_number"] == rnd]
+    return {str(t): float(p) for t, p in zip(row["TeamName"], row["cumulative_points"])}
+
+
+def _round_points_for(season: int, rnd: int | None) -> dict[str, float]:
+    """Points each team scored IN the given round (team → round_points)."""
+    if HIST_STANDINGS.empty or season is None or rnd is None:
+        return {}
+    row = HIST_STANDINGS[
+        (HIST_STANDINGS["season"] == season) & (HIST_STANDINGS["round_number"] == rnd)
+    ]
+    return {str(t): float(p) for t, p in zip(row["TeamName"], row["round_points"])}
+
+
+def _prev_round(season: int, rnd: int | None) -> int | None:
+    """The round immediately before *rnd* that exists for the season, else None."""
+    if HIST_STANDINGS.empty or season is None or rnd is None:
+        return None
+    sub = HIST_STANDINGS[HIST_STANDINGS["season"] == season]
+    earlier = sorted(int(r) for r in sub["round_number"].unique() if int(r) < rnd)
+    return earlier[-1] if earlier else None
+
+
+def _team_champ_rank() -> dict[str, int]:
+    """team → constructor championship position (1 = leader) for the season and
+    round currently loaded in the Data tab. Empty dict if no standings exist."""
+    season, rnd, _ = _loaded_meeting_season_round()
+    after = _standings_after_round(season, rnd)
+    if not after:
+        return {}
+    ordered = sorted(after.items(), key=lambda kv: -kv[1])
+    rank, prev, pr = {}, None, 0
+    for i, (t, p) in enumerate(ordered):
+        if p != prev:
+            pr = i + 1
+        rank[t] = pr
+        prev = p
+    return rank
+
+
+def _order_teams_by_champ(teams) -> list[str]:
+    """Default ordering for team-categorical charts: by current championship
+    standing (leader first), with any team not in the standings kept after the
+    ranked ones in stable alphabetical order. Charts that are themselves a value
+    ranking (gap-to-leader bars, pace order) keep their own ordering instead."""
+    rank = _team_champ_rank()
+    _BIG = 10 ** 6
+    return sorted(set(map(str, teams)), key=lambda t: (rank.get(t, _BIG), t))
+
+
+def _dense_rank_by_pts(pts: dict) -> dict:
+    """Dense rank (1 = most points); ties share a rank."""
+    ordered = sorted(pts.items(), key=lambda x: -x[1])
+    rank, prev, pr = {}, None, 0
+    for i, (k, p) in enumerate(ordered):
+        if p != prev:
+            pr = i + 1
+        rank[k] = pr
+        prev = p
+    return rank
+
+
+def _driver_standings_after_round(season, rnd) -> dict:
+    """driver → {'pts': float, 'team': str} cumulative AFTER the given round.
+    rnd=None or an unknown round falls back to the latest available round."""
+    if HIST_DRIVER_STANDINGS.empty or season is None:
+        return {}
+    sub = HIST_DRIVER_STANDINGS[HIST_DRIVER_STANDINGS["season"] == season]
+    if sub.empty:
+        return {}
+    rounds = sorted(int(r) for r in sub["round_number"].unique())
+    if rnd is None or rnd not in rounds:
+        rnd = max(rounds)
+    row = sub[sub["round_number"] == rnd]
+    return {str(d): {"pts": float(p), "team": str(t)}
+            for d, p, t in zip(row["Abbreviation"], row["cumulative_points"], row["TeamName"])}
+
+
+def _driver_round_points(season, rnd) -> dict:
+    """Points each driver scored IN the given round (driver → round_points)."""
+    if HIST_DRIVER_STANDINGS.empty or season is None or rnd is None:
+        return {}
+    row = HIST_DRIVER_STANDINGS[
+        (HIST_DRIVER_STANDINGS["season"] == season)
+        & (HIST_DRIVER_STANDINGS["round_number"] == rnd)
+    ]
+    return {str(d): float(p) for d, p in zip(row["Abbreviation"], row["round_points"])}
+
+
+def _standings_leaderboard_body(entities_sorted, rank_after, rank_before,
+                                after_pts, round_pts, color_of, primary_of,
+                                secondary_of=None, entity_header="CONSTRUCTOR",
+                                all_before_zero=False, delta_note=""):
+    """Shared championship-leaderboard body (header + ranked rows + delta note),
+    used by both the constructor and driver standings widgets so they render
+    identically. The ``*_of`` arguments are callables: entity → value."""
+    def _arrow(delta):
+        if all_before_zero:
+            return html.Span("—", style={"color": TEXT_DIM, "fontSize": "0.75rem"})
+        if delta > 0:
+            return html.Span(f"▲{delta}", style={"color": "#00C04B",
+                             "fontWeight": "700", "fontSize": "0.78rem"})
+        if delta < 0:
+            return html.Span(f"▼{abs(delta)}", style={"color": "#FF4444",
+                             "fontWeight": "700", "fontSize": "0.78rem"})
+        return html.Span("=", style={"color": TEXT_DIM, "fontSize": "0.78rem"})
+
+    _hcell = {"color": TEXT_DIM, "fontSize": "0.65rem", "fontWeight": "700",
+              "letterSpacing": "1px"}
+    header = html.Div([
+        html.Span("POS", style={"width": "38px", "display": "inline-block", **_hcell}),
+        html.Span("Δ",   style={"width": "42px", "display": "inline-block",
+                                "textAlign": "center", **_hcell}),
+        html.Span(entity_header, style={"flex": "1", **_hcell}),
+        html.Span("THIS EVENT", style={"width": "80px", "textAlign": "right", **_hcell}),
+        html.Span("TOTAL PTS",  style={"width": "80px", "textAlign": "right", **_hcell}),
+    ], style={"display": "flex", "alignItems": "center",
+              "padding": "4px 10px 6px 10px",
+              "borderBottom": f"1px solid {GRID_CLR}", "marginBottom": "4px"})
+
+    leader_pts = (max(after_pts.values()) if after_pts else 1) or 1
+    rows = []
+    for e in entities_sorted:
+        clr     = color_of(e)
+        rank_a  = rank_after.get(e, 99)
+        delta   = rank_before.get(e, 99) - rank_a       # positive = moved UP
+        pts_now = int(after_pts.get(e, 0))
+        pts_evt = int(round_pts.get(e, 0))
+        evt_str = f"+{pts_evt}" if pts_evt > 0 else ("—" if pts_evt == 0 else str(pts_evt))
+        bar_pct = pts_now / leader_pts * 100
+
+        name_children = [
+            html.Span("● ", style={"color": clr, "fontSize": "0.75rem"}),
+            html.Span(primary_of(e), style={"color": TEXT_MAIN,
+                      "fontWeight": "700" if secondary_of else "600",
+                      "fontSize": "0.82rem"}),
+        ]
+        sec = secondary_of(e) if secondary_of else None
+        if sec:
+            name_children.append(html.Span(f"  {sec}",
+                style={"color": TEXT_DIM, "fontSize": "0.72rem"}))
+        name_children.append(html.Div(
+            html.Div(style={"width": f"{bar_pct:.1f}%", "height": "4px",
+                            "background": clr, "borderRadius": "2px", "opacity": "0.6"}),
+            style={"width": "100%", "height": "4px", "background": GRID_CLR,
+                   "borderRadius": "2px", "marginTop": "4px"}))
+
+        rows.append(html.Div([
+            html.Span(f"P{rank_a}", style={"width": "38px", "display": "inline-block",
+                      "color": clr, "fontWeight": "800", "fontSize": "0.88rem"}),
+            html.Span(_arrow(delta), style={"width": "42px", "display": "inline-block",
+                      "textAlign": "center"}),
+            html.Div(name_children, style={"flex": "1", "paddingRight": "8px"}),
+            html.Span(evt_str, style={"width": "80px", "textAlign": "right",
+                      "color": "#00C04B" if pts_evt > 0 else TEXT_DIM,
+                      "fontWeight": "700" if pts_evt > 0 else "400", "fontSize": "0.82rem"}),
+            html.Span(f"{pts_now} pts", style={"width": "80px", "textAlign": "right",
+                      "color": TEXT_MAIN, "fontWeight": "700", "fontSize": "0.88rem"}),
+        ], style={"display": "flex", "alignItems": "center", "padding": "6px 10px",
+                  "borderRadius": "6px", "marginBottom": "3px",
+                  "background": f"linear-gradient(90deg, {clr}14 0%, transparent 60%)",
+                  "border": f"1px solid {clr}28"}))
+
+    return html.Div([
+        header,
+        html.Div(rows),
+        html.P(delta_note, style={"color": TEXT_DIM, "fontSize": "0.65rem",
+                                  "marginTop": "10px", "fontStyle": "italic"}),
+    ])
+
+
+def _driver_standings_widget(fl):
+    """Drivers' Championship leaderboard for the season/round loaded in the Data
+    tab — same look as the Constructor Championship widget. Falls back to points
+    from the loaded race laps if the meeting isn't in the historical archive."""
+    season, rnd, event = _loaded_meeting_season_round()
+    after_src  = _driver_standings_after_round(season, rnd)
+    prev_rnd   = _prev_round(season, rnd)
+    before_src = _driver_standings_after_round(season, prev_rnd) if prev_rnd else {}
+    round_src  = _driver_round_points(season, rnd)
+    from_archive = rnd is not None
+
+    if not after_src:
+        race_sess = [s for s in fl["session_name"].unique()
+                     if (str(s).startswith("Race") or str(s).startswith("Sprint"))
+                     and "Qualifying" not in str(s) and "Shootout" not in str(s)]
+        if race_sess and "Race_Points" in fl.columns:
+            pr = (fl[fl["session_name"].isin(race_sess)]
+                  .groupby(["session_name", "Driver_Short", "Team"])["Race_Points"]
+                  .first().reset_index())
+            pr["Race_Points"] = pd.to_numeric(pr["Race_Points"], errors="coerce").fillna(0)
+            agg = pr.groupby(["Driver_Short", "Team"])["Race_Points"].sum().reset_index()
+            round_src  = {str(d): float(p) for d, p in zip(agg["Driver_Short"], agg["Race_Points"])}
+            after_src  = {str(d): {"pts": float(p), "team": str(t)}
+                          for d, p, t in zip(agg["Driver_Short"], agg["Race_Points"], agg["Team"])}
+            before_src = {}
+
+    drivers = sorted(set(after_src) | set(before_src) | set(round_src))
+    team_of = {}
+    for d in drivers:
+        if d in after_src:
+            team_of[d] = after_src[d]["team"]
+        elif d in before_src:
+            team_of[d] = before_src[d]["team"]
+        else:
+            team_of[d] = ""
+    after_pts  = {d: (after_src[d]["pts"] if d in after_src else 0) for d in drivers}
+    before_pts = {
+        d: (before_src[d]["pts"] if d in before_src
+            else max(0, after_pts[d] - round_src.get(d, 0)))
+        for d in drivers
+    }
+    round_pts = {d: round_src.get(d, 0) for d in drivers}
+
+    rank_after  = _dense_rank_by_pts(after_pts)
+    rank_before = _dense_rank_by_pts(before_pts)
+    all_before_zero = all(v == 0 for v in before_pts.values())
+    entities_sorted = sorted(
+        drivers, key=lambda d: (rank_after.get(d, 99), -after_pts.get(d, 0)))
+
+    season_lbl = str(season) if season else "current"
+    if from_archive and event:
+        subtitle = f"  ·  standings after {event} (round {rnd})"
+    elif from_archive:
+        subtitle = f"  ·  standings after round {rnd}"
+    else:
+        subtitle = "  ·  points from loaded race sessions (not yet in archive)"
+    delta_note = (
+        "↕ rank change caused by this event  ·  —  = season opener / no prior round"
+        if all_before_zero else
+        "↕ driver rank change vs the standings before this event"
+    )
+    info = ("Data: cumulative drivers' championship points for the loaded season, "
+            "summed from every race's (and sprint's) points in the historical "
+            "archive (driver_standings_all.parquet, built by "
+            "fetch_historical_results.py). 'After' = standings through the loaded "
+            "meeting's round; 'before' = the previous round; the arrow is the rank "
+            "change from this event. Re-run the fetch for new rounds, or load "
+            "another season to see its table.")
+
+    body = (
+        _standings_leaderboard_body(
+            entities_sorted, rank_after, rank_before, after_pts, round_pts,
+            color_of=lambda d: TEAM_COLORS.get(team_of.get(d, ""), "#808080"),
+            primary_of=lambda d: d,
+            secondary_of=lambda d: team_of.get(d, ""),
+            entity_header="DRIVER",
+            all_before_zero=all_before_zero, delta_note=delta_note,
+        )
+        if drivers else
+        html.P("No driver standings available for the loaded season. "
+               "Run fetch_historical_results.py to populate the archive.",
+               style={"color": TEXT_DIM, "fontStyle": "italic", "fontSize": "0.8rem"})
+    )
+    return card(
+        html.Span([
+            "Drivers' Championship  ",
+            html.Span(f"{season_lbl} season", style={"color": ACCENT, "fontWeight": "800"}),
+            html.Span(subtitle, style={"color": TEXT_DIM, "fontWeight": "400",
+                                       "fontSize": "0.72rem", "marginLeft": "6px"}),
+        ]),
+        body,
+        info=info,
+    )
+
 # ── Theme ────────────────────────────────────────────────────
 BASE = dict(
     paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
@@ -118,9 +680,18 @@ def theme(fig, h=450, t=""):
     fig.update_yaxes(gridcolor=GRID_CLR, zeroline=False)
     return fig
 
-def card(title, children):
+def card(title, children, info=None):
+    """A titled card. Pass `info` to show a small ⓘ tooltip in the header
+    explaining what data the graph uses and why it is relevant (hover to read)."""
+    header = [html.Span(title, style={"fontWeight":"700","letterSpacing":"1px","fontSize":"0.85rem"})]
+    if info:
+        header.append(html.Span(
+            " ⓘ", title=info,
+            style={"cursor":"help","fontSize":"0.72rem","opacity":"0.6",
+                   "userSelect":"none","marginLeft":"6px"},
+        ))
     return dbc.Card([
-        dbc.CardHeader(html.Span(title, style={"fontWeight":"700","letterSpacing":"1px","fontSize":"0.85rem"})),
+        dbc.CardHeader(header),
         dbc.CardBody(children),
     ], className="mb-3",
        style={"background":CARD_BG,"border":f"1px solid {GRID_CLR}","borderRadius":"8px"})
@@ -230,22 +801,22 @@ SIDEBAR = dbc.Col([html.Div([
 width=2, style={"padding":"0"})
 
 TABS = dbc.Tabs([
-    dbc.Tab(label="DATA QUALITY",   tab_id="tab-quality"),
+    dbc.Tab(label="DATA & QUALITY", tab_id="tab-data"),
     dbc.Tab(label="OVERVIEW",       tab_id="tab-overview"),
     dbc.Tab(label="TEAM ANALYSIS",  tab_id="tab-teams"),
     dbc.Tab(label="LAP TIMES",      tab_id="tab-laps"),
     dbc.Tab(label="STINTS",         tab_id="tab-stints"),
     dbc.Tab(label="TEAMMATES",      tab_id="tab-teammates"),
     dbc.Tab(label="TELEMETRY",      tab_id="tab-telemetry"),
-    dbc.Tab(label="HEATMAPS",       tab_id="tab-heatmaps"),
     dbc.Tab(label="TRACK INFO",     tab_id="tab-track"),
-], id="tabs", active_tab="tab-quality",
+], id="tabs", active_tab="tab-data",
    style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
 
 MAIN = dbc.Col([
     html.H2("F1 SESSION ANALYSIS",
             style={"color":ACCENT,"fontWeight":"900","letterSpacing":"3px","marginBottom":"4px","fontSize":"1.3rem"}),
-    html.P(" | ".join(SESSIONS), style={"color":TEXT_DIM,"marginBottom":"18px","fontSize":"0.78rem"}),
+    html.P(" | ".join(SESSIONS), id="main-subtitle",
+           style={"color":TEXT_DIM,"marginBottom":"18px","fontSize":"0.78rem"}),
     TABS,
     html.Div(id="tab-content"),
 ], width=10, style={"padding":"24px","background":DARK_BG,"minHeight":"100vh"})
@@ -268,14 +839,21 @@ def render(tab, ss, sc, sd, st):
     fs_d = fs[fs["Driver_Short"].isin(sd) & fs["Team"].isin(st)].copy()
     dnos = laps[laps["Driver_Short"].isin(sd)]["DriverNo"].unique()
     ft   = telemetry[telemetry["DriverNo"].isin(dnos) & telemetry["session_name"].isin(ss)].copy() if not telemetry.empty else telemetry
-    if tab=="tab-quality":    return tab_data_quality(fl_d, fs_d)
-    if tab=="tab-overview":   return tab_overview(fl_d,fs_d)
+    if tab=="tab-data":
+        return html.Div([
+            tab_data_selection(),
+            html.Hr(style={"borderColor": GRID_CLR, "margin": "28px 0 20px"}),
+            html.H4("Data Quality",
+                    style={"color": TEXT_MAIN, "fontWeight": "800", "letterSpacing": "1px",
+                           "marginBottom": "12px", "fontSize": "1.05rem"}),
+            tab_data_quality(fl_d, fs_d),
+        ])
+    if tab=="tab-overview":   return tab_overview(fl_d,fs_d,ft)
     if tab=="tab-teams":      return tab_teams(fl_d, fs_d)
     if tab=="tab-laps":       return tab_laps(fl_d)
     if tab=="tab-stints":     return tab_stints(fl_d,fs_d)
     if tab=="tab-teammates":  return tab_teammates(fl_d,fs_d)
     if tab=="tab-telemetry":  return tab_telemetry(fl_d,ft)
-    if tab=="tab-heatmaps":   return tab_heatmaps(fl_d,ft)
     if tab=="tab-track":      return tab_track_info()
     return html.P("Select a tab.")
 
@@ -482,7 +1060,7 @@ def render_stint_table(driver, stint_key):
     ].sort_values("LapNo")
     if sub.empty:
         return html.P("No laps found for this selection.", style={"color": TEXT_DIM})
-    cols_want  = ["Stint_key", "LapNo", "LapTime_s", "Compound", "PseudoTyreAge", "TyreLife"]
+    cols_want  = ["Stint_key", "LapNo", "LapTime_s", "Compound", "TyreAge", "LapInStint"]
     cols_avail = [c for c in cols_want if c in sub.columns]
     sub = sub[cols_avail].copy()
     if "LapTime_s" in sub.columns:
@@ -493,10 +1071,250 @@ def render_stint_table(driver, stint_key):
         columns=[{"name": c, "id": c} for c in sub.columns],
         **TABLE_STYLE,
         style_data_conditional=[
-            {"if": {"filter_query": "{PseudoTyreAge} = 1"},
+            {"if": {"filter_query": "{LapInStint} = 1"},
              "borderLeft": f"3px solid {ACCENT}"},
         ],
     )
+
+
+# ══════════════════════════════════════════════════════════════
+# TAB – DATA SELECTION  (load / unload sessions at runtime)
+# ══════════════════════════════════════════════════════════════
+def tab_data_selection() -> html.Div:
+    try:
+        return _tab_data_selection_inner()
+    except Exception as exc:
+        import traceback
+        return html.Div([
+            dbc.Alert([html.B("Data Selection error: "), str(exc)],
+                      color="danger", style={"fontSize": "0.82rem"}),
+            html.Pre(traceback.format_exc(), style={
+                "color": TEXT_DIM, "fontSize": "0.7rem", "background": "#09091A",
+                "padding": "12px", "borderRadius": "6px", "overflowX": "auto",
+            }),
+        ])
+
+
+def _tab_data_selection_inner() -> html.Div:
+    season = AVAILABLE_SEASON
+    avail  = get_available_sessions(season)
+    loaded_values = {
+        _sess_value(i["SEASON"], i["MEETING"], i["SESSION"]) for i in LOADED_SESSION_INFO
+    }
+    pre_selected = [it["value"] for it in avail if it["value"] in loaded_values]
+
+    status_banner = (
+        dbc.Alert(LAST_LOAD_MSG, color="info",
+                  style={"fontSize": "0.8rem", "borderRadius": "6px", "marginBottom": "12px"})
+        if LAST_LOAD_MSG else html.Div()
+    )
+
+    sc_style  = {"fontSize": "0.72rem", "marginRight": "6px", "marginBottom": "6px"}
+    lbl_style = {"color": TEXT_DIM, "fontSize": "0.65rem", "letterSpacing": "1px",
+                 "fontWeight": "700", "marginBottom": "4px", "display": "block"}
+
+    return html.Div([
+        html.H4("Session Data Selection",
+                style={"color": TEXT_MAIN, "fontWeight": "800", "letterSpacing": "1px",
+                       "marginBottom": "6px", "fontSize": "1.05rem"}),
+        html.P([
+            "Pick which sessions to load into the dashboard. Pick a season, then "
+            "use the shortcuts or tick individual sessions. Sessions already "
+            "downloaded are marked ",
+            html.Span("● cached", style={"color": "#00D2BE", "fontWeight": "700"}),
+            "; selecting an ",
+            html.Span("○ fetch", style={"color": "#FF8700", "fontWeight": "700"}),
+            " session downloads it from FastF1 the first time (1–3 min each).",
+        ], style={"color": TEXT_DIM, "fontSize": "0.82rem", "marginBottom": "10px"}),
+
+        status_banner,
+
+        dbc.Row([
+            kpi("CURRENTLY LOADED", str(len(SESSIONS)), ACCENT,
+                tooltip="Sessions currently active in the dashboard."),
+        ]),
+
+        card("Select Sessions", html.Div([
+            # ── Season selector ───────────────────────────────
+            dbc.Row([
+                dbc.Col([
+                    html.Label("SEASON", style=lbl_style),
+                    dcc.Dropdown(
+                        id="data-season-select",
+                        options=[{"label": str(y), "value": y} for y in SELECTABLE_SEASONS],
+                        value=season, clearable=False,
+                        style={"backgroundColor": "#111", "fontSize": "0.82rem"},
+                    ),
+                ], md=3),
+            ], className="mb-3"),
+
+            # ── Add all sessions for one circuit (one click each) ──
+            html.Label("ADD ALL SESSIONS FOR A CIRCUIT", style=lbl_style),
+            html.Div(_circuit_buttons(season), id="data-circuit-btns",
+                     style={"marginBottom": "8px"}),
+
+            # ── Shortcut buttons by session type ──────────────
+            html.Label("QUICK SELECT BY TYPE  (adds to current selection)", style=lbl_style),
+            html.Div([
+                dbc.Button("+ All Practice",   id="data-sel-practice", size="sm", color="secondary", outline=True, style=sc_style),
+                dbc.Button("+ All Qualifying", id="data-sel-quali",    size="sm", color="secondary", outline=True, style=sc_style),
+                dbc.Button("+ All Sprint",     id="data-sel-sprint",   size="sm", color="secondary", outline=True, style=sc_style),
+                dbc.Button("+ All Race",       id="data-sel-race",     size="sm", color="secondary", outline=True, style=sc_style),
+            ], style={"marginBottom": "8px"}),
+
+            html.Label("WHOLE LIST", style=lbl_style),
+            html.Div([
+                dbc.Button("Select all",         id="data-sel-all",    size="sm", color="secondary", outline=True, style=sc_style),
+                dbc.Button("Select cached only", id="data-sel-cached", size="sm", color="secondary", outline=True, style=sc_style),
+                dbc.Button("Clear",              id="data-sel-clear",  size="sm", color="secondary", outline=True, style=sc_style),
+            ], style={"marginBottom": "10px"}),
+
+            html.Div(_list_summary(season), id="data-list-summary",
+                     style={"color": TEXT_DIM, "fontSize": "0.72rem", "marginBottom": "8px"}),
+
+            # ── The scrollable session checklist ──────────────
+            html.Div(
+                dcc.Checklist(
+                    id="data-session-select",
+                    options=_session_options(season),
+                    value=pre_selected,
+                    inputStyle={"marginRight": "8px", "accentColor": ACCENT},
+                    labelStyle={"display": "block", "marginBottom": "6px",
+                                "fontSize": "0.8rem", "color": TEXT_MAIN},
+                ),
+                style={"maxHeight": "360px", "overflowY": "auto",
+                       "border": f"1px solid {GRID_CLR}", "borderRadius": "6px",
+                       "padding": "10px", "background": "#0E0E1C"},
+            ),
+
+            html.Hr(style={"borderColor": GRID_CLR}),
+            dbc.Button("⟳  Load Selected Sessions", id="data-load-btn",
+                       color="danger", style={"fontWeight": "700"}),
+            dcc.Loading(
+                type="circle", color=ACCENT,
+                children=html.Div(id="data-load-status", style={"marginTop": "12px"}),
+            ),
+        ])),
+    ])
+
+
+# ── Session selector: season switch + shortcut buttons ───────
+@app.callback(
+    Output("data-session-select", "options"),
+    Output("data-session-select", "value"),
+    Output("data-list-summary",   "children"),
+    Output("data-circuit-btns",   "children"),
+    Input("data-season-select",   "value"),
+    Input("data-sel-all",      "n_clicks"),
+    Input("data-sel-cached",   "n_clicks"),
+    Input("data-sel-clear",    "n_clicks"),
+    Input("data-sel-practice", "n_clicks"),
+    Input("data-sel-quali",    "n_clicks"),
+    Input("data-sel-sprint",   "n_clicks"),
+    Input("data-sel-race",     "n_clicks"),
+    Input({"type": "data-circuit-btn", "index": ALL}, "n_clicks"),
+    State("data-session-select", "value"),
+    prevent_initial_call=True,
+)
+def update_session_controls(season, _a, _c, _z, _p, _q, _s, _r, _circ, cur_value):
+    trig    = ctx.triggered_id
+    season  = int(season) if season else AVAILABLE_SEASON
+    avail   = get_available_sessions(season)
+    options = _session_options(season)
+    summary = _list_summary(season)
+
+    # Season switch → rebuild list + per-circuit buttons, preselect loaded sessions
+    if trig == "data-season-select":
+        loaded_values = {
+            _sess_value(i["SEASON"], i["MEETING"], i["SESSION"]) for i in LOADED_SESSION_INFO
+        }
+        value = [it["value"] for it in avail if it["value"] in loaded_values]
+        return options, value, summary, _circuit_buttons(season)
+
+    # All other triggers keep the same season → buttons untouched
+    cur = list(cur_value or [])
+    seen = set(cur)
+
+    def _union(pred):
+        for it in avail:
+            if pred(it) and it["value"] not in seen:
+                cur.append(it["value"]); seen.add(it["value"])
+        return cur
+
+    if isinstance(trig, dict) and trig.get("type") == "data-circuit-btn":
+        # Pattern-matching button can fire on (re)creation with n_clicks=None;
+        # ignore those no-op triggers.
+        if not any((ctx.triggered[0]["value"],)):
+            value = cur
+        else:
+            value = _union(lambda it: it["meeting"] == trig["index"])
+    elif trig == "data-sel-all":      value = [it["value"] for it in avail]
+    elif trig == "data-sel-cached":   value = [it["value"] for it in avail if it["cached"]]
+    elif trig == "data-sel-clear":    value = []
+    elif trig == "data-sel-practice": value = _union(lambda it: _session_type(it["session"]) == "Practice")
+    elif trig == "data-sel-quali":    value = _union(lambda it: it["session"] == "Qualifying")
+    elif trig == "data-sel-sprint":   value = _union(lambda it: _session_type(it["session"]) == "Sprint")
+    elif trig == "data-sel-race":     value = _union(lambda it: it["session"] == "Race")
+    else:                             value = cur
+
+    return options, value, summary, no_update
+
+
+# ── Load selected sessions (rebuilds app state) ──────────────
+@app.callback(
+    Output("data-load-status",  "children"),
+    Output("session-filter",    "options"),
+    Output("session-filter",    "value"),
+    Output("compound-filter",   "options"),
+    Output("compound-filter",   "value"),
+    Output("team-filter",       "options"),
+    Output("team-filter",       "value"),
+    Output("driver-filter",     "options"),
+    Output("driver-filter",     "value"),
+    Output("main-subtitle",     "children"),
+    Input("data-load-btn",      "n_clicks"),
+    State("data-session-select", "value"),
+    prevent_initial_call=True,
+)
+def load_selected(_n, selected):
+    if not selected:
+        warn = dbc.Alert("Select at least one session before loading.",
+                         color="warning", style={"fontSize": "0.8rem"})
+        return (warn, *([no_update] * 9))
+
+    info = [_parse_sess_value(v) for v in selected]
+    try:
+        msg = rebuild_state(info)
+        ok  = msg.startswith("Loaded")
+    except Exception as exc:
+        import traceback
+        return (
+            dbc.Alert([html.B("Load failed: "), str(exc),
+                       html.Pre(traceback.format_exc(),
+                                style={"fontSize": "0.68rem", "marginTop": "8px",
+                                       "whiteSpace": "pre-wrap"})],
+                      color="danger", style={"fontSize": "0.8rem"}),
+            *([no_update] * 9),
+        )
+
+    status = dbc.Alert(("✅ " if ok else "⚠️ ") + msg,
+                       color="success" if ok else "warning",
+                       style={"fontSize": "0.82rem"})
+    if not ok:
+        return (status, *([no_update] * 9))
+
+    sess_opts = [{"label": s, "value": s} for s in SESSIONS]
+    comp_opts = [{"label": html.Span(c, style={"color": COMPOUND_COLORS.get(c, "#fff")}),
+                  "value": c} for c in COMPOUNDS]
+    team_opts = [{"label": t, "value": t} for t in TEAMS]
+    drv_opts  = [{"label": d, "value": d} for d in DRIVERS]
+    subtitle  = " | ".join(SESSIONS)
+    return (status,
+            sess_opts, SESSIONS,
+            comp_opts, COMPOUNDS,
+            team_opts, TEAMS,
+            drv_opts,  DRIVERS,
+            subtitle)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -591,15 +1409,15 @@ def tab_data_quality(fl, fs):
         # add compound used on best lap
         best_lap_rows = (
             sub.loc[sub.groupby("Driver_Short")["LapTime_s"].idxmin()][
-                ["Driver_Short", "Compound", "PseudoTyreAge", "LapNo"]
+                ["Driver_Short", "Compound", "TyreAge", "LapNo"]
             ]
         )
         best = best.merge(best_lap_rows, on="Driver_Short", how="left")
         sanity_rows.append(best[["Rank","Session","Driver_Short","Team",
-                                  "Lap Time","Gap","Compound","PseudoTyreAge","LapNo"]].head(3))
+                                  "Lap Time","Gap","Compound","TyreAge","LapNo"]].head(3))
 
     sanity_df   = pd.concat(sanity_rows, ignore_index=True) if sanity_rows else pd.DataFrame()
-    sanity_cols = ["Rank","Session","Driver_Short","Team","Lap Time","Gap","Compound","PseudoTyreAge","LapNo"]
+    sanity_cols = ["Rank","Session","Driver_Short","Team","Lap Time","Gap","Compound","TyreAge","LapNo"]
     sanity_tbl  = styled_table(
         sanity_df.to_dict("records") if not sanity_df.empty else [],
         [{"name": c, "id": c} for c in sanity_cols] if not sanity_df.empty else [],
@@ -824,8 +1642,16 @@ def tab_data_quality(fl, fs):
         )] if unknown_drvs else []),
 
         # ── Coverage & breakdown ─────────────────────────────
-        card("Session Coverage (%)", dcc.Graph(figure=fig_cov, config=GFX)),
-        card("Lap Breakdown by Session", dbc.Row(breakdown_cards)),
+        card("Session Coverage (%)", dcc.Graph(figure=fig_cov, config=GFX),
+             info=("Data: every enriched lap, grouped by session. Bars show the "
+                   "share of laps that are Valid (teal) and that carry a recorded "
+                   "LapTime (orange). Why: a quick completeness check — low coverage "
+                   "means that session's pace analysis rests on few usable laps.")),
+        card("Lap Breakdown by Session", dbc.Row(breakdown_cards),
+             info=("Data: all laps per session, classified into Valid, Pit/Out-lap, "
+                   "No LapTime, Outlier (>125% of median) and Other-excluded. Why: "
+                   "shows exactly why laps are dropped before analysis, so you can "
+                   "judge how representative the surviving 'valid' laps are.")),
 
         # ── Per-session table ────────────────────────────────
         card("Per-Session Statistics", sess_tbl),
@@ -841,7 +1667,13 @@ def tab_data_quality(fl, fs):
 
         # ── Compound × Driver heatmap (sidebar-filtered) ─────
         *([card("Valid Laps: Driver × Session × Compound",
-                dcc.Graph(figure=fig_comp_heat, config=GFX))] if fig_comp_heat else []),
+                dcc.Graph(figure=fig_comp_heat, config=GFX),
+                info=("Data: count of valid laps per driver × session × compound "
+                      "(respects the sidebar filters). Why: a sample-size map — "
+                      "darker cells mean more laps, so you can see which "
+                      "driver/compound/session combinations have enough data to "
+                      "trust the pace and degradation numbers elsewhere."))]
+          if fig_comp_heat else []),
 
         # ── Raw Laps Inspector ───────────────────────────────
         card(
@@ -892,6 +1724,11 @@ def tab_data_quality(fl, fs):
                 html.P(tyre_note, style={"color": TEXT_DIM, "fontSize": "0.8rem", "marginBottom": "8px"}),
                 dcc.Graph(figure=fig_tyre, config=GFX) if fig_tyre else html.Div(),
             ]),
+            info=("Data: a random sample of up to 2000 laps that have both the raw "
+                  "TyreAge (from the source feed) and the pipeline-computed "
+                  "PseudoTyreAge. Why: each point should sit on the dashed diagonal "
+                  "if our stint/tyre-age reconstruction is correct — drift off the "
+                  "line flags a bug in the tyre-age logic."),
         ),
 
         # ── Column schema ────────────────────────────────────
@@ -905,7 +1742,7 @@ def tab_data_quality(fl, fs):
     ])
 
 
-def tab_overview(fl, fs):
+def tab_overview(fl, fs, ft=None):
     v = fl[fl["ValidLap"]]
     best = format_lap_time(v["LapTime_s"].min()) if len(v) else "—"
 
@@ -964,14 +1801,138 @@ def tab_overview(fl, fs):
     theme(fig_bub, 520, "Driver Performance Matrix – Best Lap vs Race Pace (bubble = lap count)")
     fig_bub.update_layout(xaxis_title="Best Lap Time (s)", yaxis_title="Median Lap Time (s)")
 
+    # ── Pace heatmap (Driver × Session) ───────────────────────
+    heatmap_cards = []
+    pivot = (v.groupby(["Driver_Short", "session_name"])["LapTime_s"]
+              .median().unstack(fill_value=np.nan))
+    if not pivot.empty:
+        norm = pivot.copy()
+        for col in norm.columns:
+            lo, hi = norm[col].min(), norm[col].max()
+            norm[col] = (norm[col] - lo) / (hi - lo) if hi > lo else 0.5
+        ss  = [s.split("_")[0] for s in pivot.columns]
+        avg = pivot.mean(axis=0); dvs = list(pivot.index)
+        fp = make_subplots(rows=2, cols=1, row_heights=[0.08, 0.92],
+                           vertical_spacing=0.02, shared_xaxes=True)
+        fp.add_trace(go.Heatmap(z=[avg.values], x=ss, y=["Avg"], colorscale="RdYlGn_r",
+            showscale=False,
+            text=[avg.round(3).values], texttemplate="%{text}", textfont={"size": 10},
+            hovertemplate="Session: %{x}<br>Avg: %{z:.3f} s<extra></extra>"), row=1, col=1)
+        fp.add_trace(go.Heatmap(z=norm.values, x=ss, y=dvs, colorscale="RdYlGn_r",
+            showscale=True,
+            text=pivot.round(3).values, texttemplate="%{text}", textfont={"size": 9},
+            customdata=pivot.values,
+            hovertemplate="Driver: %{y}<br>Session: %{x}<br>Median: %{customdata:.3f} s<extra></extra>",
+            colorbar=dict(title=dict(text="Norm", font=dict(color=TEXT_MAIN)),
+                          tickfont=dict(color=TEXT_MAIN))), row=2, col=1)
+        fp.update_layout(
+            title="Pace Heatmap: Driver × Session (column-normalized, red=slower)",
+            height=max(300, 80 + 26 * len(dvs)),
+            paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
+            font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=11),
+            margin=dict(l=80, r=100, t=60, b=40))
+        heatmap_cards.append(card("Driver × Session Pace Heatmap",
+                                  dcc.Graph(figure=fp, config=GFX),
+                                  info=("Data: median valid lap time per driver in "
+                                        "each session, normalised within each "
+                                        "session column (0 = fastest, red = slowest); "
+                                        "the top 'Avg' strip shows each session's raw "
+                                        "average. Why: lets you compare relative pace "
+                                        "across sessions even when absolute lap times "
+                                        "differ (fuel, track evolution, conditions).")))
+
+    # ── Cornering Speed heatmap (Driver × speed-band region) ──
+    # No TrackRegion column exists in the telemetry pipeline, so derive
+    # one here: keep only off-throttle / braking samples (i.e. the car is
+    # in a corner phase) and bucket them by speed.
+    if (ft is not None and not ft.empty
+            and "Speed" in ft.columns and "Driver_Short" in ft.columns):
+        tv = ft[ft["Speed"].notna()].copy()
+        corner_mask = pd.Series(True, index=tv.index)
+        if "Throttle" in tv.columns:
+            corner_mask &= tv["Throttle"].fillna(100) < 50
+        elif "Brake" in tv.columns:
+            corner_mask &= tv["Brake"].fillna(False).astype(bool)
+        tv = tv[corner_mask]
+
+        region_order = ["Slow Corners (<130 km/h)",
+                        "Medium Corners (130–200)",
+                        "Fast Corners (>200)"]
+        def _bucket(s):
+            if s < 130: return region_order[0]
+            if s < 200: return region_order[1]
+            return region_order[2]
+        tv["TrackRegion"] = tv["Speed"].apply(_bucket)
+
+        if not tv.empty:
+            cp = (tv.groupby(["Driver_Short", "TrackRegion"])["Speed"]
+                    .mean().unstack(fill_value=np.nan))
+            present = [r for r in region_order if r in cp.columns]
+            cp = cp.sort_index().reindex(present, axis=1)
+            cn = cp.copy()
+            for col in cn.columns:
+                lo, hi = cn[col].min(), cn[col].max()
+                cn[col] = (cn[col] - lo) / (hi - lo) if hi > lo else 0.5
+            ravg = cp.mean(axis=0); dc = list(cp.index); rg = list(cp.columns)
+            fc = make_subplots(rows=2, cols=1, row_heights=[0.1, 0.9],
+                               vertical_spacing=0.03, shared_xaxes=True)
+            fc.add_trace(go.Heatmap(z=[ravg.values], x=rg, y=["Avg"], colorscale="RdYlGn",
+                showscale=False,
+                text=[np.round(ravg.values, 1)], texttemplate="%{text}", textfont={"size": 10},
+                hovertemplate="Region: %{x}<br>Avg Speed: %{z:.1f} km/h<extra></extra>"),
+                row=1, col=1)
+            fc.add_trace(go.Heatmap(z=cn.values, x=rg, y=dc, colorscale="RdYlGn",
+                showscale=False,
+                text=np.round(cp.values, 1), texttemplate="%{text}", textfont={"size": 9},
+                customdata=cp.values,
+                hovertemplate="Driver: %{y}<br>Region: %{x}<br>Avg Speed: %{customdata:.1f} km/h<extra></extra>"),
+                row=2, col=1)
+            fc.update_layout(
+                title="Cornering Speed by Track Region<br><sup>Columns normalized for comparison</sup>",
+                height=max(900, 30 * len(dc) + 200),
+                paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
+                font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=11),
+                margin=dict(l=80, r=40, t=70, b=50))
+            fc.update_yaxes(title_text="Driver", row=2, col=1,
+                            gridcolor=GRID_CLR, zeroline=False)
+            fc.update_xaxes(title_text="Track Region", row=2, col=1,
+                            gridcolor=GRID_CLR, zeroline=False)
+            heatmap_cards.append(card("Cornering Speed by Track Region",
+                                      dcc.Graph(figure=fc, config=GFX),
+                                      info=("Data: telemetry speed samples taken only "
+                                            "while the car is in a corner phase "
+                                            "(throttle <50% or braking), averaged per "
+                                            "driver and bucketed into slow (<130 km/h), "
+                                            "medium (130–200) and fast (>200) corners; "
+                                            "columns normalised for comparison. Why: "
+                                            "reveals where each driver carries speed — "
+                                            "low-speed traction vs high-speed commitment.")))
+
     return html.Div([
         dbc.Row([kpi("BEST LAP",best,ACCENT), kpi("VALID LAPS",f"{len(v):,}","#00D2BE"),
                  kpi("DRIVERS",str(fl["Driver_Short"].nunique()),"#FF8700"),
                  kpi("SESSIONS",str(fl["session_name"].nunique()),"#FFC0CB")]),
-        dbc.Row([dbc.Col(card("Lap Time Distribution",dcc.Graph(figure=fig_vio,config=GFX)),md=8),
-                 dbc.Col(card("Compound Mix",dcc.Graph(figure=fig_pie,config=GFX)),md=4)]),
+        _driver_standings_widget(fl),
+        dbc.Row([dbc.Col(card("Lap Time Distribution",dcc.Graph(figure=fig_vio,config=GFX),
+                              info=("Data: every valid lap per driver, drawn as a "
+                                    "horizontal violin coloured by team. Why: shows "
+                                    "not just how fast a driver is but how consistent — "
+                                    "a tight violin means repeatable pace, a wide or "
+                                    "skewed one means scattered laps (traffic, errors, "
+                                    "mixed fuel/tyre runs).")),md=8),
+                 dbc.Col(card("Compound Mix",dcc.Graph(figure=fig_pie,config=GFX),
+                              info=("Data: share of laps run on each tyre compound "
+                                    "across the current filter. Why: context for the "
+                                    "pace figures — a field that ran mostly softs is "
+                                    "not directly comparable to one on hards.")),md=4)]),
         card("Team Performance Overview",tbl),
-        card("Driver Performance Matrix",dcc.Graph(figure=fig_bub,config=GFX)),
+        card("Driver Performance Matrix",dcc.Graph(figure=fig_bub,config=GFX),
+             info=("Data: each driver plotted by best lap (x) vs median lap (y); "
+                   "bubble size = number of valid laps. Why: separates one-lap "
+                   "qualifying pace from sustained race pace — bottom-left is fast "
+                   "over both, and a big gap between a driver's x and y hints at "
+                   "tyre management or traffic issues.")),
+        *heatmap_cards,
     ])
 
 # ══════════════════════════════════════════════════════════════
@@ -1024,7 +1985,10 @@ def _tab_teams_inner2(fl, fs):
     if not pairs:
         return html.P("No teams found in current filter.", style={"color": TEXT_DIM})
 
-    teams_all = sorted(pairs.keys())
+    # Default team ordering = current championship standing (leader first). Charts
+    # that rank by their own metric (% gap bars) re-sort and are unaffected; this
+    # drives the order of the per-session laps bars and any team-categorical view.
+    teams_all = _order_teams_by_champ(pairs.keys())
 
     # ── Generic helpers ───────────────────────────────────────
     def _drv_val(pool, driver, agg_fn):
@@ -1415,42 +2379,41 @@ def _tab_teams_inner2(fl, fs):
 
     # ═════════════════════════════════════════════════════════
     # CONSTRUCTOR CHAMPIONSHIP STANDINGS WIDGET
-    # Current 2026 constructor standings (after Australian GP,
-    # which is race 1 of the season and the loaded meeting).
-    # Position delta = change caused by the race sessions in fl.
+    # Data-driven & season-aware. Standings come from the historical
+    # constructor table (HIST_STANDINGS — built by fetch_historical_results.py
+    # from race points), looked up for the season + round of the meeting loaded
+    # in the Data tab:
+    #   "after"  = cumulative standings through that round,
+    #   "before" = standings through the previous round,
+    #   delta    = rank change caused by this event.
+    # It updates automatically as new rounds are fetched or another season loads.
+    # Falls back to points scored in the loaded race laps if the meeting isn't in
+    # the historical archive yet (e.g. fresh live data).
     # ═════════════════════════════════════════════════════════
+    _champ_season, _champ_round, _champ_event = _loaded_meeting_season_round()
 
-    # Hardcoded current standings after Australian GP 2026
-    # Keys must match Team names in laps data (from TEAM_COLORS)
-    _CHAMP_CURRENT: dict = {
-        "Mercedes":         43,
-        "Ferrari":          27,
-        "McLaren":          10,
-        "Red Bull Racing":   8,
-        "Haas F1 Team":      6,
-        "Racing Bulls":      4,
-        "Audi":              2,
-        "Alpine":            1,
-        "Williams":          0,
-        "Aston Martin":      0,
-        "Cadillac":          0,
-    }
+    _after_pts_src  = _standings_after_round(_champ_season, _champ_round)
+    _prev_rnd       = _prev_round(_champ_season, _champ_round)
+    _before_pts_src = _standings_after_round(_champ_season, _prev_rnd) if _prev_rnd else {}
+    _round_pts_src  = _round_points_for(_champ_season, _champ_round)
 
-    # Compute session pts scored by each team from the race/sprint sessions in fl
-    _session_team_pts: dict = {}
-    if has_race and "Race_Points" in fl.columns:
+    # Fallback: meeting not in the historical archive → derive "this event" points
+    # from the loaded race laps so the widget still shows something useful.
+    if not _after_pts_src and has_race and "Race_Points" in fl.columns:
         _pts_raw = (
             fl[fl["session_name"].isin(race_sess)]
             .groupby(["session_name", "Driver_Short", "Team"])["Race_Points"]
             .first().reset_index()
         )
         _pts_raw["Race_Points"] = pd.to_numeric(_pts_raw["Race_Points"], errors="coerce").fillna(0)
-        _by_team = _pts_raw.groupby("Team")["Race_Points"].sum()
-        _session_team_pts = _by_team.to_dict()
+        _round_pts_src  = _pts_raw.groupby("Team")["Race_Points"].sum().to_dict()
+        _after_pts_src  = dict(_round_pts_src)
+        _before_pts_src = {}
 
-    # Build before/after tables only for teams present in either dict
+    _session_team_pts = _round_pts_src
+
     _all_champ_teams = sorted(
-        set(_CHAMP_CURRENT.keys()) | set(_session_team_pts.keys())
+        set(_after_pts_src) | set(_before_pts_src) | set(_session_team_pts)
     )
 
     def _rank_by_pts(pts_dict):
@@ -1464,30 +2427,19 @@ def _tab_teams_inner2(fl, fs):
             prev_pts = p
         return rank
 
-    _after_pts   = {t: _CHAMP_CURRENT.get(t, 0) for t in _all_champ_teams}
-    _before_pts  = {t: max(0, _after_pts[t] - _session_team_pts.get(t, 0))
-                    for t in _all_champ_teams}
+    _after_pts  = {t: _after_pts_src.get(t, 0) for t in _all_champ_teams}
+    # Prefer the real previous-round standings; otherwise reconstruct as
+    # after − this-event points (keeps round-1 / fallback behaviour identical).
+    _before_pts = {
+        t: (_before_pts_src.get(t, 0) if _before_pts_src
+            else max(0, _after_pts[t] - _session_team_pts.get(t, 0)))
+        for t in _all_champ_teams
+    }
 
     _rank_after  = _rank_by_pts(_after_pts)
     _rank_before = _rank_by_pts(_before_pts)
 
     _all_before_zero = all(v == 0 for v in _before_pts.values())
-
-    def _arrow_el(delta):
-        """Green ▲ / red ▼ / dash, with delta number."""
-        if _all_before_zero:
-            return html.Span("—", style={"color": TEXT_DIM, "fontSize": "0.75rem"})
-        if delta > 0:
-            return html.Span(
-                f"▲{delta}", style={"color": "#00C04B", "fontWeight": "700",
-                                    "fontSize": "0.78rem"}
-            )
-        elif delta < 0:
-            return html.Span(
-                f"▼{abs(delta)}", style={"color": "#FF4444", "fontWeight": "700",
-                                         "fontSize": "0.78rem"}
-            )
-        return html.Span("=", style={"color": TEXT_DIM, "fontSize": "0.78rem"})
 
     # Rows sorted by current rank
     _champ_rows_sorted = sorted(
@@ -1495,124 +2447,58 @@ def _tab_teams_inner2(fl, fs):
         key=lambda t: (_rank_after.get(t, 99), -_after_pts.get(t, 0)),
     )
 
-    champ_header = html.Div(
-        [
-            html.Span("POS", style={"width": "38px",  "display": "inline-block",
-                                    "color": TEXT_DIM, "fontSize": "0.65rem",
-                                    "fontWeight": "700", "letterSpacing": "1px"}),
-            html.Span("Δ",   style={"width": "42px",  "display": "inline-block",
-                                    "color": TEXT_DIM, "fontSize": "0.65rem",
-                                    "fontWeight": "700", "letterSpacing": "1px",
-                                    "textAlign": "center"}),
-            html.Span("CONSTRUCTOR", style={"flex": "1",  "color": TEXT_DIM,
-                                             "fontSize": "0.65rem", "fontWeight": "700",
-                                             "letterSpacing": "1px"}),
-            html.Span("THIS EVENT", style={"width": "80px", "textAlign": "right",
-                                            "color": TEXT_DIM, "fontSize": "0.65rem",
-                                            "fontWeight": "700", "letterSpacing": "1px"}),
-            html.Span("TOTAL PTS",  style={"width": "80px", "textAlign": "right",
-                                            "color": TEXT_DIM, "fontSize": "0.65rem",
-                                            "fontWeight": "700", "letterSpacing": "1px"}),
-        ],
-        style={"display": "flex", "alignItems": "center",
-               "padding": "4px 10px 6px 10px",
-               "borderBottom": f"1px solid {GRID_CLR}",
-               "marginBottom": "4px"},
-    )
-
-    champ_team_rows = []
-    for t in _champ_rows_sorted:
-        clr     = TEAM_COLORS.get(t, "#808080")
-        rank_a  = _rank_after.get(t, 99)
-        rank_b  = _rank_before.get(t, 99)
-        delta   = rank_b - rank_a          # positive = moved UP in standings
-        pts_now = int(_after_pts.get(t, 0))
-        pts_evt = int(_session_team_pts.get(t, 0))
-        evt_str = f"+{pts_evt}" if pts_evt > 0 else ("—" if pts_evt == 0 else str(pts_evt))
-
-        # Bar fill representing share of leader's pts
-        leader_pts = max(_after_pts.values()) or 1
-        bar_pct = pts_now / leader_pts * 100
-
-        row = html.Div(
-            [
-                html.Span(
-                    f"P{rank_a}",
-                    style={"width": "38px", "display": "inline-block",
-                           "color": clr, "fontWeight": "800", "fontSize": "0.88rem"},
-                ),
-                html.Span(
-                    _arrow_el(delta),
-                    style={"width": "42px", "display": "inline-block",
-                           "textAlign": "center"},
-                ),
-                html.Div(
-                    [
-                        html.Span("● ", style={"color": clr, "fontSize": "0.75rem"}),
-                        html.Span(t, style={"color": TEXT_MAIN, "fontWeight": "600",
-                                             "fontSize": "0.82rem"}),
-                        # inline pts bar
-                        html.Div(
-                            html.Div(style={
-                                "width": f"{bar_pct:.1f}%",
-                                "height": "4px",
-                                "background": clr,
-                                "borderRadius": "2px",
-                                "opacity": "0.6",
-                            }),
-                            style={"width": "100%", "height": "4px",
-                                   "background": GRID_CLR, "borderRadius": "2px",
-                                   "marginTop": "4px"},
-                        ),
-                    ],
-                    style={"flex": "1", "paddingRight": "8px"},
-                ),
-                html.Span(
-                    evt_str,
-                    style={"width": "80px", "textAlign": "right",
-                           "color": "#00C04B" if pts_evt > 0 else TEXT_DIM,
-                           "fontWeight": "700" if pts_evt > 0 else "400",
-                           "fontSize": "0.82rem"},
-                ),
-                html.Span(
-                    f"{pts_now} pts",
-                    style={"width": "80px", "textAlign": "right",
-                           "color": TEXT_MAIN, "fontWeight": "700",
-                           "fontSize": "0.88rem"},
-                ),
-            ],
-            style={
-                "display": "flex", "alignItems": "center",
-                "padding": "6px 10px",
-                "borderRadius": "6px",
-                "marginBottom": "3px",
-                "background": f"linear-gradient(90deg, {clr}14 0%, transparent 60%)",
-                "border": f"1px solid {clr}28",
-            },
-        )
-        champ_team_rows.append(row)
+    _champ_from_archive = _champ_round is not None
+    _season_lbl = str(_champ_season) if _champ_season else "current"
+    if _champ_from_archive and _champ_event:
+        _subtitle_txt = f"  ·  standings after {_champ_event} (round {_champ_round})"
+    elif _champ_from_archive:
+        _subtitle_txt = f"  ·  standings after round {_champ_round}"
+    else:
+        _subtitle_txt = "  ·  points from loaded race sessions (not yet in archive)"
 
     _delta_note = (
-        "↕ change during race/sprint sessions in current filter  ·  —  = first race / no race data"
+        "↕ rank change caused by this event  ·  —  = season opener / no prior round"
         if _all_before_zero else
-        "↕ constructor rank change  vs  standings before the race sessions in current filter"
+        "↕ constructor rank change vs the standings before this event"
+    )
+
+    _champ_info = (
+        "Data: cumulative constructor points for the loaded season, summed from "
+        "every race's (and sprint's) points in the historical archive "
+        "(constructor_standings_all.parquet, built by fetch_historical_results.py). "
+        "'After' = standings through the loaded meeting's round; 'before' = the "
+        "previous round; the arrow is the rank change from this event. Re-run the "
+        "fetch to pull in newly completed rounds, or load another season to see its "
+        "table."
+    )
+
+    _champ_body = (
+        _standings_leaderboard_body(
+            _champ_rows_sorted, _rank_after, _rank_before, _after_pts, _session_team_pts,
+            color_of=lambda t: TEAM_COLORS.get(t, "#808080"),
+            primary_of=lambda t: t,
+            secondary_of=None,
+            entity_header="CONSTRUCTOR",
+            all_before_zero=_all_before_zero, delta_note=_delta_note,
+        )
+        if _all_champ_teams else
+        html.P(
+            "No constructor standings available for the loaded season. "
+            "Run fetch_historical_results.py to populate the archive.",
+            style={"color": TEXT_DIM, "fontStyle": "italic", "fontSize": "0.8rem"},
+        )
     )
 
     champ_widget = card(
         html.Span([
             "Constructor Championship  ",
-            html.Span("2026 season", style={"color": ACCENT, "fontWeight": "800"}),
-            html.Span("  ·  current standings after this event",
+            html.Span(f"{_season_lbl} season", style={"color": ACCENT, "fontWeight": "800"}),
+            html.Span(_subtitle_txt,
                       style={"color": TEXT_DIM, "fontWeight": "400",
                              "fontSize": "0.72rem", "marginLeft": "6px"}),
         ]),
-        html.Div([
-            champ_header,
-            html.Div(champ_team_rows),
-            html.P(_delta_note,
-                   style={"color": TEXT_DIM, "fontSize": "0.65rem",
-                           "marginTop": "10px", "fontStyle": "italic"}),
-        ]),
+        _champ_body,
+        info=_champ_info,
     )
 
     # ─────────────────────────────────────────────────────────
@@ -1620,10 +2506,10 @@ def _tab_teams_inner2(fl, fs):
     # ═════════════════════════════════════════════════════════
     # COLUMN HEADER HELPER
     # ═════════════════════════════════════════════════════════
-    def _col_header(emoji, title, subtitle):
+    def _col_header(title, subtitle):
         return html.Div([
             html.H5(
-                f"{emoji}  {title}",
+                title,
                 style={"color": ACCENT, "fontWeight": "800", "letterSpacing": "2px",
                        "marginBottom": "2px", "fontSize": "0.92rem", "textAlign": "center"},
             ),
@@ -1632,10 +2518,10 @@ def _tab_teams_inner2(fl, fs):
             html.Hr(style={"borderColor": GRID_CLR, "marginBottom": "12px"}),
         ])
 
-    def _maybe_card(title, fig):
+    def _maybe_card(title, fig, info=None):
         """Only add the card if the figure has at least one trace."""
         if fig and fig.data:
-            return [card(title, dcc.Graph(figure=fig, config=GFX))]
+            return [card(title, dcc.Graph(figure=fig, config=GFX), info=info)]
         return []
 
     # ═════════════════════════════════════════════════════════
@@ -1652,6 +2538,10 @@ def _tab_teams_inner2(fl, fs):
             "Race Pace – Best Stint per Compound (all sessions)",
             _compound_bars(race_pace_best_by_cmp, "Race Pace – Best Stint",
                            fmt_fn=format_lap_time, lower_is_better=True),
+            info=("Data: each team's stronger driver, fuel-corrected pace of their "
+                  "best valid stint on each compound (all sessions). Bars show the % "
+                  "gap to the fastest team on that compound. Why: the cleanest read "
+                  "on true race-run pace, separated by tyre."),
         )
 
     # Best lap overall
@@ -1659,6 +2549,9 @@ def _tab_teams_inner2(fl, fs):
         "Best Lap Overall (all sessions)",
         _hbar(best_lap_best, "Best Lap Time", fmt_fn=format_lap_time,
               lower_is_better=True, xlabel="Lap Time (s)"),
+        info=("Data: the single fastest valid lap set by either driver of each team, "
+              "across all sessions; bars show % gap to the fastest team. Why: a raw "
+              "measure of ultimate one-lap car+driver performance."),
     )
 
     # NB laps – total
@@ -1666,6 +2559,9 @@ def _tab_teams_inner2(fl, fs):
         "Total Valid Laps",
         _hbar(laps_tot_best, "Total Valid Laps",
               fmt_fn=lambda v: str(int(v)), lower_is_better=False, xlabel="Laps"),
+        info=("Data: total valid laps completed by the team's busier driver. Why: a "
+              "sample-size / reliability indicator — more laps means the other "
+              "metrics for that team rest on more evidence."),
     )
 
     # NB laps – per session
@@ -1673,13 +2569,22 @@ def _tab_teams_inner2(fl, fs):
         _f = _session_laps_bar(laps_per_sess_best, "Valid Laps per Session")
         if _f and _f.data:
             left_cards.append(card("Laps per Session",
-                                   dcc.Graph(figure=_f, config=GFX)))
+                                   dcc.Graph(figure=_f, config=GFX),
+                                   info=("Data: valid laps per team (busier driver) "
+                                         "broken down by session, as % gap to the team "
+                                         "with most laps that session. Why: shows "
+                                         "running programmes — who maximised track time "
+                                         "in each practice / qualifying / race.")))
 
     if has_race:
         left_cards += _maybe_card(
             "Pit Stop Duration",
             _hbar(pit_best, "Avg Pit Stop", fmt_fn=lambda v: f"{v:.2f}s",
                   lower_is_better=True, xlabel="Avg Pit Stop (s)"),
+            info=("Data: average stationary pit time (PitOut − PitIn of matched "
+                  "in/out laps, 1.5–65 s) for the team's faster-stopping driver, "
+                  "race/sprint only. Why: pit-crew performance, isolated from "
+                  "on-track pace."),
         )
 
     if has_quali:
@@ -1687,6 +2592,9 @@ def _tab_teams_inner2(fl, fs):
             "Qualifying Performance",
             _hbar(quali_best, "Best Quali Lap", fmt_fn=format_lap_time,
                   lower_is_better=True, xlabel="Best Quali Lap (s)"),
+            info=("Data: best qualifying time (Q3→Q2→Q1 cascade) of the team's "
+                  "quicker driver; bars show % gap to pole pace. Why: low-fuel, "
+                  "max-attack single-lap performance — the purest car+driver speed."),
         )
 
     if has_race:
@@ -1694,6 +2602,9 @@ def _tab_teams_inner2(fl, fs):
             "Race Pace (race/sprint sessions only)",
             _hbar(race_pace_perf_best, "Race Pace", fmt_fn=format_lap_time,
                   lower_is_better=True, xlabel="Race Pace (s)"),
+            info=("Data: best representative stint pace of the team's stronger driver "
+                  "in race/sprint sessions only (fuel-corrected). Why: actual race-day "
+                  "pace, which can differ markedly from one-lap qualifying speed."),
         )
         left_cards += _maybe_card(
             "Positions Gained / Lost (race/sprint)",
@@ -1701,6 +2612,9 @@ def _tab_teams_inner2(fl, fs):
                   fmt_fn=lambda v: f"+{int(v)}" if v > 0 else str(int(v)),
                   lower_is_better=False, xlabel="Pos Gained (+) / Lost (−)",
                   pct_gap=False),
+            info=("Data: grid position minus classified finish (summed over "
+                  "race/sprint sessions), best result of the two drivers. Positive = "
+                  "moved up. Why: captures race-craft and strategy, not just raw pace."),
         )
 
     # ═════════════════════════════════════════════════════════
@@ -1716,12 +2630,19 @@ def _tab_teams_inner2(fl, fs):
             "Race Pace – Avg Best Stint per Compound",
             _compound_bars(race_pace_avg_by_cmp, "Race Pace – Avg Stint",
                            fmt_fn=format_lap_time, lower_is_better=True),
+            info=("Same data as the left-column race-pace chart, but averaging both "
+                  "drivers' best stint per compound instead of taking the best one. "
+                  "Why: rewards teams with two strong cars, not just one standout; a "
+                  "missing driver falls back to the available one (never forced to 0)."),
         )
 
     right_cards += _maybe_card(
         "Average Best Lap (all sessions)",
         _hbar(best_lap_avg, "Avg Best Lap", fmt_fn=format_lap_time,
               lower_is_better=True, xlabel="Avg Best Lap (s)"),
+        info=("Data: mean of the two drivers' best valid laps per team. Why: a "
+              "two-car measure of single-lap speed — penalises line-ups that lean "
+              "on one quick driver."),
     )
 
     right_cards += _maybe_card(
@@ -1729,6 +2650,9 @@ def _tab_teams_inner2(fl, fs):
         _hbar(laps_tot_avg, "Avg Valid Laps",
               fmt_fn=lambda v: f"{v:.1f}", lower_is_better=False,
               xlabel="Avg Laps per Driver"),
+        info=("Data: average number of valid laps per driver in the team. Why: "
+              "shows typical track time per car (reliability / programme), not just "
+              "the busier driver's total."),
     )
 
     if laps_per_sess_avg:
@@ -1736,13 +2660,20 @@ def _tab_teams_inner2(fl, fs):
                                fmt_fn=lambda v: f"{v:.1f}")
         if _f and _f.data:
             right_cards.append(card("Avg Laps per Session",
-                                    dcc.Graph(figure=_f, config=GFX)))
+                                    dcc.Graph(figure=_f, config=GFX),
+                                    info=("Data: average valid laps per driver, split "
+                                          "by session, as % gap to the busiest team. "
+                                          "Why: per-session running programme on a "
+                                          "two-car basis.")))
 
     if has_race:
         right_cards += _maybe_card(
             "Avg Pit Stop Duration",
             _hbar(pit_avg, "Avg Pit Stop", fmt_fn=lambda v: f"{v:.2f}s",
                   lower_is_better=True, xlabel="Avg Pit Stop (s)"),
+            info=("Data: average stationary pit time across both drivers' stops "
+                  "(race/sprint, 1.5–65 s window). Why: overall pit-crew consistency, "
+                  "not just the single best stop."),
         )
 
     if has_quali:
@@ -1750,6 +2681,8 @@ def _tab_teams_inner2(fl, fs):
             "Avg Qualifying Performance",
             _hbar(quali_avg, "Avg Quali Lap", fmt_fn=format_lap_time,
                   lower_is_better=True, xlabel="Avg Quali Lap (s)"),
+            info=("Data: mean of both drivers' best qualifying times (Q3→Q2→Q1). "
+                  "Why: a two-car view of single-lap speed."),
         )
 
     if has_race:
@@ -1757,6 +2690,9 @@ def _tab_teams_inner2(fl, fs):
             "Avg Race Pace (race/sprint sessions only)",
             _hbar(race_pace_perf_avg, "Avg Race Pace", fmt_fn=format_lap_time,
                   lower_is_better=True, xlabel="Avg Race Pace (s)"),
+            info=("Data: mean of both drivers' best representative race/sprint stint "
+                  "pace (fuel-corrected). Why: sustained race pace measured across the "
+                  "whole line-up."),
         )
         right_cards += _maybe_card(
             "Avg Positions Gained / Lost (race/sprint)",
@@ -1764,6 +2700,9 @@ def _tab_teams_inner2(fl, fs):
                   fmt_fn=lambda v: f"+{v:.1f}" if v > 0 else f"{v:.1f}",
                   lower_is_better=False, xlabel="Avg Pos Gained (+) / Lost (−)",
                   pct_gap=False),
+            info=("Data: average grid-to-finish positions gained across both drivers. "
+                  "Positive = the team typically moved up. Why: team-wide race-craft "
+                  "and strategy outcome."),
         )
 
     # ═════════════════════════════════════════════════════════
@@ -1814,24 +2753,28 @@ def tab_laps(fl):
 
     bt=best_laps_table(fl)
     bt["Best Lap"]=bt["LapTime_s"].apply(format_lap_time)
-    disp=bt[["session_name","Driver_Short","Team","Compound","Best Lap","LapTime_s","PseudoTyreAge","LapNo"]].rename(columns={
-        "session_name":"Session","Driver_Short":"Driver","LapTime_s":"Lap Time (s)","PseudoTyreAge":"Tyre Age","LapNo":"Lap #"
+    disp=bt[["session_name","Driver_Short","Team","Compound","Best Lap","LapTime_s","TyreAge","LapNo"]].rename(columns={
+        "session_name":"Session","Driver_Short":"Driver","LapTime_s":"Lap Time (s)","TyreAge":"Tyre Age","LapNo":"Lap #"
     }).sort_values("Lap Time (s)")
     tbl=styled_table(disp.to_dict("records"),[{"name":c,"id":c} for c in disp.columns])
 
     qs=pd.DataFrame()
     if "Is_Quali_Sim" in fl.columns:
         qs=fl[(fl["Is_Quali_Sim"]==True)&fl["ValidLap"]][
-            ["session_name","Driver_Short","Team","LapNo","LapTime_s","Stint","PseudoTyreAge","Compound"]].copy()
+            ["session_name","Driver_Short","Team","LapNo","LapTime_s","Stint","TyreAge","Compound"]].copy()
         qs["Lap Time"]=qs["LapTime_s"].apply(format_lap_time)
         qs=qs.sort_values("LapTime_s").rename(columns={
             "session_name":"Session","Driver_Short":"Driver","LapNo":"Lap #",
-            "LapTime_s":"Lap Time (s)","PseudoTyreAge":"Tyre Age"})
+            "LapTime_s":"Lap Time (s)","TyreAge":"Tyre Age"})
     qs_tbl=styled_table(qs.to_dict("records") if not qs.empty else [],
                         [{"name":c,"id":c} for c in qs.columns] if not qs.empty else [])
 
     return html.Div([
-        card("Lap Time Evolution",dcc.Graph(figure=fig_evo,config=GFX)),
+        card("Lap Time Evolution",dcc.Graph(figure=fig_evo,config=GFX),
+             info=("Data: every valid lap plotted by lap number, one line per driver "
+                   "(team-coloured); each marker is tinted by the tyre compound used. "
+                   "Why: shows pace trends within a run — fuel burn-off, tyre "
+                   "degradation, traffic and safety-car spikes all show up here.")),
         card("Best Lap Leaderboard",tbl),
         card("Quali Simulation Laps (≤0.5% of personal best, tyre age ≤4)",qs_tbl),
     ])
@@ -2024,6 +2967,10 @@ def tab_stints(fl, fs):
         violin_cards.append(card(
             f"Distribution – {compound}",
             html.Div([v_note, dcc.Graph(figure=fig_v, config=GFX)]),
+            info=(f"Data: lap times from each driver's single best valid {compound} "
+                  "stint across all selected sessions (split-violin per teammate "
+                  "pair, point count shown). Why: compares teams on equal tyre, "
+                  "showing both typical pace (the body) and consistency (the spread)."),
         ))
 
     # 3. Tyre Degradation – per compound:
@@ -2136,6 +3083,7 @@ def tab_stints(fl, fs):
         # --- (b) Normalised evolution: longest clean stint per driver ---
         # Group clean laps by (driver, stint) and pick the stint with most laps
         comp_clean = clean_laps[clean_laps["Compound"] == compound].copy()
+        _age_col = "TyreAge" if "TyreAge" in comp_clean.columns else "LapInStint"
 
         fig_norm = go.Figure()
         if not comp_clean.empty:
@@ -2164,7 +3112,7 @@ def tab_stints(fl, fs):
                         & (comp_clean["session_name"] == sess)
                         & (comp_clean["Stint"] == snt)
                     ]
-                    .sort_values("LapInStint")
+                    .sort_values(_age_col)
                 )
                 baseline = df_drv.iloc[0]["LapTime_FuelCorrected"]
                 if pd.isna(baseline) or baseline <= 0:
@@ -2173,7 +3121,7 @@ def tab_stints(fl, fs):
                 delta = df_drv["LapTime_FuelCorrected"] - baseline
                 sess_label = sess.split("_")[0]
                 fig_norm.add_trace(go.Scatter(
-                    x=df_drv["LapInStint"],
+                    x=df_drv[_age_col],
                     y=delta,
                     mode="lines+markers",
                     name=f"{drv} ({n} laps, {sess_label})",
@@ -2181,8 +3129,8 @@ def tab_stints(fl, fs):
                     marker=dict(size=6, color=clr),
                     hovertemplate=(
                         f"<b>{drv}</b><br>"
-                        "Lap in stint: %{x}<br>"
-                        "Δ fuel-corrected from lap 1: %{y:+.3f} s"
+                        "Tyre age: %{x} laps<br>"
+                        "Δ fuel-corrected from stint start: %{y:+.3f} s"
                         "<extra></extra>"
                     ),
                 ))
@@ -2194,9 +3142,9 @@ def tab_stints(fl, fs):
                     fillcolor="rgba(0,200,100,0.03)", line_width=0, layer="below")
 
         theme(fig_norm, 460,
-              f"{compound} – Normalised Deg (Δ fuel-corrected vs lap 1, longest clean stint)")
+              f"{compound} – Normalised Deg (Δ fuel-corrected vs stint start, longest clean stint)")
         fig_norm.update_layout(
-            xaxis_title="Lap in Stint",
+            xaxis_title="Tyre Age (laps)",
             yaxis_title="Δ Fuel-corrected lap time (s)  ↓ better",
             legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1),
             annotations=[dict(
@@ -2207,6 +3155,14 @@ def tab_stints(fl, fs):
             )],
         )
 
+        _deg_info = (
+            f"Data ({compound}): left bar = degradation rate (s/lap) from a linear "
+            "fit on each driver's most reliable stint — the one with the highest R² "
+            "(fit quality colour-coded), fuel-corrected; right line = lap-time delta "
+            "from the start of each driver's longest clean stint. Perturbed laps "
+            "(yellow/SC/VSC/red flags) are excluded. Why: isolates how much the tyre "
+            "slows down with age — lower/flatter = better tyre management."
+        )
         if fig_bar is not None:
             deg_cards.append(card(
                 f"Tyre Degradation – {compound}",
@@ -2214,11 +3170,13 @@ def tab_stints(fl, fs):
                     dbc.Col(dcc.Graph(figure=fig_bar,  config=GFX), md=5),
                     dbc.Col(dcc.Graph(figure=fig_norm, config=GFX), md=7),
                 ]),
+                info=_deg_info,
             ))
         else:
             deg_cards.append(card(
                 f"Tyre Degradation – {compound}",
                 dcc.Graph(figure=fig_norm, config=GFX),
+                info=_deg_info,
             ))
 
     # 4. Stint Lap Inspector
@@ -2260,7 +3218,12 @@ def tab_stints(fl, fs):
     ])
 
     return html.Div([
-        card("Lap Time Evolution – All Laps", evo_layout),
+        card("Lap Time Evolution – All Laps", evo_layout,
+             info=("Data: every lap (valid or not) for the selected session, one line "
+                   "per driver, markers tinted by compound, with track-flag periods "
+                   "shaded behind (yellow / SC / VSC / red). Why: the full story of a "
+                   "session — stint lengths, pit stops, degradation and how "
+                   "interruptions reshaped the running order.")),
         *violin_cards,
         *deg_cards,
         card("Stint Lap Inspector", stint_inspector),
@@ -2289,38 +3252,66 @@ def tab_telemetry(fl, ft):
         fig_spd.update_layout(xaxis_title="Driver",yaxis_title="Max Speed (km/h)",xaxis=dict(tickangle=0,gridcolor=GRID_CLR,zeroline=False))
         fig_spd.update_yaxes(range=[lo-m,hi+m/4])
 
+    # Per-driver team lookup (precomputed once — avoids O(N) filters in loops)
+    drv_team = (
+        ft.dropna(subset=["Driver_Short"])
+          .groupby("Driver_Short")["Team"].first().to_dict()
+        if "Team" in ft.columns else {}
+    )
+
     # Gear usage stacked bar
     fig_gear=go.Figure()
     if "GearNo" in ft.columns:
         gp=(ft.groupby(["Driver_Short","Team","GearNo"]).size().reset_index(name="cnt"))
         gp["total"]=gp.groupby("Driver_Short")["cnt"].transform("sum")
         gp["pct"]=gp["cnt"]/gp["total"]*100
-        drv_ord=(ft.groupby("Driver_Short")["Driver_Short"].first().index.tolist())
+        drv_ord=sorted(gp["Driver_Short"].dropna().unique().tolist())
+        drv_colors=[TEAM_COLORS.get(drv_team.get(d,"x"),"#808080") for d in drv_ord]
         for gear in sorted(gp["GearNo"].dropna().unique()):
             sub=gp[gp["GearNo"]==gear].set_index("Driver_Short")
             fig_gear.add_trace(go.Bar(
                 x=drv_ord,
                 y=[sub.loc[d,"pct"] if d in sub.index else 0 for d in drv_ord],
                 name=f"Gear {int(gear)}",
-                marker_color=[TEAM_COLORS.get(
-                    ft[ft["Driver_Short"]==d]["Team"].iloc[0] if len(ft[ft["Driver_Short"]==d]) else "x",
-                    "#808080") for d in drv_ord],
+                marker_color=drv_colors,
                 hovertemplate="Driver: %{x}<br>Gear "+str(int(gear))+": %{y:.1f}%<extra></extra>"))
         theme(fig_gear,420,"Gear Usage Distribution by Driver")
         fig_gear.update_layout(barmode="stack",xaxis_title="Driver",yaxis_title="Time in Gear (%)")
 
-    # Channel overlay
+    # Channel overlay — telemetry has ~100k+ samples per driver per session,
+    # so without downsampling the JSON payload sent to the browser balloons
+    # to ~150 MB and the tab never finishes loading. We pick a single
+    # session (priority: Race > Qualifying > FP3 > FP2 > FP1) and decimate
+    # each driver's trace to a cap.
+    MAX_POINTS_PER_TRACE = 2000
     channels=[c for c in ["Speed","Throttle","Brake","GearNo"] if c in ft.columns]
-    fig_ch=make_subplots(rows=len(channels),cols=1,shared_xaxes=True,
+    sessions_in_ft=sorted(ft["session_name"].dropna().unique().tolist()) if "session_name" in ft.columns else []
+    _sess_priority=["Race","Sprint","Qualifying","Sprint_Qualifying","Practice_3","Practice_2","Practice_1"]
+    def _sess_rank(s):
+        prefix=str(s).split("_")[0]
+        try: return _sess_priority.index(prefix)
+        except ValueError: return len(_sess_priority)
+    sess_for_overlay=sorted(sessions_in_ft,key=_sess_rank)[0] if sessions_in_ft else None
+    overlay_pool=ft[ft["session_name"]==sess_for_overlay] if sess_for_overlay else ft
+
+    fig_ch=make_subplots(rows=max(len(channels),1),cols=1,shared_xaxes=True,
                           vertical_spacing=0.04,subplot_titles=channels)
+    for drv,sub_full in overlay_pool.groupby("Driver_Short",sort=True):
+        if sub_full.empty: continue
+        clr=TEAM_COLORS.get(drv_team.get(drv,"x"),"#808080")
+        sub_full=sub_full.sort_values("timestamp")
+        stride=max(1,len(sub_full)//MAX_POINTS_PER_TRACE)
+        if stride>1:
+            sub_full=sub_full.iloc[::stride]
+        for r,ch in enumerate(channels,start=1):
+            fig_ch.add_trace(go.Scattergl(
+                x=sub_full["timestamp"],y=sub_full[ch],mode="lines",
+                name=drv,legendgroup=drv,
+                line=dict(color=clr,width=0.8),
+                showlegend=(r==1),
+                hovertemplate=f"<b>{drv}</b><br>{ch}: %{{y}}<extra></extra>",
+            ),row=r,col=1)
     for r,ch in enumerate(channels,start=1):
-        for drv in ft["Driver_Short"].dropna().unique():
-            sub=ft[ft["Driver_Short"]==drv].sort_values("timestamp")
-            if sub.empty: continue
-            clr=TEAM_COLORS.get(sub["Team"].iloc[0] if "Team" in sub.columns else "x","#808080")
-            fig_ch.add_trace(go.Scatter(x=sub["timestamp"],y=sub[ch],mode="lines",name=drv,
-                line=dict(color=clr,width=0.8),showlegend=(r==1),
-                hovertemplate=f"<b>{drv}</b><br>{ch}: %{{y}}<extra></extra>"),row=r,col=1)
         fig_ch.update_yaxes(title_text=ch,gridcolor=GRID_CLR,zeroline=False,row=r,col=1)
     fig_ch.update_layout(height=max(140*len(channels)+60,300),
         paper_bgcolor=CARD_BG,plot_bgcolor=CARD_BG,
@@ -2328,75 +3319,36 @@ def tab_telemetry(fl, ft):
         legend=dict(bgcolor="rgba(0,0,0,0)"),margin=dict(l=60,r=20,t=60,b=40))
     fig_ch.update_xaxes(gridcolor=GRID_CLR,zeroline=False)
 
-    return html.Div([
-        dbc.Row([dbc.Col(card("Maximum Speed",dcc.Graph(figure=fig_spd,config=GFX)),md=6),
-                 dbc.Col(card("Gear Usage",   dcc.Graph(figure=fig_gear,config=GFX)),md=6)]),
-        card("Telemetry Channels (Speed / Throttle / Brake / Gear)",dcc.Graph(figure=fig_ch,config=GFX)),
+    sess_label=str(sess_for_overlay).split("_")[0] if sess_for_overlay else "no session"
+    ch_title=html.Span([
+        "Telemetry Channels (Speed / Throttle / Brake / Gear)",
+        html.Span(
+            f"  ·  {sess_label} session  ·  downsampled to ≤{MAX_POINTS_PER_TRACE:,} pts/driver",
+            style={"color":TEXT_DIM,"fontWeight":"400","fontSize":"0.72rem","marginLeft":"6px"},
+        ),
     ])
 
-# ══════════════════════════════════════════════════════════════
-# TAB 6 – HEATMAPS
-# ══════════════════════════════════════════════════════════════
-def tab_heatmaps(fl, ft):
-    out=[]
-    v=fl[fl["ValidLap"]].copy()
-
-    # Driver x Session pace heatmap
-    pivot=(v.groupby(["Driver_Short","session_name"])["LapTime_s"].median().unstack(fill_value=np.nan))
-    if not pivot.empty:
-        norm=pivot.copy()
-        for col in norm.columns:
-            lo,hi=norm[col].min(),norm[col].max()
-            norm[col]=(norm[col]-lo)/(hi-lo) if hi>lo else 0.5
-        ss=[s.split("_")[0] for s in pivot.columns]
-        avg=pivot.mean(axis=0); dvs=list(pivot.index)
-        fp=make_subplots(rows=2,cols=1,row_heights=[0.08,0.92],vertical_spacing=0.02,shared_xaxes=True)
-        fp.add_trace(go.Heatmap(z=[avg.values],x=ss,y=["Avg"],colorscale="RdYlGn_r",showscale=False,
-            text=[avg.round(3).values],texttemplate="%{text}",textfont={"size":10},
-            hovertemplate="Session: %{x}<br>Avg: %{z:.3f} s<extra></extra>"),row=1,col=1)
-        fp.add_trace(go.Heatmap(z=norm.values,x=ss,y=dvs,colorscale="RdYlGn_r",showscale=True,
-            text=pivot.round(3).values,texttemplate="%{text}",textfont={"size":9},
-            customdata=pivot.values,
-            hovertemplate="Driver: %{y}<br>Session: %{x}<br>Median: %{customdata:.3f} s<extra></extra>",
-            colorbar=dict(title=dict(text="Norm", font=dict(color=TEXT_MAIN)),tickfont=dict(color=TEXT_MAIN))),row=2,col=1)
-        fp.update_layout(title="Pace Heatmap: Driver × Session (column-normalized, red=slower)",
-            height=max(300,80+26*len(dvs)),paper_bgcolor=CARD_BG,plot_bgcolor=CARD_BG,
-            font=dict(color=TEXT_MAIN,family="Inter, sans-serif",size=11),
-            margin=dict(l=80,r=100,t=60,b=40))
-        out.append(card("Driver × Session Pace Heatmap",dcc.Graph(figure=fp,config=GFX)))
-
-    # Cornering speed heatmap (Driver x TrackRegion)
-    if (not ft.empty and "TrackRegion" in ft.columns and
-            "Speed" in ft.columns and "Driver_Short" in ft.columns):
-        tv=ft[ft["TrackRegion"].notna()&ft["Speed"].notna()].copy()
-        if not tv.empty:
-            cp=(tv.groupby(["Driver_Short","TrackRegion"])["Speed"]
-                  .mean().unstack(fill_value=np.nan))
-            cp=cp.sort_index().reindex(sorted(cp.columns),axis=1)
-            cn=cp.copy()
-            for col in cn.columns:
-                lo,hi=cn[col].min(),cn[col].max()
-                cn[col]=(cn[col]-lo)/(hi-lo) if hi>lo else 0.5
-            ravg=cp.mean(axis=0); dc=list(cp.index); rg=list(cp.columns)
-            fc=make_subplots(rows=2,cols=1,row_heights=[0.1,0.9],vertical_spacing=0.03,shared_xaxes=True)
-            fc.add_trace(go.Heatmap(z=[ravg.values],x=rg,y=["Avg"],colorscale="RdYlGn",showscale=False,
-                text=[np.round(ravg.values,1)],texttemplate="%{text}",textfont={"size":10},
-                hovertemplate="Region: %{x}<br>Avg Speed: %{z:.1f} km/h<extra></extra>"),row=1,col=1)
-            fc.add_trace(go.Heatmap(z=cn.values,x=rg,y=dc,colorscale="RdYlGn",showscale=False,
-                text=np.round(cp.values,1),texttemplate="%{text}",textfont={"size":9},
-                customdata=cp.values,
-                hovertemplate="Driver: %{y}<br>Region: %{x}<br>Avg Speed: %{customdata:.1f} km/h<extra></extra>"),row=2,col=1)
-            fc.update_layout(
-                title="Cornering Speed by Track Region<br><sup>Columns normalized for comparison</sup>",
-                height=max(900,30*len(dc)+200),paper_bgcolor=CARD_BG,plot_bgcolor=CARD_BG,
-                font=dict(color=TEXT_MAIN,family="Inter, sans-serif",size=11),
-                margin=dict(l=80,r=40,t=70,b=50))
-            fc.update_yaxes(title_text="Driver",row=2,col=1,gridcolor=GRID_CLR,zeroline=False)
-            fc.update_xaxes(title_text="Track Region",row=2,col=1,gridcolor=GRID_CLR,zeroline=False)
-            out.append(card("Cornering Speed by Track Region",dcc.Graph(figure=fc,config=GFX)))
-
-    return html.Div(out) if out else html.P("Not enough data.",style={"color":TEXT_DIM})
-
+    return html.Div([
+        dbc.Row([dbc.Col(card("Maximum Speed",dcc.Graph(figure=fig_spd,config=GFX),
+                              info=(f"Data: the {SPEED_PERCENTILE}th-percentile speed "
+                                    "from each driver's telemetry (a robust 'top speed' "
+                                    "that ignores one-off GPS spikes), team-coloured. "
+                                    "Why: a proxy for straight-line speed / power-unit "
+                                    "and drag — engine and wing-level differences show "
+                                    "up clearly.")),md=6),
+                 dbc.Col(card("Gear Usage",   dcc.Graph(figure=fig_gear,config=GFX),
+                              info=("Data: share of telemetry samples spent in each "
+                                    "gear, per driver (stacked to 100%). Why: a "
+                                    "fingerprint of how the lap is driven and of "
+                                    "gearing/setup choices — circuits and styles favour "
+                                    "different gear distributions.")),md=6)]),
+        card(ch_title, dcc.Graph(figure=fig_ch,config=GFX),
+             info=("Data: raw Speed, Throttle, Brake and Gear telemetry traces over a "
+                   "lap for each selected driver, from one session (Race > Quali > FP, "
+                   "downsampled for the browser). Why: a direct overlay of driving "
+                   "inputs — where drivers brake, get on throttle and shift, lap "
+                   "against lap.")),
+    ])
 
 # ══════════════════════════════════════════════════════════════
 # TAB 7 – TEAMMATE COMPARISON
@@ -2468,7 +3420,10 @@ def _tab_teammates_inner(fl, fs):
             "No complete teammate pairs in current filter — widen driver / team selection.",
             style={"color": TEXT_DIM},
         )
-    teams_sorted = sorted(pairs.keys())
+    # Order teams by current championship standing (leader first). This flows into
+    # the scoreboard cards and every head-to-head gap chart, which otherwise had no
+    # inherently meaningful team order (they were alphabetical).
+    teams_sorted = _order_teams_by_champ(pairs.keys())
 
     # ── 2. Generic metric helpers ─────────────────────────────
 
@@ -2571,6 +3526,8 @@ def _tab_teammates_inner(fl, fs):
                 x=1.0, y=-0.16, xanchor="right", showarrow=False,
                 font=dict(size=9, color=TEXT_DIM),
             )
+        # rows arrive in championship order (leader first) → show leader on top
+        fig.update_yaxes(autorange="reversed")
         return fig
 
     # Butterfly removed — all charts now use the same diverging gap style.
@@ -2918,6 +3875,11 @@ def _tab_teammates_inner(fl, fs):
             ),
         ]),
         dbc.Row(sb_items),
+        info=("Data: for each team, the two teammates are compared across every "
+              "metric below (pace per compound, quali, consistency, laps, pit stops, "
+              "finish, positions gained, overtakes, points). Each metric counts as one "
+              "'win'; the score and bar tally those wins. Why: the fairest way to rate "
+              "drivers — against the one person in identical machinery."),
     )
 
     # ══════════════════════════════════════════════════════════
@@ -2961,6 +3923,10 @@ def _tab_teammates_inner(fl, fs):
                              "fontSize": "0.75rem", "marginLeft": "8px"}),
         ]),
         dbc.Row(pace_col_items),
+        info=("Data: each teammate's fuel-corrected pace on their best valid stint per "
+              "compound (all sessions). One diverging bar per team — it points left "
+              "when the left/teal driver is faster, right when the right/orange driver "
+              "is. Why: compares teammates on equal tyres, the cleanest race-pace duel."),
     )
 
     # ══════════════════════════════════════════════════════════
@@ -2990,6 +3956,10 @@ def _tab_teammates_inner(fl, fs):
             dbc.Col(dcc.Graph(figure=cons_fig, config=GFX), md=7),
             dbc.Col(dcc.Graph(figure=laps_fig, config=GFX), md=5),
         ]),
+        info=("Data: left = lap-time consistency (IQR ÷ median × 100 of valid "
+              "non-perturbed laps; lower = tighter, more repeatable); right = total "
+              "valid laps each teammate ran. Why: consistency is a key driver skill, "
+              "and lap volume tells you how solid the comparison is."),
     )
 
     # ══════════════════════════════════════════════════════════
@@ -3152,7 +4122,13 @@ def _tab_teammates_inner(fl, fs):
     sections = [scoreboard, race_pace_section, consistency_section]
 
     if quali_col_items:
-        sections.append(card("Qualifying", dbc.Row(quali_col_items)))
+        sections.append(card(
+            "Qualifying", dbc.Row(quali_col_items),
+            info=("Data: teammate single-lap qualifying comparison — best quali-sim "
+                  "lap and/or the classified Q3→Q2→Q1 time. Bars diverge toward the "
+                  "faster driver. Why: qualifying pace decides grid position and is a "
+                  "clean low-fuel speed test."),
+        ))
 
     if race_col_items:
         sections.append(card(
@@ -3165,6 +4141,10 @@ def _tab_teammates_inner(fl, fs):
                 ),
             ]),
             dbc.Row(race_col_items),
+            info=("Data: teammate race-day comparison from race/sprint sessions — pit "
+                  "stop time, finish position, positions gained, overtakes and "
+                  "championship points. Each bar diverges toward the better driver. "
+                  "Why: separates race-craft, strategy and results from pure pace."),
         ))
 
     return html.Div(sections)
@@ -3222,6 +4202,12 @@ _FF1_CIRCUIT_META: dict = {
     "mexique":         {"length_km": 4.304, "corners": 17, "drs_zones": 3, "lap_record": "1:17.774", "lap_record_driver": "Valtteri Bottas",     "lap_record_year": 2021},
     "bresil":          {"length_km": 4.309, "corners": 15, "drs_zones": 2, "lap_record": "1:10.540", "lap_record_driver": "Valtteri Bottas",     "lap_record_year": 2018},
     "abu_dhabi":       {"length_km": 5.281, "corners": 16, "drs_zones": 2, "lap_record": "1:26.103", "lap_record_driver": "Max Verstappen",      "lap_record_year": 2021},
+    "australie":       {"length_km": 5.278, "corners": 14, "drs_zones": 4, "lap_record": "1:19.813", "lap_record_driver": "Charles Leclerc",     "lap_record_year": 2024},
+    "bahrein":         {"length_km": 5.412, "corners": 15, "drs_zones": 3, "lap_record": "1:31.447", "lap_record_driver": "Pedro de la Rosa",    "lap_record_year": 2005},
+    "chine":           {"length_km": 5.451, "corners": 16, "drs_zones": 2, "lap_record": "1:32.238", "lap_record_driver": "Michael Schumacher",  "lap_record_year": 2004},
+    "emilie_romagne":  {"length_km": 4.909, "corners": 19, "drs_zones": 2, "lap_record": "1:15.484", "lap_record_driver": "Lewis Hamilton",      "lap_record_year": 2020},
+    "miami":           {"length_km": 5.412, "corners": 19, "drs_zones": 3, "lap_record": "1:29.708", "lap_record_driver": "Max Verstappen",      "lap_record_year": 2023},
+    "las_vegas":       {"length_km": 6.201, "corners": 17, "drs_zones": 2, "lap_record": "1:35.490", "lap_record_driver": "Oscar Piastri",       "lap_record_year": 2023},
 }
 
 # ── Notable corners by circuit ────────────────────────────────
@@ -3244,6 +4230,12 @@ _NOTABLE_CORNERS: dict = {
     "mexique":         ["T1 Peraltada modified", "T4 Esses", "T12 Stadium S"],
     "bresil":          ["T1 Curva do Sol", "T2 Senna S", "T6 Ferradura", "T11 Junção", "T13 Subida dos Boxes"],
     "abu_dhabi":       ["T7 Hairpin", "T9 Marina", "T11 Bab Al Shams", "T13 Turn 13"],
+    "australie":       ["T1-T3 opening complex", "T6 fast left", "T9-T10 sweepers", "T11-T12 high speed", "T13 final corner"],
+    "bahrein":         ["T1 heavy braking", "T4 hairpin", "T8 left-hander", "T10 hairpin", "T11-T13 esses"],
+    "chine":           ["T1-T4 snail spiral", "T6 hairpin", "T11-T13 long hairpin", "T14 onto back straight"],
+    "emilie_romagne":  ["T2-T3 Tamburello chicane", "T5 Villeneuve", "T7-T8 Acque Minerali", "T9-T10 Variante Alta", "T14-T15 Rivazza"],
+    "miami":           ["T1 Turn 1", "T4-T6 esses", "T7-T8 sweepers", "T11-T16 technical sector", "T17 final corner"],
+    "las_vegas":       ["T1-T2 opening", "T5-T7 chicane", "T9 hairpin", "T12 Sphere corner", "T14 onto the Strip", "T16-T17 final"],
 }
 
 # ── Radar chart for circuit demand profile ────────────────────
@@ -3496,6 +4488,211 @@ def _tyre_history_chart(laps_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+# ══════════════════════════════════════════════════════════════
+# TRACK MAP — circuit layout, corner annotations, gear-shift map
+# (recreates the FastF1 examples in Plotly; data fetched on demand
+#  from a fast lap and cached to data/track_maps/ for instant reuse)
+# ══════════════════════════════════════════════════════════════
+import json as _json
+
+TRACK_MAPS_DIR = Path("data/track_maps")
+
+# Distinct colours for gears 1–8 (readable on the dark theme).
+GEAR_COLORS = {
+    1: "#3B82F6", 2: "#22D3EE", 3: "#10B981", 4: "#A3E635",
+    5: "#FACC15", 6: "#FB923C", 7: "#EF4444", 8: "#E879F9",
+}
+
+
+def _rotate(x, y, angle):
+    """Rotate point(s) (x, y) by *angle* radians — matches FastF1's example."""
+    ca, sa = np.cos(angle), np.sin(angle)
+    return x * ca - y * sa, x * sa + y * ca
+
+
+def _track_map_slug(text: str) -> str:
+    import re
+    return re.sub(r"[^A-Za-z0-9]+", "_", str(text)).strip("_").lower()
+
+
+def _track_map_paths(season, event_name, session_id):
+    base = TRACK_MAPS_DIR / f"{season}_{_track_map_slug(event_name)}_{session_id}"
+    return {
+        "line":    base.with_suffix(".parquet"),
+        "corners": Path(str(base) + "_corners.parquet"),
+        "meta":    base.with_suffix(".json"),
+    }
+
+
+def get_track_map(season, event_name, session_id="Q", force=False) -> dict | None:
+    """
+    Return {line: DataFrame[X,Y,gear,Speed], corners: DataFrame, rotation,
+            driver, laptime, event, session} for the fastest lap of the given
+    session. Cached to data/track_maps/. Returns None if no lap/telemetry.
+    """
+    paths = _track_map_paths(season, event_name, session_id)
+
+    if not force and paths["line"].exists() and paths["meta"].exists():
+        line = pd.read_parquet(paths["line"])
+        corners = (pd.read_parquet(paths["corners"])
+                   if paths["corners"].exists() else pd.DataFrame())
+        with open(paths["meta"], "r", encoding="utf-8") as fh:
+            meta = _json.load(fh)
+        return {"line": line, "corners": corners, **meta}
+
+    import fastf1
+    fastf1.Cache.enable_cache(str(Path(FASTF1_CACHE_DIR)))
+    sess = fastf1.get_session(int(season), event_name, session_id)
+    sess.load(laps=True, telemetry=True, weather=False, messages=False)
+
+    lap = sess.laps.pick_fastest()
+    if lap is None or (hasattr(lap, "empty") and getattr(lap, "empty", False)):
+        return None
+    tel = lap.get_telemetry()
+    if tel is None or tel.empty or not {"X", "Y", "nGear"}.issubset(tel.columns):
+        return None
+
+    line = (tel[["X", "Y", "nGear", "Speed"]]
+            .rename(columns={"nGear": "gear"})
+            .dropna(subset=["X", "Y"])
+            .reset_index(drop=True))
+    line["gear"] = line["gear"].fillna(0).astype(int)
+
+    rotation = 0.0
+    corners = pd.DataFrame()
+    try:
+        ci = sess.get_circuit_info()
+        rotation = float(ci.rotation)
+        corners = ci.corners[["Number", "Letter", "X", "Y", "Angle"]].copy()
+    except Exception as exc:
+        logging.warning("circuit_info unavailable for %s %s: %s", season, event_name, exc)
+
+    laptime = lap["LapTime"]
+    laptime_s = laptime.total_seconds() if pd.notna(laptime) else float("nan")
+    meta = {
+        "rotation": rotation,
+        "driver":   str(lap.get("Driver", "")),
+        "laptime":  format_lap_time(laptime_s),
+        "event":    event_name,
+        "season":   int(season),
+        "session":  session_id,
+    }
+
+    TRACK_MAPS_DIR.mkdir(parents=True, exist_ok=True)
+    line.to_parquet(paths["line"], index=False)
+    if not corners.empty:
+        corners.to_parquet(paths["corners"], index=False)
+    with open(paths["meta"], "w", encoding="utf-8") as fh:
+        _json.dump(meta, fh)
+
+    return {"line": line, "corners": corners, **meta}
+
+
+def _track_map_layout(fig: go.Figure, title: str, height: int = 480) -> go.Figure:
+    fig.update_layout(
+        title=title, height=height,
+        paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
+        font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=11),
+        margin=dict(l=20, r=20, t=60, b=20),
+        showlegend=True,
+        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1),
+    )
+    axkw = dict(showgrid=False, zeroline=False, visible=False)
+    fig.update_xaxes(**axkw)
+    fig.update_yaxes(scaleanchor="x", scaleratio=1, **axkw)
+    return fig
+
+
+def _fig_corner_map(tm: dict) -> go.Figure:
+    line = tm["line"]
+    ang  = tm["rotation"] / 180.0 * np.pi
+    xr, yr = _rotate(line["X"].to_numpy(), line["Y"].to_numpy(), ang)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=xr, y=yr, mode="lines", line=dict(color=TEXT_MAIN, width=2),
+        name="Track", hoverinfo="skip", showlegend=False,
+    ))
+
+    corners = tm.get("corners")
+    if corners is not None and not corners.empty:
+        OFFSET = 600.0  # distance to push the label off the track (track units)
+        conn_x, conn_y, mk_x, mk_y, labels = [], [], [], [], []
+        for _, c in corners.iterrows():
+            off_ang = c["Angle"] / 180.0 * np.pi
+            ox, oy  = _rotate(OFFSET, 0.0, off_ang)
+            tx, ty  = _rotate(c["X"] + ox, c["Y"] + oy, ang)   # label position
+            cx, cy  = _rotate(c["X"], c["Y"], ang)             # on-track position
+            conn_x += [cx, tx, None]; conn_y += [cy, ty, None]
+            mk_x.append(tx); mk_y.append(ty)
+            letter = "" if pd.isna(c["Letter"]) else str(c["Letter"])
+            labels.append(f"{int(c['Number'])}{letter}")
+
+        fig.add_trace(go.Scatter(
+            x=conn_x, y=conn_y, mode="lines",
+            line=dict(color=TEXT_DIM, width=1), hoverinfo="skip", showlegend=False,
+        ))
+        fig.add_trace(go.Scatter(
+            x=mk_x, y=mk_y, mode="markers+text",
+            marker=dict(size=20, color="#444", line=dict(color=TEXT_DIM, width=1)),
+            text=labels, textfont=dict(color=TEXT_MAIN, size=9),
+            textposition="middle center", hoverinfo="text", hovertext=labels,
+            name="Corners", showlegend=False,
+        ))
+
+    title = f"Circuit Layout & Corners — {tm['event']} {tm['season']}"
+    return _track_map_layout(fig, title)
+
+
+def _fig_gear_map(tm: dict) -> go.Figure:
+    line = tm["line"]
+    ang  = tm["rotation"] / 180.0 * np.pi
+    xr, yr = _rotate(line["X"].to_numpy(), line["Y"].to_numpy(), ang)
+    gear = line["gear"].to_numpy()
+
+    fig = go.Figure()
+    for g in range(1, 9):
+        xs, ys = [], []
+        for i in range(len(gear) - 1):
+            if gear[i] == g:
+                xs += [xr[i], xr[i + 1], None]
+                ys += [yr[i], yr[i + 1], None]
+        if not xs:
+            continue
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="lines",
+            line=dict(color=GEAR_COLORS.get(g, "#808080"), width=4),
+            name=f"Gear {g}", connectgaps=False,
+            hovertemplate=f"Gear {g}<extra></extra>",
+        ))
+
+    drv = f" — {tm['driver']} {tm['laptime']}" if tm.get("driver") else ""
+    title = f"Gear Shifts on Track{drv}"
+    fig = _track_map_layout(fig, title)
+    fig.update_layout(legend=dict(
+        title=dict(text="Gear", font=dict(color=TEXT_MAIN, size=10)),
+        bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1,
+        orientation="v",
+    ))
+    return fig
+
+
+def _resolve_track_event(circuit_key: str, year):
+    """Map a Track-Info circuit slug + year to a (season, event_name) FastF1
+    can fetch, using the historical results table. Prefers the requested
+    year, else the most recent season available for that circuit."""
+    hist_keys = HIST_CIRCUIT_KEY_MAP.get(circuit_key, [circuit_key])
+    if HIST_RACE.empty or "circuit_key" not in HIST_RACE.columns:
+        return None, None
+    sub = HIST_RACE[HIST_RACE["circuit_key"].isin(hist_keys)]
+    if sub.empty:
+        return None, None
+    if year is not None and (sub["season"] == year).any():
+        sub = sub[sub["season"] == year]
+    row = sub.sort_values("season").iloc[-1]
+    return int(row["season"]), str(row["event_name"])
+
+
 # ── Main track tab layout builder ────────────────────────────
 def tab_track_info() -> html.Div:
     if CIRCUIT_CHARS.empty:
@@ -3507,12 +4704,14 @@ def tab_track_info() -> html.Div:
             )
         ])
 
-    # Build dropdown options
-    options = [
-        {"label": row["grand_prix_fr"], "value": row["circuit_key"]}
-        for _, row in CIRCUIT_CHARS.iterrows()
-    ]
-    default_key = CIRCUIT_CHARS["circuit_key"].iloc[0]
+    # Build dropdown options — sorted alphabetically by name so the list
+    # stays navigable as new circuits are appended to the CSV.
+    options = sorted(
+        [{"label": row["grand_prix_fr"], "value": row["circuit_key"]}
+         for _, row in CIRCUIT_CHARS.iterrows()],
+        key=lambda o: o["label"],
+    )
+    default_key = options[0]["value"] if options else None
 
     # Historical year options
     avail_years = sorted(set(
@@ -3660,6 +4859,11 @@ def update_track_content(circuit_key: str, hist_year: int):
         dcc.Graph(figure=sector_fig, config=GFX) if sector_fig.data else
         html.P("No sector time data available for the current session.",
                style={"color": TEXT_DIM}),
+        info=("Data: each driver's best time in sectors 1/2/3 from the currently "
+              "loaded meeting's valid laps, shown as % gap to the fastest driver in "
+              "that sector (green = fastest, red = slowest). Why: pinpoints where on "
+              "the lap a driver gains or loses — a strong car can still be weak in "
+              "one sector type."),
     )
 
     # ── Section 6: Tyre usage (current meeting) ───────────────
@@ -3668,16 +4872,44 @@ def update_track_content(circuit_key: str, hist_year: int):
         "Tyre Compound Usage — Current Meeting",
         dcc.Graph(figure=tyre_fig, config=GFX) if tyre_fig.data else
         html.P("No compound data available.", style={"color": TEXT_DIM}),
+        info=("Data: number of valid laps run on each compound, stacked per session, "
+              "for the currently loaded meeting. Why: shows how teams spread their "
+              "tyre allocation across the weekend and which compounds saw real running."),
+    )
+
+    # ── Section 6b: Track map (corner layout + gear shifts) ───
+    track_map_section = card(
+        "Track Map — Circuit Layout & Gear Shifts",
+        info=("Data: the X/Y position and gear trace of the fastest qualifying lap "
+              "for this circuit (FastF1 telemetry), plus FastF1's numbered corner "
+              "markers. Why: shows the racing line and where each gear is used — a "
+              "visual reference for the corner and sector analysis above."),
+        children=html.Div([
+            html.P([
+                "Circuit layout with numbered corners and a gear-shift map, "
+                "built from the fastest qualifying lap (FastF1 telemetry). The "
+                "first build for a circuit downloads telemetry (1–3 min); it is "
+                "cached afterwards for instant reuse.",
+            ], style={"color": TEXT_DIM, "fontSize": "0.8rem", "marginBottom": "10px"}),
+            dbc.Button("Generate track map", id="track-map-btn",
+                       color="info", outline=True, size="sm",
+                       style={"fontWeight": "700"}),
+            dcc.Loading(
+                type="circle", color=ACCENT,
+                children=html.Div(id="track-map-content", style={"marginTop": "12px"}),
+            ),
+        ]),
     )
 
     # ── Section 7: Historical leaderboards ───────────────────
     hist_blocks = []
     if hist_year and not HIST_RACE.empty and not HIST_QUALI.empty:
-        # Filter by circuit key
+        hist_keys = HIST_CIRCUIT_KEY_MAP.get(circuit_key, [circuit_key])
+
         def _filter_circuit(df):
             if df.empty or "circuit_key" not in df.columns:
                 return pd.DataFrame()
-            return df[df["circuit_key"] == circuit_key].copy()
+            return df[df["circuit_key"].isin(hist_keys)].copy()
 
         race_df  = _filter_circuit(HIST_RACE)
         quali_df = _filter_circuit(HIST_QUALI)
@@ -3729,6 +4961,12 @@ def update_track_content(circuit_key: str, hist_year: int):
                     html.Div(style={"height": "8px"}),
                     tbl,
                 ]),
+                info=(f"Data: the official {sess_type.lower()} classification for this "
+                      "circuit in the selected season, from the historical results "
+                      "archive (fetch_historical_results.py). Bars are ordered by "
+                      "finishing/grid position and team-coloured; hover for time and "
+                      "gap. Why: historical context for how this circuit usually "
+                      "races and who has gone well here."),
             ))
     elif HIST_RACE.empty and HIST_QUALI.empty:
         hist_blocks.append(dbc.Alert(
@@ -3741,12 +4979,68 @@ def update_track_content(circuit_key: str, hist_year: int):
     return html.Div([
         header,
         stats_pills,
-        card("Circuit Profile", chars_block),
+        card("Circuit Profile", chars_block,
+             info=("Data: the circuit's demand ratings (average speed, full throttle, "
+                   "lateral load, tyre degradation, tyre difficulty), each scored 1–4 "
+                   "from data/circuit_characteristics.csv and drawn as a radar. Why: a "
+                   "fingerprint of what a track demands — useful context for why pace "
+                   "and tyre behaviour differ between venues.")),
         corners_section,
         sector_section,
         tyre_section,
+        track_map_section,
         *hist_blocks,
     ])
+
+
+# ── Track-map callback (on-demand FastF1 fetch + render) ─────
+@app.callback(
+    Output("track-map-content", "children"),
+    Input("track-map-btn",      "n_clicks"),
+    State("track-circuit-select", "value"),
+    State("track-year-select",    "value"),
+    prevent_initial_call=True,
+)
+def render_track_map(_n, circuit_key, year):
+    if not circuit_key:
+        return dbc.Alert("Select a circuit first.", color="warning",
+                         style={"fontSize": "0.8rem"})
+
+    season, event_name = _resolve_track_event(circuit_key, year)
+    if not event_name:
+        return dbc.Alert(
+            "Couldn't map this circuit to a FastF1 event (no historical entry). "
+            "Track maps need a season with results for this circuit.",
+            color="warning", style={"fontSize": "0.8rem"})
+
+    tm = None
+    last_exc = None
+    for sess_id in ("Q", "R"):           # quali gives the cleanest fast lap; fall back to race
+        try:
+            tm = get_track_map(season, event_name, sess_id)
+            if tm is not None:
+                break
+        except Exception as exc:
+            last_exc = exc
+    if tm is None:
+        msg = f"No telemetry available for {event_name} {season}."
+        if last_exc:
+            msg += f"  ({last_exc})"
+        return dbc.Alert(msg, color="danger", style={"fontSize": "0.8rem"})
+
+    note = html.P(
+        f"Fastest lap: {tm.get('driver','?')} · {tm.get('laptime','?')} · "
+        f"{event_name} {season} {tm.get('session','')} qualifying",
+        style={"color": TEXT_DIM, "fontSize": "0.74rem", "marginBottom": "8px"},
+    )
+    return html.Div([
+        note,
+        dbc.Row([
+            dbc.Col(dcc.Graph(figure=_fig_corner_map(tm), config=GFX), md=6),
+            dbc.Col(dcc.Graph(figure=_fig_gear_map(tm),   config=GFX), md=6),
+        ]),
+    ])
+
 
 if __name__=="__main__":
     app.run(debug=True, host="0.0.0.0", port=8050)

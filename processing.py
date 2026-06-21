@@ -304,7 +304,10 @@ def _degradation_rate(group: pd.DataFrame) -> pd.Series:
     if len(group) < 3:
         return nan_result
 
-    x = group["LapInStint"].values.astype(float)
+    # Use the real tyre age (FastF1 TyreLife → TyreAge) as the degradation
+    # x-axis; fall back to LapInStint only if it is unavailable.
+    _age_col = "TyreAge" if "TyreAge" in group.columns else "LapInStint"
+    x = group[_age_col].values.astype(float)
     y = group["LapTime_FuelCorrected"].values.astype(float)
     mask = np.isfinite(x) & np.isfinite(y)
     if mask.sum() < 3:
@@ -341,7 +344,7 @@ def analyze_stints(df: pd.DataFrame) -> pd.DataFrame:
     """
     valid = df[df["ValidLap"]].copy()
 
-    _tyre_start_col = "TyreLife" if "TyreLife" in valid.columns else "LapInStint"
+    _tyre_start_col = "TyreAge" if "TyreAge" in valid.columns else "LapInStint"
 
     stint_summary = (
         valid.groupby(["session_name", "Driver_Short", "Team", "Stint", "Compound"])
@@ -473,9 +476,13 @@ def identify_quali_sim_laps(
     valid = valid.merge(best_laps, on=["session_name", "Driver_Short", "Compound"], how="left")
     valid["Delta_To_Best_pct"] = (valid["LapTime_s"] - valid["Best_Lap"]) / valid["Best_Lap"] * 100
 
+    # Prefer the real tyre age; fall back to PseudoTyreAge per-row where the
+    # raw TyreAge is missing.
+    _age = (valid["TyreAge"].fillna(valid["PseudoTyreAge"])
+            if "TyreAge" in valid.columns else valid["PseudoTyreAge"])
     valid["Is_Quali_Sim"] = (
         (valid["Delta_To_Best_pct"] <= delta_pct_threshold)
-        & (valid["PseudoTyreAge"] <= max_tyre_age)
+        & (_age <= max_tyre_age)
     )
 
     df = df.merge(

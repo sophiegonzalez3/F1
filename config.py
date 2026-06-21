@@ -19,6 +19,19 @@ TEAM_COLORS: dict[str, str] = {
     "Audi":           "#828788",
     "Cadillac":       "#C0A020",
     "Sauber":         "#00E701",
+
+    # ── Alternate / historical team names ────────────────────
+    # Older seasons in the historical archive (and some data sources) name the
+    # same constructors differently. Without these, those teams fall through to
+    # the grey "#808080" fallback — producing the inconsistent, partly-grey
+    # leaderboards seen when a circuit's most recent data is a past season.
+    # Each alias is coloured to match its lineage so a team keeps one identity
+    # across every season and circuit.
+    "RB":                 "#2B4562",   # Racing Bulls (2024 name)
+    "AlphaTauri":         "#2B4562",   # Racing Bulls lineage (2021–23)
+    "Kick Sauber":        "#00E701",   # Sauber (2024–25 name)
+    "Alfa Romeo":         "#900000",   # Sauber lineage, Alfa-Romeo red (2022)
+    "Alfa Romeo Racing":  "#900000",   # Sauber lineage, Alfa-Romeo red (2021)
 }
 
 COMPOUND_COLORS: dict[str, str] = {

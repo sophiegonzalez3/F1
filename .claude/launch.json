@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "f1-dashboard",
+      "runtimeExecutable": "C:/Users/sophi/anaconda3/python.exe",
+      "runtimeArgs": ["app.py"],
+      "port": 8050,
+      "autoPort": true
+    }
+  ]
+}

@@ -346,7 +346,7 @@ HIST_CIRCUIT_KEY_MAP: dict[str, list[str]] = {
     "belgique":        ["belgian_grand_prix"],
     "bresil":          ["s\xe3o_paulo_grand_prix", "brazilian_grand_prix"],
     "canada":          ["canadian_grand_prix"],
-    "espagne":         ["spanish_grand_prix"],
+    "espagne":         ["spanish_grand_prix", "barcelona_grand_prix"],
     "etats_unis":      ["united_states_grand_prix"],
     "grande_bretagne": ["british_grand_prix"],
     "hongrie":         ["hungarian_grand_prix"],
@@ -395,6 +395,93 @@ def _loaded_meeting_season_round() -> tuple[int | None, int | None, str | None]:
         ):
             best = (season, rnd, event)
     return best
+
+
+# ── Track-Info ↔ loaded-meeting bridge ───────────────────────
+# Reverse of HIST_CIRCUIT_KEY_MAP: historical slug → Track-Info (French) slug.
+_HIST_TO_FR_KEY: dict[str, str] = {
+    hk: fr for fr, hks in HIST_CIRCUIT_KEY_MAP.items() for hk in hks
+}
+
+
+def _slugify_event(name) -> str:
+    import re
+    return re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")
+
+
+def _loaded_event() -> tuple[int | None, str | None]:
+    """(season, meeting) of the currently loaded meeting, robust to standings
+    gaps — falls back to LOADED_SESSION_INFO when round lookup fails."""
+    season, _rnd, meeting = _loaded_meeting_season_round()
+    if (season is None or not meeting) and LOADED_SESSION_INFO:
+        info = LOADED_SESSION_INFO[0]
+        meeting = str(info.get("MEETING", "")).strip() or meeting
+        try:
+            season = int(info.get("SEASON"))
+        except (TypeError, ValueError):
+            pass
+    return season, meeting
+
+
+def _loaded_circuit_key() -> str | None:
+    """Track-Info circuit slug (CIRCUIT_CHARS key) for the loaded meeting, or
+    None when it can't be mapped (e.g. circuit absent from the reference CSV)."""
+    season, event = _loaded_event()
+    if not event:
+        return None
+    # Prefer the historical circuit_key for this exact event (accent-safe),
+    # then translate it to the Track-Info French slug.
+    hist_ck = None
+    for src in (HIST_RACE, HIST_QUALI):
+        if src.empty or "circuit_key" not in src.columns:
+            continue
+        m = src[src["event_name"].astype(str).str.strip() == str(event).strip()]
+        if not m.empty:
+            hist_ck = str(m["circuit_key"].iloc[0])
+            break
+    if hist_ck is None:
+        hist_ck = _slugify_event(event)
+    fr = _HIST_TO_FR_KEY.get(hist_ck)
+    if fr is None and not CIRCUIT_CHARS.empty and (CIRCUIT_CHARS["circuit_key"] == hist_ck).any():
+        fr = hist_ck            # already a Track-Info slug
+    if fr and not CIRCUIT_CHARS.empty and (CIRCUIT_CHARS["circuit_key"] == fr).any():
+        return fr
+    return None
+
+
+def _track_avail_years() -> list[int]:
+    """Seasons present in the historical archive, newest first."""
+    return sorted(set(
+        list(HIST_RACE["season"].unique() if "season" in HIST_RACE.columns else []) +
+        list(HIST_QUALI["season"].unique() if "season" in HIST_QUALI.columns else [])
+    ), reverse=True)
+
+
+def _circuit_race_years(circuit_key) -> list[int]:
+    """Seasons for which the archive holds a race result for *circuit_key*."""
+    keys = HIST_CIRCUIT_KEY_MAP.get(circuit_key, [circuit_key])
+    if HIST_RACE.empty or "circuit_key" not in HIST_RACE.columns:
+        return []
+    return sorted(int(y) for y in
+                  HIST_RACE[HIST_RACE["circuit_key"].isin(keys)]["season"].unique())
+
+
+def _circuit_display_season(circuit_key, avail_years: list[int] | None = None) -> int | None:
+    """Season the whole Track-Info page should display for *circuit_key*: the
+    current season when that Grand Prix has already run (a race result exists),
+    otherwise the previous season (N-1). Clamped to what the archive holds."""
+    avail_years = avail_years if avail_years is not None else _track_avail_years()
+    if not avail_years:
+        return None
+    cur = max(avail_years)
+    cyears = _circuit_race_years(circuit_key)
+    if cur in cyears:                       # this GP has run in the current season
+        return cur
+    target = cur - 1                        # N-1 otherwise
+    if target in avail_years:
+        return target
+    le = [y for y in avail_years if y <= target]
+    return max(le) if le else (max(cyears) if cyears else cur)
 
 
 def _standings_after_round(season: int, rnd: int | None) -> dict[str, float]:
@@ -811,12 +898,12 @@ width=2, style={"padding":"0"})
 
 TABS = dbc.Tabs([
     dbc.Tab(label="DATA & QUALITY", tab_id="tab-data"),
+    dbc.Tab(label="TRACK",          tab_id="tab-track"),
     dbc.Tab(label="OVERVIEW",       tab_id="tab-overview"),
     dbc.Tab(label="TEAM ANALYSIS",  tab_id="tab-teams"),
-    dbc.Tab(label="LAP TIMES & TELEMETRY", tab_id="tab-laps"),
+    dbc.Tab(label="TELEMETRY", tab_id="tab-laps"),
     dbc.Tab(label="STINTS",         tab_id="tab-stints"),
     dbc.Tab(label="TEAMMATES",      tab_id="tab-teammates"),
-    dbc.Tab(label="TRACK INFO",     tab_id="tab-track"),
 ], id="tabs", active_tab="tab-data",
    style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
 
@@ -3006,24 +3093,7 @@ def _laptel_channel_fig(lap_specs):
 
 
 def tab_laps(fl, ft):
-    v = fl[fl["ValidLap"]].copy()
-
-    fig_evo=go.Figure()
-    for sess in sorted(v["session_name"].unique()):
-        sv=v[v["session_name"]==sess]
-        for drv in sv["Driver_Short"].dropna().unique():
-            dv=sv[sv["Driver_Short"]==drv].sort_values("LapNo")
-            clr=TEAM_COLORS.get(dv["Team"].iloc[0],"#808080")
-            fig_evo.add_trace(go.Scatter(
-                x=dv["LapNo"],y=dv["LapTime_s"],mode="lines+markers",
-                name=f"{drv} ({sess.split('_')[0]})",
-                line=dict(color=clr,width=1.5),
-                marker=dict(size=5,color=[COMPOUND_COLORS.get(c,clr) for c in dv["Compound"].fillna("")],
-                            line=dict(color=clr,width=1)),
-                customdata=dv["Compound"].fillna("?"),
-                hovertemplate=f"<b>{drv}</b> – {sess.split('_')[0]}<br>Lap %{{x}}<br>%{{y:.3f}} s<br>Compound: %{{customdata}}<extra></extra>"))
-    theme(fig_evo,500,"Lap Time Evolution (marker colour = compound)")
-    fig_evo.update_layout(xaxis_title="Lap Number",yaxis_title="Lap Time (s)")
+    sector_fig = _sector_heatmap(fl)
 
     bt=best_laps_table(fl)
     bt["Best Lap"]=bt["LapTime_s"].apply(format_lap_time)
@@ -3108,11 +3178,15 @@ def tab_laps(fl, ft):
     ])
 
     return html.Div([
-        card("Lap Time Evolution",dcc.Graph(figure=fig_evo,config=GFX),
-             info=("Data: every valid lap plotted by lap number, one line per driver "
-                   "(team-coloured); each marker is tinted by the tyre compound used. "
-                   "Why: shows pace trends within a run — fuel burn-off, tyre "
-                   "degradation, traffic and safety-car spikes all show up here.")),
+        card("Sector Performance — Best Sector Time, % gap to leader",
+             dcc.Graph(figure=sector_fig, config=GFX) if sector_fig.data else
+             html.P("No sector time data available for the selected sessions.",
+                    style={"color": TEXT_DIM}),
+             info=("Data: each driver's best time in sectors 1/2/3 from the selected "
+                   "sessions' valid laps, shown as % gap to the fastest driver in that "
+                   "sector (green = fastest, red = slowest). Why: pinpoints where on "
+                   "the lap a driver gains or loses — a strong car can still be weak in "
+                   "one sector type.")),
         card("Best Lap Leaderboard",
              html.Div([
                  html.P("Select one or more laps (checkbox at left) to drive the "
@@ -3605,6 +3679,8 @@ def tab_stints(fl, fs):
         html.Div(id="stint-insp-table"),
     ])
 
+    tyre_usage_fig = _tyre_history_chart(fl)
+
     return html.Div([
         card("Lap Time Evolution – All Laps", evo_layout,
              info=("Data: every lap (valid or not) for the selected session, one line "
@@ -3614,6 +3690,16 @@ def tab_stints(fl, fs):
                    "interruptions reshaped the running order.")),
         *violin_cards,
         *deg_cards,
+        card(
+            "Tyre Compound Usage — Current Meeting",
+            dcc.Graph(figure=tyre_usage_fig, config=GFX)
+            if tyre_usage_fig.data else
+            html.P("No compound data available.", style={"color": TEXT_DIM}),
+            info=("Data: number of valid laps run on each compound, stacked per "
+                  "session, for the currently loaded meeting. Why: shows how teams "
+                  "spread their tyre allocation across the weekend and which "
+                  "compounds saw real running."),
+        ),
         card("Stint Lap Inspector", stint_inspector),
     ])
 
@@ -4505,6 +4591,23 @@ _NOTABLE_CORNERS: dict = {
     "las_vegas":       ["T1-T2 opening", "T5-T7 chicane", "T9 hairpin", "T12 Sphere corner", "T14 onto the Strip", "T16-T17 final"],
 }
 
+
+def _corner_name_map(circuit_key) -> dict[int, str]:
+    """Parse _NOTABLE_CORNERS ('T7 Eau Rouge', 'T1-T3 opening complex', …) into
+    {corner_number: name} so named corners can be labelled on the track map."""
+    import re
+    out: dict[int, str] = {}
+    for item in _NOTABLE_CORNERS.get(circuit_key, []):
+        m = re.match(r"\s*T(\d+)(?:\s*[-–]\s*T?(\d+))?\s+(.*)", str(item))
+        if not m:
+            continue
+        a = int(m.group(1))
+        b = int(m.group(2)) if m.group(2) else a
+        name = m.group(3).strip()
+        for n in range(a, b + 1):
+            out.setdefault(n, name)
+    return out
+
 # ── Radar chart for circuit demand profile ────────────────────
 def _radar_chart(row: pd.Series) -> go.Figure:
     dims   = ["Avg Speed", "Full Throttle", "Lateral Load", "Tyre Deg", "Tyre Difficulty"]
@@ -4755,6 +4858,90 @@ def _tyre_history_chart(laps_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _tyre_strategy_chart(laps_df: pd.DataFrame, results: pd.DataFrame | None = None,
+                         title: str = "Race Tyre Strategy",
+                         already_race: bool = False) -> go.Figure:
+    """Per-driver tyre strategy for a race: one horizontal bar per driver, split
+    into stint segments coloured by compound and sized by stint length (laps),
+    ordered by finishing position (P1 on top). Recreates the FastF1 'Tyre
+    strategies during a race' example in Plotly.
+
+    Accepts either the in-memory enriched laps (with Driver_Short /
+    Classified_Position) or raw cache-loaded race laps (with Driver / DriverNo),
+    optionally with a *results* frame for the finishing order.
+    """
+    race = laps_df.copy()
+    if not already_race and "session_name" in race.columns:
+        race = race[race["session_name"].astype(str).str.startswith("Race_")].copy()
+    if race.empty:
+        return go.Figure()
+
+    lap_col = "LapNo" if "LapNo" in race.columns else "LapNumber"
+
+    # Driver short code: prefer the enriched column, else derive from "Driver".
+    if "Driver_Short" not in race.columns or race["Driver_Short"].isna().all():
+        race["Driver_Short"] = (race["Driver"].astype(str)
+                                .str.split("-").str[0].str.strip())
+    race = race.dropna(subset=["Driver_Short", "Stint", "Compound"])
+    race = race[race["Driver_Short"].astype(str).str.len() > 0]
+    if race.empty:
+        return go.Figure()
+
+    # Stint length = number of laps per driver × stint × compound.
+    seg = (race.groupby(["Driver_Short", "Stint", "Compound"])[lap_col]
+              .count().reset_index().rename(columns={lap_col: "StintLength"}))
+    seg["_stint"] = pd.to_numeric(seg["Stint"], errors="coerce")
+
+    # Finishing order (P1 first); unclassified drivers fall to the bottom.
+    if "Classified_Position" in race.columns and race["Classified_Position"].notna().any():
+        order = (race.groupby("Driver_Short")["Classified_Position"].first()
+                    .sort_values(na_position="last").index.tolist())
+    elif (results is not None and not results.empty
+          and {"Abbreviation", "ClassifiedPosition"}.issubset(results.columns)):
+        res = results.copy()
+        res["_p"] = pd.to_numeric(res["ClassifiedPosition"], errors="coerce")
+        res["_abbr"] = res["Abbreviation"].astype(str).str.strip()
+        pos = (res.dropna(subset=["_p"]).drop_duplicates("_abbr")
+                  .set_index("_abbr")["_p"].to_dict())
+        drivers = list(seg["Driver_Short"].unique())
+        order = sorted(drivers, key=lambda d: (pos.get(d, 1e9), d))
+    else:
+        order = (race.groupby("Driver_Short")[lap_col].max()
+                    .sort_values(ascending=False).index.tolist())
+
+    fig = go.Figure()
+    seen_comp: set = set()
+    for drv in order:
+        d = seg[seg["Driver_Short"] == drv].sort_values("_stint")
+        left = 0
+        for _, r in d.iterrows():
+            cmp = str(r["Compound"]).upper()
+            length = int(r["StintLength"])
+            clr = COMPOUND_COLORS.get(cmp, "#808080")
+            fig.add_trace(go.Bar(
+                y=[drv], x=[length], base=left, orientation="h",
+                name=cmp, legendgroup=cmp, showlegend=(cmp not in seen_comp),
+                marker=dict(color=clr, line=dict(color="#000", width=1)),
+                hovertemplate=(f"<b>{drv}</b> · {cmp}<br>"
+                               f"Laps {left + 1}–{left + length} "
+                               f"({length} laps)<extra></extra>"),
+            ))
+            seen_comp.add(cmp)
+            left += length
+
+    theme(fig, max(360, 24 * len(order) + 130), title)
+    fig.update_layout(
+        barmode="stack",
+        xaxis_title="Lap Number",
+        yaxis_title="",
+        legend=dict(orientation="h", x=0, y=1.06, bgcolor="rgba(0,0,0,0)"),
+        margin=dict(l=60, r=20, t=60, b=40),
+    )
+    fig.update_yaxes(autorange="reversed")     # P1 at the top
+    fig.update_xaxes(rangemode="tozero")
+    return fig
+
+
 # ══════════════════════════════════════════════════════════════
 # TRACK MAP — circuit layout, corner annotations, gear-shift map
 # (recreates the FastF1 examples in Plotly; data fetched on demand
@@ -4791,21 +4978,38 @@ def _track_map_paths(season, event_name, session_id):
     }
 
 
+# Columns the cached track-map *line* must carry for every plot (layout, gears,
+# sectors, DRS). Caches written before sectors/DRS were added lack the last two;
+# get_track_map treats those as a miss and re-fetches to upgrade them.
+_TRACK_LINE_COLS = {"X", "Y", "gear", "Speed", "sector", "drs", "z"}
+
+
+def _read_track_map_cache(paths) -> dict | None:
+    """Load a cached track map from disk without any network access. Returns
+    None when the cache is absent (callers check columns for completeness)."""
+    if not (paths["line"].exists() and paths["meta"].exists()):
+        return None
+    line = pd.read_parquet(paths["line"])
+    corners = (pd.read_parquet(paths["corners"])
+               if paths["corners"].exists() else pd.DataFrame())
+    with open(paths["meta"], "r", encoding="utf-8") as fh:
+        meta = _json.load(fh)
+    return {"line": line, "corners": corners, **meta}
+
+
 def get_track_map(season, event_name, session_id="Q", force=False) -> dict | None:
     """
-    Return {line: DataFrame[X,Y,gear,Speed], corners: DataFrame, rotation,
-            driver, laptime, event, session} for the fastest lap of the given
-    session. Cached to data/track_maps/. Returns None if no lap/telemetry.
+    Return {line: DataFrame[X,Y,gear,Speed,sector,drs], corners: DataFrame,
+            rotation, driver, laptime, event, session} for the fastest lap of the
+    given session. Cached to data/track_maps/. Returns None if no lap/telemetry.
     """
     paths = _track_map_paths(season, event_name, session_id)
 
-    if not force and paths["line"].exists() and paths["meta"].exists():
-        line = pd.read_parquet(paths["line"])
-        corners = (pd.read_parquet(paths["corners"])
-                   if paths["corners"].exists() else pd.DataFrame())
-        with open(paths["meta"], "r", encoding="utf-8") as fh:
-            meta = _json.load(fh)
-        return {"line": line, "corners": corners, **meta}
+    if not force:
+        cached = _read_track_map_cache(paths)
+        if cached is not None and _TRACK_LINE_COLS.issubset(cached["line"].columns):
+            return cached
+        # else: cache missing or pre-dates sectors/DRS → (re)fetch to upgrade.
 
     import fastf1
     fastf1.Cache.enable_cache(str(Path(FASTF1_CACHE_DIR)))
@@ -4819,11 +5023,39 @@ def get_track_map(season, event_name, session_id="Q", force=False) -> dict | Non
     if tel is None or tel.empty or not {"X", "Y", "nGear"}.issubset(tel.columns):
         return None
 
-    line = (tel[["X", "Y", "nGear", "Speed"]]
-            .rename(columns={"nGear": "gear"})
+    keep = ["X", "Y", "nGear", "Speed"] + [c for c in ("Z", "DRS", "SessionTime")
+                                           if c in tel.columns]
+    line = (tel[keep]
+            .rename(columns={"nGear": "gear", "Z": "z"})
             .dropna(subset=["X", "Y"])
             .reset_index(drop=True))
     line["gear"] = line["gear"].fillna(0).astype(int)
+    if "z" not in line.columns:           # altitude unavailable → no elevation map
+        line["z"] = np.nan
+
+    # DRS / active-aero open: FastF1 DRS codes 10/12/14 mean the flap is open.
+    if "DRS" in line.columns:
+        line["drs"] = line["DRS"].isin([10, 12, 14]).astype(int)
+        line = line.drop(columns=["DRS"])
+    else:
+        line["drs"] = 0
+
+    # Timing sectors (1/2/3) from the lap's cumulative sector session-times.
+    def _lapval(k):
+        try:
+            return lap[k]
+        except Exception:
+            return None
+    s1, s2 = _lapval("Sector1SessionTime"), _lapval("Sector2SessionTime")
+    if "SessionTime" in line.columns and pd.notna(s1) and pd.notna(s2):
+        st = line["SessionTime"]
+        line["sector"] = np.where(st <= s1, 1, np.where(st <= s2, 2, 3)).astype(int)
+    else:                                   # fallback: split the lap into thirds
+        n = len(line); idx = np.arange(n)
+        line["sector"] = np.where(idx < n / 3, 1,
+                                  np.where(idx < 2 * n / 3, 2, 3)).astype(int)
+    if "SessionTime" in line.columns:
+        line = line.drop(columns=["SessionTime"])
 
     rotation = 0.0
     corners = pd.DataFrame()
@@ -4872,21 +5104,60 @@ def _track_map_layout(fig: go.Figure, title: str, height: int = 480) -> go.Figur
     return fig
 
 
-def _fig_corner_map(tm: dict) -> go.Figure:
+def _finish_line(xr, yr, length: float = 1100.0):
+    """A short segment perpendicular to the track at the start/finish point
+    (the fastest lap's telemetry begins on the start/finish line)."""
+    dx = float(xr[1] - xr[0]); dy = float(yr[1] - yr[0])
+    n  = (dx * dx + dy * dy) ** 0.5 or 1.0
+    px, py = -dy / n, dx / n          # unit perpendicular to track direction
+    h = length / 2.0
+    return ([xr[0] - px * h, xr[0] + px * h],
+            [yr[0] - py * h, yr[0] + py * h])
+
+
+def _fig_track_map(tm: dict, corner_names: dict[int, str] | None = None) -> go.Figure:
+    """Circuit layout coloured by timing sector, with the start/finish line and
+    the numbered corner markers (corner names shown on hover)."""
     line = tm["line"]
     ang  = tm["rotation"] / 180.0 * np.pi
     xr, yr = _rotate(line["X"].to_numpy(), line["Y"].to_numpy(), ang)
+    corner_names = corner_names or {}
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=xr, y=yr, mode="lines", line=dict(color=TEXT_MAIN, width=2),
-        name="Track", hoverinfo="skip", showlegend=False,
-    ))
 
+    # Track line coloured by timing sector (plain white if sectors absent).
+    if "sector" in line.columns:
+        sec = line["sector"].to_numpy()
+        for s in (1, 2, 3):
+            xs, ys = _track_segments(xr, yr, sec == s)
+            if not xs:
+                continue
+            fig.add_trace(go.Scatter(
+                x=xs, y=ys, mode="lines",
+                line=dict(color=SECTOR_COLORS[s], width=4),
+                name=f"Sector {s}", connectgaps=False,
+                hovertemplate=f"Sector {s}<extra></extra>",
+            ))
+    else:
+        fig.add_trace(go.Scatter(
+            x=xr, y=yr, mode="lines", line=dict(color=TEXT_MAIN, width=2),
+            name="Track", hoverinfo="skip", showlegend=False,
+        ))
+
+    # Start / finish line.
+    if len(xr) > 1:
+        fx, fy = _finish_line(xr, yr)
+        fig.add_trace(go.Scatter(
+            x=fx, y=fy, mode="lines",
+            line=dict(color="#FFFFFF", width=5),
+            name="Start / Finish", hovertemplate="Start / Finish<extra></extra>",
+        ))
+
+    # Numbered corner markers (name on hover).
     corners = tm.get("corners")
     if corners is not None and not corners.empty:
         OFFSET = 600.0  # distance to push the label off the track (track units)
-        conn_x, conn_y, mk_x, mk_y, labels = [], [], [], [], []
+        conn_x, conn_y, mk_x, mk_y, labels, hovers = [], [], [], [], [], []
         for _, c in corners.iterrows():
             off_ang = c["Angle"] / 180.0 * np.pi
             ox, oy  = _rotate(OFFSET, 0.0, off_ang)
@@ -4894,8 +5165,11 @@ def _fig_corner_map(tm: dict) -> go.Figure:
             cx, cy  = _rotate(c["X"], c["Y"], ang)             # on-track position
             conn_x += [cx, tx, None]; conn_y += [cy, ty, None]
             mk_x.append(tx); mk_y.append(ty)
+            num    = int(c["Number"])
             letter = "" if pd.isna(c["Letter"]) else str(c["Letter"])
-            labels.append(f"{int(c['Number'])}{letter}")
+            labels.append(f"{num}{letter}")
+            name = corner_names.get(num)
+            hovers.append(f"Turn {num}{letter} — {name}" if name else f"Turn {num}{letter}")
 
         fig.add_trace(go.Scatter(
             x=conn_x, y=conn_y, mode="lines",
@@ -4905,12 +5179,18 @@ def _fig_corner_map(tm: dict) -> go.Figure:
             x=mk_x, y=mk_y, mode="markers+text",
             marker=dict(size=20, color="#444", line=dict(color=TEXT_DIM, width=1)),
             text=labels, textfont=dict(color=TEXT_MAIN, size=9),
-            textposition="middle center", hoverinfo="text", hovertext=labels,
+            textposition="middle center", hoverinfo="text", hovertext=hovers,
             name="Corners", showlegend=False,
         ))
 
-    title = f"Circuit Layout & Corners — {tm['event']} {tm['season']}"
-    return _track_map_layout(fig, title)
+    title = f"Layout, Corners & Sectors — {tm['event']} {tm['season']}"
+    fig = _track_map_layout(fig, title)
+    fig.update_layout(legend=dict(
+        title=dict(text="Sector", font=dict(color=TEXT_MAIN, size=10)),
+        bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1,
+        orientation="v",
+    ))
+    return fig
 
 
 def _fig_gear_map(tm: dict) -> go.Figure:
@@ -4940,6 +5220,89 @@ def _fig_gear_map(tm: dict) -> go.Figure:
     fig = _track_map_layout(fig, title)
     fig.update_layout(legend=dict(
         title=dict(text="Gear", font=dict(color=TEXT_MAIN, size=10)),
+        bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1,
+        orientation="v",
+    ))
+    return fig
+
+
+# Distinct, dark-theme-readable colours for the three timing sectors.
+SECTOR_COLORS = {1: "#E10600", 2: "#00B4D8", 3: "#FFD700"}
+
+
+def _track_segments(xr, yr, mask):
+    """Build disjoint line segments (with None breaks) for the points where
+    *mask* is True — used to colour parts of the track line."""
+    xs, ys = [], []
+    n = len(mask)
+    for i in range(n - 1):
+        if mask[i]:
+            xs += [xr[i], xr[i + 1], None]
+            ys += [yr[i], yr[i + 1], None]
+    return xs, ys
+
+
+def _fig_elevation_map(tm: dict) -> go.Figure | None:
+    """Track coloured by elevation (relief). FastF1 position units are 1/10 m,
+    so Z is converted to metres relative to the lap's lowest point."""
+    line = tm["line"]
+    if "z" not in line.columns or line["z"].isna().all():
+        return None
+    ang = tm["rotation"] / 180.0 * np.pi
+    xr, yr = _rotate(line["X"].to_numpy(), line["Y"].to_numpy(), ang)
+    z = line["z"].to_numpy(dtype=float)
+    rel = (z - np.nanmin(z)) / 10.0           # metres above the lowest point
+
+    fig = go.Figure(go.Scatter(
+        x=xr, y=yr, mode="markers",
+        marker=dict(
+            size=6, color=rel, colorscale="Turbo", showscale=True,
+            colorbar=dict(
+                title=dict(text="Δ elev (m)", font=dict(color=TEXT_MAIN, size=10)),
+                tickfont=dict(color=TEXT_DIM, size=9), thickness=12, len=0.7,
+            ),
+        ),
+        customdata=rel,
+        hovertemplate="Elevation: +%{customdata:.1f} m<extra></extra>",
+        showlegend=False,
+    ))
+    rng = float(np.nanmax(rel)) if rel.size else 0.0
+    fig = _track_map_layout(fig, f"Track Elevation / Relief (range ≈ {rng:.0f} m)")
+    fig.update_layout(showlegend=False)
+    return fig
+
+
+def _fig_drs_map(tm: dict) -> go.Figure | None:
+    line = tm["line"]
+    if "drs" not in line.columns:
+        return None
+    ang = tm["rotation"] / 180.0 * np.pi
+    xr, yr = _rotate(line["X"].to_numpy(), line["Y"].to_numpy(), ang)
+    drs = line["drs"].to_numpy().astype(int)
+
+    fig = go.Figure()
+    # Closed first (thin, dim) so the bright open zones sit on top.
+    for state, clr, width, nm in [
+        (0, TEXT_DIM,  2, "Closed"),
+        (1, "#39FF14", 5, "DRS / active-aero open"),
+    ]:
+        xs, ys = _track_segments(xr, yr, drs == state)
+        if not xs:
+            continue
+        fig.add_trace(go.Scatter(
+            x=xs, y=ys, mode="lines",
+            line=dict(color=clr, width=width),
+            name=nm, connectgaps=False,
+            hovertemplate=f"{nm}<extra></extra>",
+        ))
+    fig = _track_map_layout(fig, "DRS / Active-Aero Zones (fastest lap)")
+    if drs.sum() == 0:                      # no open data (e.g. 2026 feed)
+        fig.add_annotation(
+            text="No DRS / active-aero activation recorded for this lap",
+            xref="paper", yref="paper", x=0.5, y=0.02, showarrow=False,
+            font=dict(size=10, color=TEXT_DIM),
+        )
+    fig.update_layout(legend=dict(
         bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1,
         orientation="v",
     ))
@@ -4980,7 +5343,10 @@ def tab_track_info() -> html.Div:
          for _, row in CIRCUIT_CHARS.iterrows()],
         key=lambda o: o["label"],
     )
-    default_key = options[0]["value"] if options else None
+    # Default to the circuit of the meeting currently loaded in the Data tab,
+    # so the tab opens on data the user is actually looking at.
+    loaded_key  = _loaded_circuit_key()
+    default_key = loaded_key if loaded_key else (options[0]["value"] if options else None)
 
     # Historical year options
     avail_years = sorted(set(
@@ -4988,6 +5354,14 @@ def tab_track_info() -> html.Div:
         list(HIST_QUALI["season"].unique() if "season" in HIST_QUALI.columns else [])
     ), reverse=True)
     year_opts = [{"label": str(y), "value": int(y)} for y in avail_years]
+
+    # Default season for the *selected* circuit: the current season when that
+    # GP has already run, else the previous season (N-1). The whole page (incl.
+    # the race tyre-strategy plot) follows this, and it re-syncs when the circuit
+    # dropdown changes (see _sync_track_year).
+    default_year = _circuit_display_season(default_key, avail_years)
+    if default_year is None:
+        default_year = year_opts[0]["value"] if year_opts else None
 
     return html.Div([
         # ── Selectors row ─────────────────────────────────────
@@ -5009,7 +5383,7 @@ def tab_track_info() -> html.Div:
                 dcc.Dropdown(
                     id="track-year-select",
                     options=year_opts,
-                    value=year_opts[0]["value"] if year_opts else None,
+                    value=default_year,
                     clearable=False,
                     style={"backgroundColor": "#111", "fontSize": "0.85rem"},
                 ),
@@ -5019,6 +5393,115 @@ def tab_track_info() -> html.Div:
         # ── Dynamic content area ─────────────────────────────
         html.Div(id="track-content"),
     ])
+
+
+def _track_map_children(tm: dict, season, event_name, circuit_key=None) -> html.Div:
+    """Rendered track-map block: note + layout/sectors, gears, elevation, DRS.
+    Shared by the pre-load path and the on-demand button callback."""
+    note = html.P(
+        f"Fastest lap: {tm.get('driver','?')} · {tm.get('laptime','?')} · "
+        f"{event_name} {season} {tm.get('session','')} qualifying",
+        style={"color": TEXT_DIM, "fontSize": "0.74rem", "marginBottom": "8px"},
+    )
+    corner_names = _corner_name_map(circuit_key) if circuit_key else {}
+    rows = [dbc.Row([
+        dbc.Col(dcc.Graph(figure=_fig_track_map(tm, corner_names), config=GFX), md=6),
+        dbc.Col(dcc.Graph(figure=_fig_gear_map(tm),                config=GFX), md=6),
+    ])]
+    elev_fig = _fig_elevation_map(tm)
+    drs_fig  = _fig_drs_map(tm)
+    second = []
+    if elev_fig is not None:
+        second.append(dbc.Col(dcc.Graph(figure=elev_fig, config=GFX), md=6))
+    if drs_fig is not None:
+        second.append(dbc.Col(dcc.Graph(figure=drs_fig, config=GFX), md=6))
+    if second:
+        rows.append(dbc.Row(second))
+    return html.Div([note, *rows])
+
+
+def _cached_track_map(circuit_key, year):
+    """Return (children, season, event_name) for a track map *already cached* on
+    disk (with all plot columns), without triggering a FastF1 download.
+    (None, …) when not pre-cached or the cache pre-dates the sector/DRS data."""
+    season, event_name = _resolve_track_event(circuit_key, year)
+    if not event_name:
+        return None, season, event_name
+    for sid in ("Q", "R"):
+        paths = _track_map_paths(season, event_name, sid)
+        cached = _read_track_map_cache(paths)
+        if cached is not None and _TRACK_LINE_COLS.issubset(cached["line"].columns):
+            return (_track_map_children(cached, season, event_name, circuit_key),
+                    season, event_name)
+    return None, season, event_name
+
+
+def _race_strategy_fig(circuit_key, year, allow_fetch: bool = False):
+    """Race tyre-strategy figure for the selected circuit/season, sourced to
+    match the rest of the page. Returns (fig | None, season, event_name).
+
+    Data preference: the in-memory loaded race → the local Parquet cache →
+    (only when *allow_fetch*) a FastF1 download. With allow_fetch=False this is
+    cheap and never blocks on the network, so it is safe in the page render.
+    """
+    season, event_name = _resolve_track_event(circuit_key, year)
+    if not event_name:
+        return None, season, event_name
+    title = f"Race Tyre Strategy — {event_name} {season}"
+
+    # 1) The race already loaded in memory (instant, fully enriched).
+    ls, lm = _loaded_event()
+    if str(season) == str(ls) and event_name == lm:
+        race = laps[laps["session_name"].astype(str).str.startswith("Race_")]
+        if not race.empty:
+            return _tyre_strategy_chart(race, title=title), season, event_name
+
+    # 2) Local Parquet cache (or a FastF1 fetch when explicitly allowed).
+    if allow_fetch or is_cached(str(season), event_name, "Race"):
+        try:
+            data = load_sessions(
+                [{"SEASON": str(season), "MEETING": event_name, "SESSION": "Race"}])
+        except Exception as exc:
+            logging.warning("race strategy: load failed for %s %s: %s",
+                            season, event_name, exc)
+            data = {}
+        rl = data.get("laps", pd.DataFrame())
+        rr = data.get("results", pd.DataFrame())
+        if rl is not None and not rl.empty:
+            return (_tyre_strategy_chart(rl, results=rr, title=title,
+                                         already_race=True),
+                    season, event_name)
+    return None, season, event_name
+
+
+def _track_season_banner(hist_year, current_season, display_season,
+                         is_loaded_circuit) -> html.Div:
+    """Prominent banner stating which season the whole tab is showing, and why."""
+    if current_season is not None and hist_year == current_season:
+        note = "Current season — this Grand Prix has already run."
+    elif (current_season is not None and display_season == hist_year
+          and hist_year == current_season - 1):
+        note = (f"The {current_season} race hasn't run yet, so the last "
+                f"completed season ({hist_year}) is shown.")
+    else:
+        note = "Season manually selected."
+    if is_loaded_circuit:
+        note += "  This is the event loaded in the Data tab."
+    return html.Div([
+        html.Span("SHOWING SEASON", style={
+            "color": TEXT_DIM, "fontSize": "0.62rem", "letterSpacing": "2px",
+            "fontWeight": "700", "marginRight": "10px"}),
+        html.Span(str(hist_year), style={
+            "color": TEXT_MAIN, "fontSize": "1.25rem", "fontWeight": "900",
+            "letterSpacing": "1px"}),
+        html.Span("  ·  " + note, style={
+            "color": TEXT_DIM, "fontSize": "0.78rem", "marginLeft": "8px"}),
+    ], style={
+        "background": CARD_BG, "border": f"1px solid {GRID_CLR}",
+        "borderLeft": f"4px solid {ACCENT}", "borderRadius": "4px",
+        "padding": "10px 14px", "marginBottom": "16px",
+        "display": "flex", "alignItems": "baseline", "flexWrap": "wrap",
+    })
 
 
 # ── Track content callback ────────────────────────────────────
@@ -5038,6 +5521,14 @@ def update_track_content(circuit_key: str, hist_year: int):
 
     meta = _FF1_CIRCUIT_META.get(circuit_key, {})
     corners_list = _NOTABLE_CORNERS.get(circuit_key, [])
+
+    # ── Section 0: Season banner (which season this tab shows) ─
+    _avail_years = _track_avail_years()
+    current_season = max(_avail_years) if _avail_years else None
+    display_season = _circuit_display_season(circuit_key, _avail_years)
+    is_loaded_circuit = (_loaded_circuit_key() == circuit_key)
+    season_banner = _track_season_banner(hist_year, current_season, display_season,
+                                         is_loaded_circuit)
 
     # ── Section 1: Header ─────────────────────────────────────
     header = html.Div([
@@ -5121,51 +5612,65 @@ def update_track_content(circuit_key: str, hist_year: int):
     else:
         corners_section = html.Div()
 
-    # ── Section 5: Sector heatmap (current meeting data) ──────
-    sector_fig = _sector_heatmap(laps)
-    sector_section = card(
-        "Sector Performance — Current Meeting (Best Sector Time, % gap to leader)",
-        dcc.Graph(figure=sector_fig, config=GFX) if sector_fig.data else
-        html.P("No sector time data available for the current session.",
-               style={"color": TEXT_DIM}),
-        info=("Data: each driver's best time in sectors 1/2/3 from the currently "
-              "loaded meeting's valid laps, shown as % gap to the fastest driver in "
-              "that sector (green = fastest, red = slowest). Why: pinpoints where on "
-              "the lap a driver gains or loses — a strong car can still be weak in "
-              "one sector type."),
-    )
 
-    # ── Section 6: Tyre usage (current meeting) ───────────────
-    tyre_fig = _tyre_history_chart(laps)
-    tyre_section = card(
-        "Tyre Compound Usage — Current Meeting",
-        dcc.Graph(figure=tyre_fig, config=GFX) if tyre_fig.data else
-        html.P("No compound data available.", style={"color": TEXT_DIM}),
-        info=("Data: number of valid laps run on each compound, stacked per session, "
-              "for the currently loaded meeting. Why: shows how teams spread their "
-              "tyre allocation across the weekend and which compounds saw real running."),
+    # ── Section 6: Race tyre strategy (follows the selected circuit/season) ─
+    strategy_fig, _st_season, _st_event = _race_strategy_fig(circuit_key, hist_year)
+    if strategy_fig is not None and strategy_fig.data:
+        strategy_body = dcc.Graph(figure=strategy_fig, config=GFX)
+    else:
+        # Not in memory or cache → offer an on-demand fetch (race laps only).
+        strategy_body = html.Div([
+            html.P(f"Race data for {_st_event} {_st_season} isn't cached yet. "
+                   "Load it to see each driver's tyre strategy (first load "
+                   "downloads the race session, 1–3 min; cached afterwards).",
+                   style={"color": TEXT_DIM, "fontSize": "0.8rem", "marginBottom": "10px"}),
+            dbc.Button("Load race strategy", id="strategy-btn",
+                       color="info", outline=True, size="sm",
+                       style={"fontWeight": "700"}),
+            dcc.Loading(type="circle", color=ACCENT,
+                        children=html.Div(id="strategy-content",
+                                          style={"marginTop": "12px"})),
+        ])
+    strategy_section = card(
+        f"Race Tyre Strategy — {_st_event or 'Selected Circuit'} {_st_season or ''}".strip(),
+        strategy_body,
+        info=("Data: each driver's stints in this circuit/season's race, one bar "
+              "per driver split into compound-coloured segments sized by stint "
+              "length (laps), ordered by finishing position. Why: shows who ran "
+              "which tyres and when — the strategic shape of the race at a glance."),
     )
 
     # ── Section 6b: Track map (corner layout + gear shifts) ───
+    # Pre-load the map when it is already cached on disk (the loaded meeting's
+    # map is warmed at data-load time), so it appears without a button click.
+    preloaded_map, _tm_season, _tm_event = _cached_track_map(circuit_key, hist_year)
     track_map_section = card(
-        "Track Map — Circuit Layout & Gear Shifts",
-        info=("Data: the X/Y position and gear trace of the fastest qualifying lap "
-              "for this circuit (FastF1 telemetry), plus FastF1's numbered corner "
-              "markers. Why: shows the racing line and where each gear is used — a "
-              "visual reference for the corner and sector analysis above."),
+        "Track Map — Layout, Sectors, Gears, Elevation & DRS",
+        info=("Data: the fastest qualifying lap's telemetry line for this circuit "
+              "(FastF1) shown four ways — layout with numbered corners (names on "
+              "hover), the start/finish line and timing sectors; gear per point; "
+              "elevation/relief from the line's altitude; and DRS / active-aero "
+              "zones. Note: elevation is the racing-line altitude, so it shows "
+              "relief and gradient (climbs/descents) but not lateral banking."),
         children=html.Div([
             html.P([
-                "Circuit layout with numbered corners and a gear-shift map, "
-                "built from the fastest qualifying lap (FastF1 telemetry). The "
-                "first build for a circuit downloads telemetry (1–3 min); it is "
-                "cached afterwards for instant reuse.",
+                "Circuit layout (corners + sectors + start/finish), gears, "
+                "elevation/relief and DRS / active-aero zones, built from the "
+                "fastest qualifying lap (FastF1 telemetry). "
+                + ("Pre-loaded from cache below."
+                   if preloaded_map is not None else
+                   "The first build for a circuit downloads telemetry (1–3 min); "
+                   "it is cached afterwards for instant reuse."),
             ], style={"color": TEXT_DIM, "fontSize": "0.8rem", "marginBottom": "10px"}),
-            dbc.Button("Generate track map", id="track-map-btn",
+            dbc.Button("Regenerate track map" if preloaded_map is not None
+                       else "Generate track map",
+                       id="track-map-btn",
                        color="info", outline=True, size="sm",
                        style={"fontWeight": "700"}),
             dcc.Loading(
                 type="circle", color=ACCENT,
-                children=html.Div(id="track-map-content", style={"marginTop": "12px"}),
+                children=html.Div(preloaded_map, id="track-map-content",
+                                  style={"marginTop": "12px"}),
             ),
         ]),
     )
@@ -5246,6 +5751,7 @@ def update_track_content(circuit_key: str, hist_year: int):
 
     # ── Assemble ──────────────────────────────────────────────
     return html.Div([
+        season_banner,
         header,
         stats_pills,
         card("Circuit Profile", chars_block,
@@ -5255,11 +5761,42 @@ def update_track_content(circuit_key: str, hist_year: int):
                    "fingerprint of what a track demands — useful context for why pace "
                    "and tyre behaviour differ between venues.")),
         corners_section,
-        sector_section,
-        tyre_section,
+        strategy_section,
         track_map_section,
         *hist_blocks,
     ])
+
+
+# ── Keep the season selector in step with the circuit ────────
+@app.callback(
+    Output("track-year-select", "value"),
+    Input("track-circuit-select", "value"),
+)
+def _sync_track_year(circuit_key):
+    """When the circuit changes, pick the season the whole page should show:
+    current if that GP has run, else N-1 — so every plot stays aligned."""
+    season = _circuit_display_season(circuit_key)
+    return season if season is not None else no_update
+
+
+# ── Race-strategy callback (on-demand fetch for uncached races) ──
+@app.callback(
+    Output("strategy-content", "children"),
+    Input("strategy-btn",       "n_clicks"),
+    State("track-circuit-select", "value"),
+    State("track-year-select",    "value"),
+    prevent_initial_call=True,
+)
+def render_race_strategy(_n, circuit_key, year):
+    if not circuit_key:
+        return dbc.Alert("Select a circuit first.", color="warning",
+                         style={"fontSize": "0.8rem"})
+    fig, season, event_name = _race_strategy_fig(circuit_key, year, allow_fetch=True)
+    if fig is None or not fig.data:
+        return dbc.Alert(
+            f"No race lap data available for {event_name} {season}.",
+            color="danger", style={"fontSize": "0.8rem"})
+    return dcc.Graph(figure=fig, config=GFX)
 
 
 # ── Track-map callback (on-demand FastF1 fetch + render) ─────
@@ -5297,19 +5834,10 @@ def render_track_map(_n, circuit_key, year):
             msg += f"  ({last_exc})"
         return dbc.Alert(msg, color="danger", style={"fontSize": "0.8rem"})
 
-    note = html.P(
-        f"Fastest lap: {tm.get('driver','?')} · {tm.get('laptime','?')} · "
-        f"{event_name} {season} {tm.get('session','')} qualifying",
-        style={"color": TEXT_DIM, "fontSize": "0.74rem", "marginBottom": "8px"},
-    )
-    return html.Div([
-        note,
-        dbc.Row([
-            dbc.Col(dcc.Graph(figure=_fig_corner_map(tm), config=GFX), md=6),
-            dbc.Col(dcc.Graph(figure=_fig_gear_map(tm),   config=GFX), md=6),
-        ]),
-    ])
+    return _track_map_children(tm, season, event_name, circuit_key)
 
 
 if __name__=="__main__":
-    app.run(debug=True, host="0.0.0.0", port=8050)
+    import os
+    _port = int(os.environ.get("PORT", "8050"))
+    app.run(debug=True, host="0.0.0.0", port=_port)

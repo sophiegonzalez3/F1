@@ -130,6 +130,26 @@ def clean_and_enrich_laps(df: pd.DataFrame) -> pd.DataFrame:
         .str.strip()
     )
 
+    # ── Backfill missing/blank team labels ───────────────────
+    # A driver's team is constant across a weekend, but some sessions arrive
+    # with an empty team suffix (e.g. "VER-" → ""), seen in early 2026 practice
+    # feeds. Left as-is these blanks colour every affected driver grey in the
+    # team-coloured charts. Fill them from the same driver's known team in the
+    # other loaded sessions so colouring is consistent everywhere.
+    _blank = df["Team"].isna() | df["Team"].isin(["", "Unknown"])
+    if _blank.any():
+        _known = (
+            df.loc[~_blank, ["Driver_Short", "Team"]]
+            .groupby("Driver_Short")["Team"]
+            .agg(lambda s: s.mode().iloc[0] if not s.mode().empty else s.iloc[0])
+        )
+        _fill = df.loc[_blank, "Driver_Short"].map(_known)
+        df.loc[_blank, "Team"] = _fill.where(_fill.notna(), df.loc[_blank, "Team"])
+        n_filled = int(_fill.notna().sum())
+        if n_filled:
+            logger.info("clean_and_enrich_laps: backfilled team for %d blank-team laps",
+                        n_filled)
+
     # ── Lap time in seconds ──────────────────────────────────
     if pd.api.types.is_timedelta64_dtype(df["LapTime"]):
         df["LapTime_s"] = df["LapTime"].dt.total_seconds()

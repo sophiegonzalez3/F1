@@ -114,6 +114,15 @@ def rebuild_state(session_info_list: list[dict], force_reload: bool = False) -> 
         f"{len(TEAMS)} teams  ({_dt.now().strftime('%H:%M:%S')})"
     )
     print(f"Ready  sessions={len(SESSIONS)}  drivers={len(DRIVERS)}  teams={len(TEAMS)}", flush=True)
+
+    # Warm the track-map / corner-marker cache for the loaded meeting(s) in the
+    # background so the Telemetry Channels corner lines are ready without a long
+    # blocking fetch on first view. No-op at import time (helper not yet defined)
+    # and for already-cached circuits.
+    _pw = globals().get("_prewarm_track_maps")
+    if _pw is not None:
+        _pw(list(session_info_list))
+
     return LAST_LOAD_MSG
 
 
@@ -804,10 +813,9 @@ TABS = dbc.Tabs([
     dbc.Tab(label="DATA & QUALITY", tab_id="tab-data"),
     dbc.Tab(label="OVERVIEW",       tab_id="tab-overview"),
     dbc.Tab(label="TEAM ANALYSIS",  tab_id="tab-teams"),
-    dbc.Tab(label="LAP TIMES",      tab_id="tab-laps"),
+    dbc.Tab(label="LAP TIMES & TELEMETRY", tab_id="tab-laps"),
     dbc.Tab(label="STINTS",         tab_id="tab-stints"),
     dbc.Tab(label="TEAMMATES",      tab_id="tab-teammates"),
-    dbc.Tab(label="TELEMETRY",      tab_id="tab-telemetry"),
     dbc.Tab(label="TRACK INFO",     tab_id="tab-track"),
 ], id="tabs", active_tab="tab-data",
    style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
@@ -850,10 +858,9 @@ def render(tab, ss, sc, sd, st):
         ])
     if tab=="tab-overview":   return tab_overview(fl_d,fs_d,ft)
     if tab=="tab-teams":      return tab_teams(fl_d, fs_d)
-    if tab=="tab-laps":       return tab_laps(fl_d)
+    if tab=="tab-laps":       return tab_laps(fl_d, ft)
     if tab=="tab-stints":     return tab_stints(fl_d,fs_d)
     if tab=="tab-teammates":  return tab_teammates(fl_d,fs_d)
-    if tab=="tab-telemetry":  return tab_telemetry(fl_d,ft)
     if tab=="tab-track":      return tab_track_info()
     return html.P("Select a tab.")
 
@@ -2731,7 +2738,274 @@ def _tab_teams_inner2(fl, fs):
 # ══════════════════════════════════════════════════════════════
 # TAB 3 – LAP TIMES
 # ══════════════════════════════════════════════════════════════
-def tab_laps(fl):
+_LAPTEL_CHANNELS = ["Speed", "Throttle", "Brake", "GearNo"]
+_LAPTEL_DASHES   = ["solid", "dash", "dot", "dashdot", "longdash"]
+
+
+def _lap_telemetry(session, driver_short, lapno):
+    """Telemetry samples belonging to one lap, with a lap-relative time column.
+
+    Locates the lap in the global ``laps`` frame (by session / driver / lap
+    number), reads its [LapStartTime, LapStartTime+LapTime_s] window, and slices
+    the global ``telemetry`` frame to that driver+window. Returns
+    ``(tel_sub_sorted_by_t_rel, lap_row)`` or ``(None, lap_row_or_None)``.
+    """
+    if telemetry is None or telemetry.empty:
+        return None, None
+    lp = laps[(laps["session_name"] == session)
+              & (laps["Driver_Short"] == driver_short)
+              & (laps["LapNo"] == lapno)]
+    if lp.empty:
+        return None, None
+    row   = lp.iloc[0]
+    dno   = str(row["DriverNo"]).strip()
+    start = pd.to_numeric(row.get("LapStartTime"), errors="coerce")
+    dur   = pd.to_numeric(row.get("LapTime_s"),    errors="coerce")
+    if not (np.isfinite(start) and np.isfinite(dur)):
+        return None, row
+    tel = telemetry[
+        (telemetry["session_name"] == session)
+        & (telemetry["DriverNo"].astype(str).str.strip() == dno)
+        & (telemetry["timestamp"] >= start)
+        & (telemetry["timestamp"] <= start + dur)
+    ].copy()
+    if tel.empty:
+        return None, row
+    tel = tel.sort_values("timestamp")
+    tel["t_rel"] = tel["timestamp"] - start
+    # Distance from the start line (m), integrating speed (km/h→m/s) over time —
+    # the same quantity FastF1's Telemetry.add_distance() produces.
+    if "Speed" in tel.columns:
+        spd = pd.to_numeric(tel["Speed"], errors="coerce").fillna(0).to_numpy() * (1000.0 / 3600.0)
+        t   = pd.to_numeric(tel["t_rel"], errors="coerce").fillna(method="ffill").fillna(0).to_numpy()
+        if len(t) > 1:
+            dt   = np.diff(t)
+            avg  = (spd[1:] + spd[:-1]) / 2.0
+            tel["Distance"] = np.concatenate([[0.0], np.cumsum(avg * dt)])
+        else:
+            tel["Distance"] = 0.0
+    return tel, row
+
+
+def _best_lap_telemetry_frame(fl):
+    """Concatenated telemetry of each driver's single best valid lap across all
+    loaded sessions in *fl* (one best lap per driver). Tagged with Driver_Short
+    and Team. Used by the Max-Speed and Gear-usage charts."""
+    v = fl[fl["ValidLap"]].copy()
+    v = v[pd.to_numeric(v["LapTime_s"], errors="coerce") > 0]
+    if v.empty:
+        return pd.DataFrame()
+    idx   = v.groupby("Driver_Short")["LapTime_s"].idxmin()
+    parts = []
+    for _, row in v.loc[idx].iterrows():
+        tel, _ = _lap_telemetry(row["session_name"], row["Driver_Short"], row["LapNo"])
+        if tel is None or tel.empty:
+            continue
+        tel = tel.copy()
+        tel["Driver_Short"] = row["Driver_Short"]
+        tel["Team"]         = row["Team"]
+        parts.append(tel)
+    return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
+
+
+_CORNER_FRAC_CACHE: dict[tuple, pd.DataFrame] = {}
+
+
+def _corner_fractions_from_geometry(line, corners) -> pd.DataFrame:
+    """Each corner's fractional position along the lap (0=start line, 1=lap end),
+    from the cached track-line + corner X/Y. Unit-independent, so it can be scaled
+    by any lap's measured distance. Returns DataFrame[label, frac] sorted by frac."""
+    if (line is None or corners is None or line.empty or corners.empty
+            or not {"X", "Y"}.issubset(line.columns)
+            or not {"X", "Y"}.issubset(corners.columns)):
+        return pd.DataFrame()
+    lx = line["X"].to_numpy(float); ly = line["Y"].to_numpy(float)
+    cum = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(lx), np.diff(ly)))])
+    total = cum[-1]
+    if not np.isfinite(total) or total <= 0:
+        return pd.DataFrame()
+    rows = []
+    for _, c in corners.iterrows():
+        i = int(np.argmin((lx - c["X"]) ** 2 + (ly - c["Y"]) ** 2))
+        num = c.get("Number")
+        letter = c.get("Letter")
+        letter = "" if (letter is None or (isinstance(letter, float) and np.isnan(letter))) else str(letter).strip()
+        try:
+            label = f"{int(num)}{letter}"
+        except (TypeError, ValueError):
+            label = f"{num}{letter}"
+        rows.append({"label": label, "frac": cum[i] / total})
+    return pd.DataFrame(rows).sort_values("frac").reset_index(drop=True)
+
+
+def _session_meeting_season(session_name) -> tuple[int | None, str | None]:
+    """Recover (season, meeting) from a lap's session_name. session_name is built
+    as f'{session}_{meeting}_{season}', so prefer an exact match against the loaded
+    session info, then fall back to parsing."""
+    for info in LOADED_SESSION_INFO:
+        sn = f"{info.get('SESSION')}_{info.get('MEETING')}_{info.get('SEASON')}"
+        if sn == session_name:
+            try:
+                return int(info.get("SEASON")), str(info.get("MEETING"))
+            except (TypeError, ValueError):
+                return None, str(info.get("MEETING"))
+    toks = str(session_name).split("_")
+    if len(toks) >= 3:
+        try:
+            return int(toks[-1]), "_".join(toks[1:-1])
+        except ValueError:
+            return None, "_".join(toks[1:-1])
+    return None, None
+
+
+def _corner_fractions_for(season, event) -> pd.DataFrame:
+    """Corner fractional positions for a specific circuit. Uses the app's track-map
+    cache and, if that circuit isn't cached yet, fetches it once via get_track_map
+    (which then persists it). Result is memoised per (season, event); empty on
+    failure so corner markers are simply omitted."""
+    if not season or not event:
+        return pd.DataFrame()
+    key = (int(season), str(event))
+    if key in _CORNER_FRAC_CACHE:
+        return _CORNER_FRAC_CACHE[key]
+    out = pd.DataFrame()
+    for sid in ("Q", "R"):           # quali gives the cleanest lap; race as fallback
+        try:
+            tm = get_track_map(season, event, sid)
+        except Exception as exc:
+            logging.warning("corner markers: track map fetch failed for %s %s (%s): %s",
+                            season, event, sid, exc)
+            tm = None
+        if tm and tm.get("corners") is not None and not tm["corners"].empty:
+            out = _corner_fractions_from_geometry(tm.get("line"), tm["corners"])
+            if not out.empty:
+                break
+    _CORNER_FRAC_CACHE[key] = out
+    return out
+
+
+def _prewarm_track_maps(session_info_list) -> None:
+    """Fetch + cache the track map (corner geometry) for each loaded meeting in a
+    daemon thread, so the Telemetry Channels corner markers are ready without a
+    long blocking fetch the first time that circuit's laps are viewed. Safe to call
+    repeatedly — get_track_map / the memo skip already-cached circuits."""
+    if globals().get("get_track_map") is None:
+        return
+    seen: set[tuple] = set()
+    targets = []
+    for info in session_info_list:
+        try:
+            season = int(info.get("SEASON"))
+        except (TypeError, ValueError):
+            continue
+        event = str(info.get("MEETING", "")).strip()
+        if not event or (season, event) in seen:
+            continue
+        seen.add((season, event))
+        targets.append((season, event))
+    if not targets:
+        return
+
+    def _worker():
+        for season, event in targets:
+            try:
+                _corner_fractions_for(season, event)
+            except Exception:
+                pass
+
+    import threading
+    threading.Thread(target=_worker, name="track-map-prewarm", daemon=True).start()
+
+
+def _empty_channel_fig(msg):
+    fig = go.Figure()
+    fig.add_annotation(text=msg, xref="paper", yref="paper", x=0.5, y=0.5,
+                       showarrow=False, font=dict(size=13, color=TEXT_DIM))
+    theme(fig, 360, "")
+    fig.update_xaxes(visible=False); fig.update_yaxes(visible=False)
+    return fig
+
+
+def _laptel_channel_fig(lap_specs):
+    """Overlay Speed/Throttle/Brake/Gear traces for each selected lap, aligned on
+    lap-relative time so different laps (and drivers) line up. *lap_specs* is a
+    list of (session, driver_short, lapno)."""
+    if telemetry is None or telemetry.empty:
+        return _empty_channel_fig("No telemetry data loaded.")
+    channels = [c for c in _LAPTEL_CHANNELS if c in telemetry.columns]
+    if not channels:
+        return _empty_channel_fig("No telemetry channels available.")
+
+    MAX_POINTS = 2000
+    fig = make_subplots(rows=len(channels), cols=1, shared_xaxes=True,
+                        vertical_spacing=0.04, subplot_titles=channels)
+    any_trace = False
+    lap_totals = []                       # measured lap distance (m) per plotted lap
+    marker_session = None                 # session_name of the first plotted lap
+    for i, (session, driver, lapno) in enumerate(lap_specs):
+        tel, row = _lap_telemetry(session, driver, lapno)
+        if tel is None or tel.empty:
+            continue
+        if marker_session is None:
+            marker_session = session
+        use_dist = "Distance" in tel.columns
+        xcol = "Distance" if use_dist else "t_rel"
+        if use_dist:
+            lap_totals.append(float(tel["Distance"].iloc[-1]))
+        clr   = TEAM_COLORS.get(row["Team"], "#808080") if row is not None else "#808080"
+        dash  = _LAPTEL_DASHES[i % len(_LAPTEL_DASHES)]
+        stride = max(1, len(tel) // MAX_POINTS)
+        if stride > 1:
+            tel = tel.iloc[::stride]
+        label = f"{driver} · {str(session).split('_')[0]} (L{int(lapno)})"
+        xunit = "m" if use_dist else "s"
+        for r, ch in enumerate(channels, start=1):
+            fig.add_trace(go.Scattergl(
+                x=tel[xcol], y=tel[ch], mode="lines",
+                name=label, legendgroup=label, showlegend=(r == 1),
+                line=dict(color=clr, width=1.1, dash=dash),
+                hovertemplate=f"<b>{label}</b><br>{ch}: %{{y}}<br>%{{x:.0f}} {xunit}<extra></extra>",
+            ), row=r, col=1)
+        any_trace = True
+
+    if not any_trace:
+        return _empty_channel_fig(
+            "No telemetry found for the selected lap(s) — they may predate the "
+            "loaded telemetry window.")
+
+    # ── Corner markers (only meaningful on a distance x-axis) ──
+    on_distance = bool(lap_totals)
+    if on_distance and marker_session:
+        season, event = _session_meeting_season(marker_session)
+        corner_df = _corner_fractions_for(season, event)
+        if not corner_df.empty:
+            ref_total = float(np.median(lap_totals))
+            line_kw = dict(color="rgba(150,150,150,0.45)", width=1, dash="dot")
+            for _, cr in corner_df.iterrows():
+                xx = float(cr["frac"]) * ref_total
+                # label only on the top subplot; plain dotted lines below
+                fig.add_vline(x=xx, row=1, col=1, layer="below", line=line_kw,
+                              annotation_text=str(cr["label"]),
+                              annotation_position="top",
+                              annotation_font=dict(size=8, color=TEXT_DIM))
+                for r in range(2, len(channels) + 1):
+                    fig.add_vline(x=xx, row=r, col=1, layer="below", line=line_kw)
+
+    for r, ch in enumerate(channels, start=1):
+        fig.update_yaxes(title_text=ch, gridcolor=GRID_CLR, zeroline=False, row=r, col=1)
+    fig.update_xaxes(
+        title_text="Distance from start line (m)" if on_distance else "Time since lap start (s)",
+        row=len(channels), col=1)
+    fig.update_layout(
+        height=max(150 * len(channels) + 60, 320),
+        paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
+        font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=11),
+        legend=dict(bgcolor="rgba(0,0,0,0)"), margin=dict(l=60, r=20, t=60, b=45))
+    fig.update_xaxes(gridcolor=GRID_CLR, zeroline=False)
+    return fig
+
+
+def tab_laps(fl, ft):
     v = fl[fl["ValidLap"]].copy()
 
     fig_evo=go.Figure()
@@ -2755,8 +3029,19 @@ def tab_laps(fl):
     bt["Best Lap"]=bt["LapTime_s"].apply(format_lap_time)
     disp=bt[["session_name","Driver_Short","Team","Compound","Best Lap","LapTime_s","TyreAge","LapNo"]].rename(columns={
         "session_name":"Session","Driver_Short":"Driver","LapTime_s":"Lap Time (s)","TyreAge":"Tyre Age","LapNo":"Lap #"
-    }).sort_values("Lap Time (s)")
-    tbl=styled_table(disp.to_dict("records"),[{"name":c,"id":c} for c in disp.columns])
+    }).sort_values("Lap Time (s)").reset_index(drop=True)
+    best_tbl=dash_table.DataTable(
+        id="laptel-best-table",
+        data=disp.to_dict("records"),
+        columns=[{"name":c,"id":c} for c in disp.columns],
+        row_selectable="multi",
+        selected_rows=[0] if len(disp) else [],
+        **TABLE_STYLE,
+        style_data_conditional=[
+            {"if":{"state":"selected"},
+             "backgroundColor":ACCENT+"33","border":f"1px solid {ACCENT}"},
+        ],
+    )
 
     qs=pd.DataFrame()
     if "Is_Quali_Sim" in fl.columns:
@@ -2769,15 +3054,118 @@ def tab_laps(fl):
     qs_tbl=styled_table(qs.to_dict("records") if not qs.empty else [],
                         [{"name":c,"id":c} for c in qs.columns] if not qs.empty else [])
 
+    # ── Telemetry section ────────────────────────────────────────
+    # Max-speed and gear use each driver's single best lap across all loaded
+    # sessions; the channel overlay is driven by the leaderboard selection.
+    blt = _best_lap_telemetry_frame(fl)
+
+    fig_spd = go.Figure()
+    fig_gear = go.Figure()
+    if not blt.empty and "Speed" in blt.columns:
+        sp=(blt.groupby(["Driver_Short","Team"])["Speed"]
+              .quantile(SPEED_PERCENTILE/100.0).reset_index())
+        sp.columns=["Driver_Short","Team","MaxSpeed"]
+        sp=sp.sort_values("MaxSpeed",ascending=False)
+        for _,row in sp.iterrows():
+            fig_spd.add_trace(go.Bar(x=[row["Driver_Short"]],y=[row["MaxSpeed"]],
+                name=row["Driver_Short"],showlegend=False,
+                marker_color=TEAM_COLORS.get(row["Team"],"#808080"),
+                hovertemplate=f"<b>{row['Driver_Short']}</b><br>{SPEED_PERCENTILE}th pct: %{{y:.1f}} km/h<extra></extra>"))
+        lo=sp["MaxSpeed"].min(); hi=sp["MaxSpeed"].max(); m=(hi-lo)*0.3 if hi>lo else 1
+        theme(fig_spd,380,f"Maximum Speed by Driver ({SPEED_PERCENTILE}th pct of best lap)")
+        fig_spd.update_layout(xaxis_title="Driver",yaxis_title="Max Speed (km/h)",xaxis=dict(tickangle=0,gridcolor=GRID_CLR,zeroline=False))
+        fig_spd.update_yaxes(range=[lo-m,hi+m/4])
+    else:
+        fig_spd=_empty_channel_fig("No best-lap telemetry available.")
+
+    if not blt.empty and "GearNo" in blt.columns:
+        drv_team=blt.dropna(subset=["Driver_Short"]).groupby("Driver_Short")["Team"].first().to_dict()
+        gp=(blt.groupby(["Driver_Short","Team","GearNo"]).size().reset_index(name="cnt"))
+        gp["total"]=gp.groupby("Driver_Short")["cnt"].transform("sum")
+        gp["pct"]=gp["cnt"]/gp["total"]*100
+        drv_ord=sorted(gp["Driver_Short"].dropna().unique().tolist())
+        drv_colors=[TEAM_COLORS.get(drv_team.get(d,"x"),"#808080") for d in drv_ord]
+        for gear in sorted(gp["GearNo"].dropna().unique()):
+            sub=gp[gp["GearNo"]==gear].set_index("Driver_Short")
+            fig_gear.add_trace(go.Bar(
+                x=drv_ord,
+                y=[sub.loc[d,"pct"] if d in sub.index else 0 for d in drv_ord],
+                name=f"Gear {int(gear)}",
+                marker_color=drv_colors,
+                hovertemplate="Driver: %{x}<br>Gear "+str(int(gear))+": %{y:.1f}%<extra></extra>"))
+        theme(fig_gear,420,"Gear Usage Distribution by Driver (best lap)")
+        fig_gear.update_layout(barmode="stack",xaxis_title="Driver",yaxis_title="Time in Gear (%)")
+    else:
+        fig_gear=_empty_channel_fig("No best-lap telemetry available.")
+
+    ch_title=html.Span([
+        "Telemetry Channels (Speed / Throttle / Brake / Gear)",
+        html.Span(
+            "  ·  vs distance, with corner markers  ·  select laps in the Best Lap "
+            "Leaderboard above to overlay them",
+            style={"color":TEXT_DIM,"fontWeight":"400","fontSize":"0.72rem","marginLeft":"6px"},
+        ),
+    ])
+
     return html.Div([
         card("Lap Time Evolution",dcc.Graph(figure=fig_evo,config=GFX),
              info=("Data: every valid lap plotted by lap number, one line per driver "
                    "(team-coloured); each marker is tinted by the tyre compound used. "
                    "Why: shows pace trends within a run — fuel burn-off, tyre "
                    "degradation, traffic and safety-car spikes all show up here.")),
-        card("Best Lap Leaderboard",tbl),
+        card("Best Lap Leaderboard",
+             html.Div([
+                 html.P("Select one or more laps (checkbox at left) to drive the "
+                        "Telemetry Channels overlay below.",
+                        style={"color":TEXT_DIM,"fontSize":"0.74rem","marginBottom":"8px"}),
+                 best_tbl,
+             ])),
         card("Quali Simulation Laps (≤0.5% of personal best, tyre age ≤4)",qs_tbl),
+        dbc.Row([dbc.Col(card("Maximum Speed",dcc.Graph(figure=fig_spd,config=GFX),
+                              info=(f"Data: the {SPEED_PERCENTILE}th-percentile speed "
+                                    "from each driver's single best lap across all "
+                                    "loaded sessions (a robust 'top speed' that ignores "
+                                    "one-off GPS spikes), team-coloured. Why: a proxy "
+                                    "for straight-line speed / power-unit and drag.")),md=6),
+                 dbc.Col(card("Gear Usage",dcc.Graph(figure=fig_gear,config=GFX),
+                              info=("Data: share of telemetry samples spent in each "
+                                    "gear during each driver's best lap across all "
+                                    "loaded sessions (stacked to 100%). Why: a "
+                                    "fingerprint of how the lap is driven and of "
+                                    "gearing/setup choices.")),md=6)]),
+        card(ch_title, dcc.Graph(id="laptel-channels-graph",config=GFX),
+             info=("Data: raw Speed, Throttle, Brake and Gear telemetry traces for the "
+                   "lap(s) you select in the Best Lap Leaderboard, plotted against "
+                   "distance from the start line (integrated from speed) so different "
+                   "laps and drivers line up corner-for-corner. Dotted grey lines mark "
+                   "the numbered corners (from the cached circuit map). Why: a direct "
+                   "comparison of driving inputs — where each driver brakes, gets on "
+                   "throttle and shifts through each corner.")),
     ])
+
+
+# ── Telemetry Channels overlay — driven by leaderboard selection ──
+@app.callback(
+    Output("laptel-channels-graph", "figure"),
+    Input("laptel-best-table", "selected_rows"),
+    State("laptel-best-table", "data"),
+)
+def update_laptel_channels(selected_rows, data):
+    if not data or not selected_rows:
+        return _empty_channel_fig(
+            "Select one or more laps in the Best Lap Leaderboard to view telemetry.")
+    specs = []
+    for i in selected_rows:
+        if i is None or i >= len(data):
+            continue
+        row = data[i]
+        try:
+            specs.append((row.get("Session"), row.get("Driver"), int(row.get("Lap #"))))
+        except (TypeError, ValueError):
+            continue
+    if not specs:
+        return _empty_channel_fig("Could not resolve the selected lap(s).")
+    return _laptel_channel_fig(specs)
 
 # ══════════════════════════════════════════════════════════════
 # TAB 4 – STINTS
@@ -3227,127 +3615,6 @@ def tab_stints(fl, fs):
         *violin_cards,
         *deg_cards,
         card("Stint Lap Inspector", stint_inspector),
-    ])
-
-# TAB 5 – TELEMETRY
-# ══════════════════════════════════════════════════════════════
-def tab_telemetry(fl, ft):
-    if ft.empty:
-        return card("Telemetry",html.P("No telemetry data.",style={"color":TEXT_DIM}))
-
-    # Max speed bar
-    fig_spd=go.Figure()
-    if "Speed" in ft.columns:
-        sp=(ft.groupby(["Driver_Short","Team"])["Speed"]
-              .quantile(SPEED_PERCENTILE/100.0).reset_index())
-        sp.columns=["Driver_Short","Team","MaxSpeed"]
-        sp=sp.sort_values("MaxSpeed",ascending=False)
-        for _,row in sp.iterrows():
-            fig_spd.add_trace(go.Bar(x=[row["Driver_Short"]],y=[row["MaxSpeed"]],
-                name=row["Driver_Short"],showlegend=False,
-                marker_color=TEAM_COLORS.get(row["Team"],"#808080"),
-                hovertemplate=f"<b>{row['Driver_Short']}</b><br>{SPEED_PERCENTILE}th pct: %{{y:.1f}} km/h<extra></extra>"))
-        lo=sp["MaxSpeed"].min(); hi=sp["MaxSpeed"].max(); m=(hi-lo)*0.3
-        theme(fig_spd,380,f"Maximum Speed by Driver ({SPEED_PERCENTILE}th percentile)")
-        fig_spd.update_layout(xaxis_title="Driver",yaxis_title="Max Speed (km/h)",xaxis=dict(tickangle=0,gridcolor=GRID_CLR,zeroline=False))
-        fig_spd.update_yaxes(range=[lo-m,hi+m/4])
-
-    # Per-driver team lookup (precomputed once — avoids O(N) filters in loops)
-    drv_team = (
-        ft.dropna(subset=["Driver_Short"])
-          .groupby("Driver_Short")["Team"].first().to_dict()
-        if "Team" in ft.columns else {}
-    )
-
-    # Gear usage stacked bar
-    fig_gear=go.Figure()
-    if "GearNo" in ft.columns:
-        gp=(ft.groupby(["Driver_Short","Team","GearNo"]).size().reset_index(name="cnt"))
-        gp["total"]=gp.groupby("Driver_Short")["cnt"].transform("sum")
-        gp["pct"]=gp["cnt"]/gp["total"]*100
-        drv_ord=sorted(gp["Driver_Short"].dropna().unique().tolist())
-        drv_colors=[TEAM_COLORS.get(drv_team.get(d,"x"),"#808080") for d in drv_ord]
-        for gear in sorted(gp["GearNo"].dropna().unique()):
-            sub=gp[gp["GearNo"]==gear].set_index("Driver_Short")
-            fig_gear.add_trace(go.Bar(
-                x=drv_ord,
-                y=[sub.loc[d,"pct"] if d in sub.index else 0 for d in drv_ord],
-                name=f"Gear {int(gear)}",
-                marker_color=drv_colors,
-                hovertemplate="Driver: %{x}<br>Gear "+str(int(gear))+": %{y:.1f}%<extra></extra>"))
-        theme(fig_gear,420,"Gear Usage Distribution by Driver")
-        fig_gear.update_layout(barmode="stack",xaxis_title="Driver",yaxis_title="Time in Gear (%)")
-
-    # Channel overlay — telemetry has ~100k+ samples per driver per session,
-    # so without downsampling the JSON payload sent to the browser balloons
-    # to ~150 MB and the tab never finishes loading. We pick a single
-    # session (priority: Race > Qualifying > FP3 > FP2 > FP1) and decimate
-    # each driver's trace to a cap.
-    MAX_POINTS_PER_TRACE = 2000
-    channels=[c for c in ["Speed","Throttle","Brake","GearNo"] if c in ft.columns]
-    sessions_in_ft=sorted(ft["session_name"].dropna().unique().tolist()) if "session_name" in ft.columns else []
-    _sess_priority=["Race","Sprint","Qualifying","Sprint_Qualifying","Practice_3","Practice_2","Practice_1"]
-    def _sess_rank(s):
-        prefix=str(s).split("_")[0]
-        try: return _sess_priority.index(prefix)
-        except ValueError: return len(_sess_priority)
-    sess_for_overlay=sorted(sessions_in_ft,key=_sess_rank)[0] if sessions_in_ft else None
-    overlay_pool=ft[ft["session_name"]==sess_for_overlay] if sess_for_overlay else ft
-
-    fig_ch=make_subplots(rows=max(len(channels),1),cols=1,shared_xaxes=True,
-                          vertical_spacing=0.04,subplot_titles=channels)
-    for drv,sub_full in overlay_pool.groupby("Driver_Short",sort=True):
-        if sub_full.empty: continue
-        clr=TEAM_COLORS.get(drv_team.get(drv,"x"),"#808080")
-        sub_full=sub_full.sort_values("timestamp")
-        stride=max(1,len(sub_full)//MAX_POINTS_PER_TRACE)
-        if stride>1:
-            sub_full=sub_full.iloc[::stride]
-        for r,ch in enumerate(channels,start=1):
-            fig_ch.add_trace(go.Scattergl(
-                x=sub_full["timestamp"],y=sub_full[ch],mode="lines",
-                name=drv,legendgroup=drv,
-                line=dict(color=clr,width=0.8),
-                showlegend=(r==1),
-                hovertemplate=f"<b>{drv}</b><br>{ch}: %{{y}}<extra></extra>",
-            ),row=r,col=1)
-    for r,ch in enumerate(channels,start=1):
-        fig_ch.update_yaxes(title_text=ch,gridcolor=GRID_CLR,zeroline=False,row=r,col=1)
-    fig_ch.update_layout(height=max(140*len(channels)+60,300),
-        paper_bgcolor=CARD_BG,plot_bgcolor=CARD_BG,
-        font=dict(color=TEXT_MAIN,family="Inter, sans-serif",size=11),
-        legend=dict(bgcolor="rgba(0,0,0,0)"),margin=dict(l=60,r=20,t=60,b=40))
-    fig_ch.update_xaxes(gridcolor=GRID_CLR,zeroline=False)
-
-    sess_label=str(sess_for_overlay).split("_")[0] if sess_for_overlay else "no session"
-    ch_title=html.Span([
-        "Telemetry Channels (Speed / Throttle / Brake / Gear)",
-        html.Span(
-            f"  ·  {sess_label} session  ·  downsampled to ≤{MAX_POINTS_PER_TRACE:,} pts/driver",
-            style={"color":TEXT_DIM,"fontWeight":"400","fontSize":"0.72rem","marginLeft":"6px"},
-        ),
-    ])
-
-    return html.Div([
-        dbc.Row([dbc.Col(card("Maximum Speed",dcc.Graph(figure=fig_spd,config=GFX),
-                              info=(f"Data: the {SPEED_PERCENTILE}th-percentile speed "
-                                    "from each driver's telemetry (a robust 'top speed' "
-                                    "that ignores one-off GPS spikes), team-coloured. "
-                                    "Why: a proxy for straight-line speed / power-unit "
-                                    "and drag — engine and wing-level differences show "
-                                    "up clearly.")),md=6),
-                 dbc.Col(card("Gear Usage",   dcc.Graph(figure=fig_gear,config=GFX),
-                              info=("Data: share of telemetry samples spent in each "
-                                    "gear, per driver (stacked to 100%). Why: a "
-                                    "fingerprint of how the lap is driven and of "
-                                    "gearing/setup choices — circuits and styles favour "
-                                    "different gear distributions.")),md=6)]),
-        card(ch_title, dcc.Graph(figure=fig_ch,config=GFX),
-             info=("Data: raw Speed, Throttle, Brake and Gear telemetry traces over a "
-                   "lap for each selected driver, from one session (Race > Quali > FP, "
-                   "downsampled for the browser). Why: a direct overlay of driving "
-                   "inputs — where drivers brake, get on throttle and shift, lap "
-                   "against lap.")),
     ])
 
 # ══════════════════════════════════════════════════════════════
@@ -4563,7 +4830,9 @@ def get_track_map(season, event_name, session_id="Q", force=False) -> dict | Non
     try:
         ci = sess.get_circuit_info()
         rotation = float(ci.rotation)
-        corners = ci.corners[["Number", "Letter", "X", "Y", "Angle"]].copy()
+        _corner_cols = [c for c in ["Number", "Letter", "X", "Y", "Angle", "Distance"]
+                        if c in ci.corners.columns]
+        corners = ci.corners[_corner_cols].copy()
     except Exception as exc:
         logging.warning("circuit_info unavailable for %s %s: %s", season, event_name, exc)
 

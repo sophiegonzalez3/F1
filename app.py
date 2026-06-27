@@ -903,6 +903,7 @@ TABS = dbc.Tabs([
     dbc.Tab(label="TEAM ANALYSIS",  tab_id="tab-teams"),
     dbc.Tab(label="TELEMETRY", tab_id="tab-laps"),
     dbc.Tab(label="STINTS",         tab_id="tab-stints"),
+    dbc.Tab(label="RACE",           tab_id="tab-race"),
     dbc.Tab(label="TEAMMATES",      tab_id="tab-teammates"),
 ], id="tabs", active_tab="tab-data",
    style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
@@ -947,6 +948,7 @@ def render(tab, ss, sc, sd, st):
     if tab=="tab-teams":      return tab_teams(fl_d, fs_d)
     if tab=="tab-laps":       return tab_laps(fl_d, ft)
     if tab=="tab-stints":     return tab_stints(fl_d,fs_d)
+    if tab=="tab-race":       return tab_race(sd, st)
     if tab=="tab-teammates":  return tab_teammates(fl_d,fs_d)
     if tab=="tab-track":      return tab_track_info()
     return html.P("Select a tab.")
@@ -1000,59 +1002,10 @@ def update_stints_evo(session, sc, sd, st):
         & laps["Team"].isin(st)
     ].copy()
 
-    fig = go.Figure()
-
-    for drv in sorted(sv["Driver_Short"].dropna().unique()):
-        dv = sv[sv["Driver_Short"] == drv].sort_values("LapNo")
-        if dv.empty:
-            continue
-        clr = TEAM_COLORS.get(dv["Team"].iloc[0], "#808080")
-        # Build x/y/compound lists; insert None to break line at lap-number gaps
-        x_vals, y_vals, c_vals, f_vals = [], [], [], []
-        prev_lap = None
-        for _, row in dv.iterrows():
-            if prev_lap is not None and row["LapNo"] - prev_lap > 1:
-                x_vals.append(None); y_vals.append(None)
-                c_vals.append(None); f_vals.append(None)
-            x_vals.append(row["LapNo"])
-            y_vals.append(row["LapTime_s"] if pd.notna(row["LapTime_s"]) else None)
-            c_vals.append(row.get("Compound") or "?")
-            f_vals.append(row.get("TrackStatus_Flag") or "Clear")
-            prev_lap = row["LapNo"]
-
-        fig.add_trace(go.Scatter(
-            x=x_vals, y=y_vals,
-            mode="lines+markers",
-            name=drv,
-            line=dict(color=clr, width=1.5),
-            marker=dict(
-                size=6,
-                color=[COMPOUND_COLORS.get(c, clr) if c else clr for c in c_vals],
-                line=dict(color=clr, width=1),
-            ),
-            customdata=list(zip(c_vals, f_vals)),
-            hovertemplate=(
-                f"<b>{drv}</b><br>"
-                "Lap %{x}  |  %{y:.3f} s<br>"
-                "Compound: %{customdata[0]}<br>"
-                "Flag: %{customdata[1]}<extra></extra>"
-            ),
-        ))
-
-    # Overlay track-flag bands
-    _add_flag_bands(fig, sv)
-
     sess_label = session.split("_")[0]
-    theme(fig, 540, f"Lap Time Evolution \u2013 All Laps \u2013 {sess_label}")
-    fig.update_layout(
-        xaxis_title="Lap Number",
-        yaxis_title="Lap Time (s)",
-        legend=dict(
-            bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1,
-            orientation="v",
-        ),
+    return _lap_evolution_fig(
+        sv, f"Lap Time Evolution \u2013 All Laps \u2013 {sess_label}"
     )
-    return fig
 
 
 # ── Stint Lap Inspector callbacks ────────────────────────────
@@ -3290,6 +3243,61 @@ def _add_flag_bands(fig, df_sess):
         )
 
 
+def _lap_evolution_fig(sv, title, height=540):
+    """Per-driver lap-time line chart for a SINGLE session: one line per driver,
+    markers tinted by compound, track-flag periods shaded behind. Shared by the
+    Stints tab (any session) and the Race tab (race only)."""
+    fig = go.Figure()
+    for drv in sorted(sv["Driver_Short"].dropna().unique()):
+        dv = sv[sv["Driver_Short"] == drv].sort_values("LapNo")
+        if dv.empty:
+            continue
+        clr = TEAM_COLORS.get(dv["Team"].iloc[0], "#808080")
+        # Build x/y/compound lists; insert None to break the line at lap gaps
+        x_vals, y_vals, c_vals, f_vals = [], [], [], []
+        prev_lap = None
+        for _, row in dv.iterrows():
+            if prev_lap is not None and row["LapNo"] - prev_lap > 1:
+                x_vals.append(None); y_vals.append(None)
+                c_vals.append(None); f_vals.append(None)
+            x_vals.append(row["LapNo"])
+            y_vals.append(row["LapTime_s"] if pd.notna(row["LapTime_s"]) else None)
+            c_vals.append(row.get("Compound") or "?")
+            f_vals.append(row.get("TrackStatus_Flag") or "Clear")
+            prev_lap = row["LapNo"]
+
+        fig.add_trace(go.Scatter(
+            x=x_vals, y=y_vals,
+            mode="lines+markers",
+            name=drv,
+            line=dict(color=clr, width=1.5),
+            marker=dict(
+                size=6,
+                color=[COMPOUND_COLORS.get(c, clr) if c else clr for c in c_vals],
+                line=dict(color=clr, width=1),
+            ),
+            customdata=list(zip(c_vals, f_vals)),
+            hovertemplate=(
+                f"<b>{drv}</b><br>"
+                "Lap %{x}  |  %{y:.3f} s<br>"
+                "Compound: %{customdata[0]}<br>"
+                "Flag: %{customdata[1]}<extra></extra>"
+            ),
+        ))
+
+    _add_flag_bands(fig, sv)
+    theme(fig, height, title)
+    fig.update_layout(
+        xaxis_title="Lap Number",
+        yaxis_title="Lap Time (s)",
+        legend=dict(
+            bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1,
+            orientation="v",
+        ),
+    )
+    return fig
+
+
 def _best_stint_laps(fl, stints_df):
     """Return laps that belong to the best valid stint per driver x compound
     (session-agnostic: Stint_Rank_Across_Sessions == 1).
@@ -3701,6 +3709,281 @@ def tab_stints(fl, fs):
                   "compounds saw real running."),
         ),
         card("Stint Lap Inspector", stint_inspector),
+    ])
+
+# ══════════════════════════════════════════════════════════════
+# TAB – RACE
+# ══════════════════════════════════════════════════════════════
+# The Race tab is meeting-centric and self-contained: it loads the *race*
+# session for the currently-selected meeting, falling back to the previous
+# season's race when the current season's race hasn't happened / isn't
+# available yet. It does NOT use the sidebar session/driver filters because
+# the race shown may be a different season (different driver line-up) than
+# what is otherwise loaded.
+
+_RACE_DATA_CACHE: dict[tuple, dict | None] = {}   # (season, meeting) → enriched data | None
+
+
+def _enrich_race_laps(data: dict) -> pd.DataFrame:
+    """Run the same lap-enrichment pipeline as rebuild_state() on a single
+    race session's raw frames. Returns the enriched laps frame."""
+    _laps = clean_and_enrich_laps(data["laps"])
+    _laps["stint_key"] = (
+        _laps["Stint"].astype("string") + "_" + _laps["session_name"]
+    )
+    _laps = enrich_weather(_laps, data["weather"])
+    _laps = enrich_track_limits(_laps, data["race_control"])
+    _laps = enrich_blue_flags(_laps, data["race_control"])
+    _laps = identify_quali_sim_laps(_laps)
+    _laps = flag_perturbed_laps(_laps, rcm=data["race_control"])
+    _laps = enrich_session_results(_laps, data["results"])
+    _laps = flag_position_changes(_laps)
+    return _laps
+
+
+def _load_one_race(season: int, meeting: str) -> dict | None:
+    """Load + enrich the Race session for (season, meeting). Returns
+    {laps, stints, season, meeting} or None when no lap data is available."""
+    info = [{"SEASON": str(season), "MEETING": meeting, "SESSION": "Race"}]
+    try:
+        data = load_sessions(info)
+    except Exception as exc:           # network / FastF1 failure
+        print(f"  [race] load failed {season} {meeting}: {exc}", flush=True)
+        return None
+    lr = data.get("laps")
+    if lr is None or lr.empty:
+        return None
+    try:
+        rl = _enrich_race_laps(data)
+        rs = analyze_stints(rl)
+    except Exception as exc:
+        print(f"  [race] enrich failed {season} {meeting}: {exc}", flush=True)
+        return None
+    return {"laps": rl, "stints": rs, "season": season, "meeting": meeting}
+
+
+def _resolve_race_data(season: int, meeting: str) -> dict | None:
+    """Get race data for the meeting, preferring the current season and falling
+    back to the previous one. Cached data is preferred over a live fetch so the
+    tab stays fast and works offline. Memoized per (season, meeting)."""
+    key = (int(season), meeting)
+    if key in _RACE_DATA_CACHE:
+        return _RACE_DATA_CACHE[key]
+
+    candidates = [int(season), int(season) - 1]
+    result: dict | None = None
+    # Pass 1 – cached years only (fast, offline-safe), current season first
+    for yr in candidates:
+        if is_cached(str(yr), meeting, "Race"):
+            result = _load_one_race(yr, meeting)
+            if result:
+                break
+    # Pass 2 – nothing cached: attempt a live fetch, current season first
+    if result is None:
+        for yr in candidates:
+            result = _load_one_race(yr, meeting)
+            if result:
+                break
+
+    _RACE_DATA_CACHE[key] = result
+    return result
+
+
+def _position_changes_fig(rl: pd.DataFrame, title: str, height: int = 640) -> go.Figure:
+    """Broadcast-style race position chart: each driver's on-track position by
+    lap, team-coloured (teammates solid vs dashed), driver code labelled at the
+    end of the line, grid position shown at lap 0, points-paying top-10 zone
+    shaded, and track-flag periods banded behind. Y-axis inverted (P1 on top)."""
+    fig = go.Figure()
+    if rl.empty or "Position" not in rl.columns or rl["Position"].notna().sum() == 0:
+        theme(fig, height, title)
+        fig.add_annotation(
+            text="No per-lap position data available for this race.",
+            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+            font=dict(color=TEXT_DIM, size=13),
+        )
+        return fig
+
+    n_laps    = int(rl["LapNo"].max())
+    n_drivers = int(rl["Driver_Short"].nunique())
+    y_bottom  = max(20, n_drivers) + 0.5
+
+    # Points-paying zone (top 10)
+    fig.add_hrect(y0=0.5, y1=10.5, fillcolor="rgba(0,210,190,0.05)",
+                  line_width=0, layer="below")
+
+    end_labels: list[tuple] = []   # (x, y, code, color)
+    for team in sorted(rl["Team"].dropna().unique()):
+        drv_team = (
+            rl[rl["Team"] == team]
+            .sort_values("DriverNo")["Driver_Short"].dropna().unique().tolist()
+        )
+        clr = TEAM_COLORS.get(team, "#808080")
+        for i, drv in enumerate(drv_team):
+            dv = rl[(rl["Driver_Short"] == drv) & rl["Position"].notna()] \
+                .sort_values("LapNo")
+            if dv.empty:
+                continue
+            dash = "solid" if i == 0 else "dash"
+            x = dv["LapNo"].tolist()
+            y = dv["Position"].tolist()
+            # Prepend starting grid slot at lap 0 so the start is visible
+            grid = dv["Grid_Position"].iloc[0] if "Grid_Position" in dv.columns else np.nan
+            if pd.notna(grid) and grid > 0:
+                x = [0] + x
+                y = [float(grid)] + y
+            fig.add_trace(go.Scatter(
+                x=x, y=y, mode="lines", name=drv,
+                line=dict(color=clr, width=2.2, dash=dash),
+                hovertemplate=(
+                    f"<b>{drv}</b> · {team}<br>"
+                    "Lap %{x}  →  P%{y}<extra></extra>"
+                ),
+                showlegend=False,
+            ))
+            end_labels.append((x[-1], y[-1], drv, clr))
+
+    # Track-flag bands (SC / VSC / yellow / red) behind the lines
+    _add_flag_bands(fig, rl)
+
+    theme(fig, height, title)
+
+    # Driver-code labels at the end of each line (replaces a crowded legend)
+    for xe, ye, drv, clr in end_labels:
+        fig.add_annotation(
+            x=xe, y=ye, text=f"  {drv}", showarrow=False, xanchor="left",
+            font=dict(size=10, color=clr, family="Inter, sans-serif"),
+        )
+    fig.add_annotation(
+        x=0.0, y=10.5, xref="x", yref="y", text="points ▲", showarrow=False,
+        xanchor="left", yanchor="bottom",
+        font=dict(size=9, color="#00D2BE"),
+    )
+
+    fig.update_layout(
+        showlegend=False,
+        xaxis=dict(title="Lap", range=[-1.5, n_laps + 3.5],
+                   gridcolor=GRID_CLR, zeroline=False),
+        yaxis=dict(title="Position", range=[y_bottom, 0.5],
+                   tickvals=[1, 5, 10, 15, 20],
+                   gridcolor=GRID_CLR, zeroline=False),
+    )
+    return fig
+
+
+def tab_race(sel_drivers=None, sel_teams=None):
+    cur = LOADED_SESSION_INFO[0] if LOADED_SESSION_INFO else None
+    if not cur:
+        return html.P("No meeting loaded — pick a session in the Data tab.",
+                      style={"color": TEXT_DIM})
+
+    season  = int(cur["SEASON"])
+    meeting = cur["MEETING"]
+    data    = _resolve_race_data(season, meeting)
+
+    if data is None:
+        return html.Div([
+            html.H3(f"{meeting}", style={"color": TEXT_MAIN, "fontWeight": "800"}),
+            html.P(
+                f"No race data is available for {meeting} in {season} or {season - 1} "
+                "(neither cached locally nor fetchable). Load the race in the Data tab.",
+                style={"color": TEXT_DIM, "fontSize": "0.9rem"},
+            ),
+        ])
+
+    rl          = data["laps"]
+    shown_year  = data["season"]
+    is_fallback = shown_year != season
+
+    # ── Sidebar filters: only Driver and Team apply to the Race tab ──
+    # Apply a filter only when the user has actually narrowed it. A full
+    # selection is treated as "no filter" so a fallback season (whose team
+    # names / line-up may differ from the loaded one) still shows the whole
+    # grid instead of silently dropping drivers on stale team names.
+    if sel_teams and set(sel_teams) != set(TEAMS):
+        rl = rl[rl["Team"].isin(sel_teams)]
+    if sel_drivers and set(sel_drivers) != set(DRIVERS):
+        rl = rl[rl["Driver_Short"].isin(sel_drivers)]
+
+    # ── Year banner (makes the displayed season unmistakable) ──
+    banner_bits = [
+        html.Span("RACE", style={
+            "background": ACCENT, "color": "#fff", "borderRadius": "4px",
+            "padding": "3px 10px", "fontWeight": "800", "letterSpacing": "2px",
+            "fontSize": "0.8rem", "marginRight": "12px",
+        }),
+        html.Span(f"{meeting}", style={
+            "color": TEXT_MAIN, "fontWeight": "800", "fontSize": "1.15rem",
+            "marginRight": "10px",
+        }),
+        html.Span(str(shown_year), style={
+            "color": "#fff", "background": "#005AFF" if not is_fallback else "#B8860B",
+            "borderRadius": "4px", "padding": "3px 12px", "fontWeight": "800",
+            "fontSize": "1.0rem", "letterSpacing": "1px",
+        }),
+    ]
+    if is_fallback:
+        banner_bits.append(html.Span(
+            f"  ⚠  {season} race not available yet — showing {shown_year} data",
+            style={"color": "#E0B040", "fontSize": "0.8rem", "marginLeft": "12px",
+                   "fontStyle": "italic"},
+        ))
+    banner = html.Div(
+        banner_bits,
+        style={"display": "flex", "alignItems": "center", "flexWrap": "wrap",
+               "padding": "12px 16px", "marginBottom": "18px",
+               "background": CARD_BG, "border": f"1px solid {GRID_CLR}",
+               "borderLeft": f"4px solid {ACCENT}", "borderRadius": "8px"},
+    )
+
+    if rl.empty:
+        return html.Div([
+            banner,
+            html.P("No race laps match the current Driver / Team filter "
+                   "(note: a fallback season may have a different line-up).",
+                   style={"color": TEXT_DIM, "fontSize": "0.9rem"}),
+        ])
+
+    evo_fig = _lap_evolution_fig(
+        rl, f"Lap Time Evolution – All Laps – Race {shown_year}"
+    )
+    pos_fig = _position_changes_fig(
+        rl, f"Race Position by Lap – {meeting} {shown_year}"
+    )
+    strat_fig = _tyre_strategy_chart(
+        rl, title=f"Race Tyre Strategy – {meeting} {shown_year}",
+        already_race=True,
+    )
+
+    return html.Div([
+        banner,
+        card(
+            "Lap Time Evolution – All Laps (Race)",
+            dcc.Graph(figure=evo_fig, config=GFX),
+            info=("Data: every race lap (valid or not), one line per driver, markers "
+                  "tinted by compound, with track-flag periods shaded behind (yellow / "
+                  "SC / VSC / red). Why: the full story of the race — stint lengths, pit "
+                  "stops, degradation and how interruptions reshaped the pace."),
+        ),
+        card(
+            "Position Changes During the Race",
+            dcc.Graph(figure=pos_fig, config=GFX),
+            info=("Data: each driver's on-track position at every lap (grid slot shown "
+                  "at lap 0), team-coloured with teammates split solid/dashed, driver "
+                  "code labelled at the line end. The shaded band marks the points-paying "
+                  "top 10; flag periods are banded behind. Why: shows overtakes, pit-stop "
+                  "shuffles and Safety-Car bunching at a glance."),
+        ),
+        card(
+            "Race Tyre Strategy",
+            dcc.Graph(figure=strat_fig, config=GFX)
+            if strat_fig.data else
+            html.P("No stint data available for this race.", style={"color": TEXT_DIM}),
+            info=("Data: each driver's stints, one bar split into compound-coloured "
+                  "segments sized by stint length (laps), ordered by finishing position; "
+                  "diamonds mark pit stops and show pit-lane time (s). Why: the strategic "
+                  "shape of the race — who ran which tyres, stint lengths and stop timing."),
+        ),
     ])
 
 # ══════════════════════════════════════════════════════════════
@@ -4858,13 +5141,44 @@ def _tyre_history_chart(laps_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+# Text colour that stays readable on each compound's bar colour.
+_COMPOUND_TEXT = {"SOFT": "#FFFFFF", "MEDIUM": "#111111", "HARD": "#111111",
+                  "INTER": "#FFFFFF", "WET": "#FFFFFF"}
+
+
+def _pit_durations(race: pd.DataFrame, lap_col: str) -> dict:
+    """Pit-lane time loss per (driver, stint-just-ended), in seconds.
+
+    Uses the session-time stamps already normalised to seconds in the laps
+    frame: PitIn lands on the in-lap, PitOut on the following out-lap, so the
+    difference is the full pit-lane transit time (~20–30 s). Anomalies
+    (red-flag stops, garage time) are filtered with a sanity bound.
+    """
+    if "PitIn" not in race.columns or "PitOut" not in race.columns:
+        return {}
+    out: dict = {}
+    for drv, g in race.groupby("Driver_Short"):
+        g = g.sort_values(lap_col).reset_index(drop=True)
+        pit_out = g[g["PitOut"].notna()]
+        for _, row in g[g["PitIn"].notna()].iterrows():
+            nxt = pit_out[pit_out[lap_col] > row[lap_col]]
+            if nxt.empty:
+                continue
+            dur = float(nxt.iloc[0]["PitOut"]) - float(row["PitIn"])
+            if 0 < dur < 120:
+                out[(drv, int(row["Stint"]))] = dur
+    return out
+
+
 def _tyre_strategy_chart(laps_df: pd.DataFrame, results: pd.DataFrame | None = None,
                          title: str = "Race Tyre Strategy",
                          already_race: bool = False) -> go.Figure:
     """Per-driver tyre strategy for a race: one horizontal bar per driver, split
     into stint segments coloured by compound and sized by stint length (laps),
-    ordered by finishing position (P1 on top). Recreates the FastF1 'Tyre
-    strategies during a race' example in Plotly.
+    ordered by finishing position (P1 on top). Compound + lap count are printed
+    inside wide segments, and each pit stop is marked at the stint boundary with
+    its pit-lane time. Recreates the FastF1 'Tyre strategies during a race'
+    example, dressed up to match the rest of the dashboard.
 
     Accepts either the in-memory enriched laps (with Driver_Short /
     Classified_Position) or raw cache-loaded race laps (with Driver / DriverNo),
@@ -4886,6 +5200,8 @@ def _tyre_strategy_chart(laps_df: pd.DataFrame, results: pd.DataFrame | None = N
     race = race[race["Driver_Short"].astype(str).str.len() > 0]
     if race.empty:
         return go.Figure()
+
+    pit = _pit_durations(race, lap_col)
 
     # Stint length = number of laps per driver × stint × compound.
     seg = (race.groupby(["Driver_Short", "Stint", "Compound"])[lap_col]
@@ -4911,31 +5227,65 @@ def _tyre_strategy_chart(laps_df: pd.DataFrame, results: pd.DataFrame | None = N
 
     fig = go.Figure()
     seen_comp: set = set()
+    pit_x, pit_y, pit_txt, pit_hover = [], [], [], []   # pit-stop markers
     for drv in order:
         d = seg[seg["Driver_Short"] == drv].sort_values("_stint")
         left = 0
-        for _, r in d.iterrows():
+        n_stints = len(d)
+        for i, (_, r) in enumerate(d.iterrows()):
             cmp = str(r["Compound"]).upper()
             length = int(r["StintLength"])
+            stint_no = int(r["_stint"]) if pd.notna(r["_stint"]) else None
             clr = COMPOUND_COLORS.get(cmp, "#808080")
+            # Compound + laps printed inside the bar when there's room.
+            seg_text = f"{cmp[0]} · {length}" if length >= 4 else (
+                cmp[0] if length >= 2 else "")
             fig.add_trace(go.Bar(
                 y=[drv], x=[length], base=left, orientation="h",
                 name=cmp, legendgroup=cmp, showlegend=(cmp not in seen_comp),
                 marker=dict(color=clr, line=dict(color="#000", width=1)),
+                text=[seg_text], textposition="inside", insidetextanchor="middle",
+                textfont=dict(color=_COMPOUND_TEXT.get(cmp, "#111111"), size=10),
                 hovertemplate=(f"<b>{drv}</b> · {cmp}<br>"
                                f"Laps {left + 1}–{left + length} "
                                f"({length} laps)<extra></extra>"),
             ))
             seen_comp.add(cmp)
             left += length
+            # Pit stop at the end of this stint (not after the final stint).
+            if stint_no is not None and i < n_stints - 1 and (drv, stint_no) in pit:
+                dur = pit[(drv, stint_no)]
+                pit_x.append(left)
+                pit_y.append(drv)
+                pit_txt.append(f"{dur:.1f}")
+                pit_hover.append(f"<b>{drv}</b><br>Pit stop · lap {left}<br>"
+                                 f"Pit-lane time: {dur:.1f} s<extra></extra>")
 
-    theme(fig, max(360, 24 * len(order) + 130), title)
+    # Pit-stop markers + times overlaid at the stint boundaries.
+    if pit_x:
+        fig.add_trace(go.Scatter(
+            x=pit_x, y=pit_y, mode="markers+text",
+            marker=dict(symbol="diamond", size=9, color="#FFFFFF",
+                        line=dict(color="#111", width=1)),
+            text=pit_txt, textposition="top center",
+            textfont=dict(size=8, color=TEXT_DIM),
+            hovertemplate=pit_hover, name="Pit stop", showlegend=True,
+            cliponaxis=False,
+        ))
+
+    theme(fig, max(360, 26 * len(order) + 150), title)
     fig.update_layout(
         barmode="stack",
         xaxis_title="Lap Number",
         yaxis_title="",
+        bargap=0.28,
         legend=dict(orientation="h", x=0, y=1.06, bgcolor="rgba(0,0,0,0)"),
-        margin=dict(l=60, r=20, t=60, b=40),
+        margin=dict(l=60, r=20, t=70, b=40),
+        annotations=[dict(
+            text="◆ pit stop · number = pit-lane time (s)",
+            xref="paper", yref="paper", x=1, y=1.04, xanchor="right",
+            showarrow=False, font=dict(size=9, color=TEXT_DIM),
+        )],
     )
     fig.update_yaxes(autorange="reversed")     # P1 at the top
     fig.update_xaxes(rangemode="tozero")
@@ -5436,44 +5786,6 @@ def _cached_track_map(circuit_key, year):
     return None, season, event_name
 
 
-def _race_strategy_fig(circuit_key, year, allow_fetch: bool = False):
-    """Race tyre-strategy figure for the selected circuit/season, sourced to
-    match the rest of the page. Returns (fig | None, season, event_name).
-
-    Data preference: the in-memory loaded race → the local Parquet cache →
-    (only when *allow_fetch*) a FastF1 download. With allow_fetch=False this is
-    cheap and never blocks on the network, so it is safe in the page render.
-    """
-    season, event_name = _resolve_track_event(circuit_key, year)
-    if not event_name:
-        return None, season, event_name
-    title = f"Race Tyre Strategy — {event_name} {season}"
-
-    # 1) The race already loaded in memory (instant, fully enriched).
-    ls, lm = _loaded_event()
-    if str(season) == str(ls) and event_name == lm:
-        race = laps[laps["session_name"].astype(str).str.startswith("Race_")]
-        if not race.empty:
-            return _tyre_strategy_chart(race, title=title), season, event_name
-
-    # 2) Local Parquet cache (or a FastF1 fetch when explicitly allowed).
-    if allow_fetch or is_cached(str(season), event_name, "Race"):
-        try:
-            data = load_sessions(
-                [{"SEASON": str(season), "MEETING": event_name, "SESSION": "Race"}])
-        except Exception as exc:
-            logging.warning("race strategy: load failed for %s %s: %s",
-                            season, event_name, exc)
-            data = {}
-        rl = data.get("laps", pd.DataFrame())
-        rr = data.get("results", pd.DataFrame())
-        if rl is not None and not rl.empty:
-            return (_tyre_strategy_chart(rl, results=rr, title=title,
-                                         already_race=True),
-                    season, event_name)
-    return None, season, event_name
-
-
 def _track_season_banner(hist_year, current_season, display_season,
                          is_loaded_circuit) -> html.Div:
     """Prominent banner stating which season the whole tab is showing, and why."""
@@ -5613,34 +5925,8 @@ def update_track_content(circuit_key: str, hist_year: int):
         corners_section = html.Div()
 
 
-    # ── Section 6: Race tyre strategy (follows the selected circuit/season) ─
-    strategy_fig, _st_season, _st_event = _race_strategy_fig(circuit_key, hist_year)
-    if strategy_fig is not None and strategy_fig.data:
-        strategy_body = dcc.Graph(figure=strategy_fig, config=GFX)
-    else:
-        # Not in memory or cache → offer an on-demand fetch (race laps only).
-        strategy_body = html.Div([
-            html.P(f"Race data for {_st_event} {_st_season} isn't cached yet. "
-                   "Load it to see each driver's tyre strategy (first load "
-                   "downloads the race session, 1–3 min; cached afterwards).",
-                   style={"color": TEXT_DIM, "fontSize": "0.8rem", "marginBottom": "10px"}),
-            dbc.Button("Load race strategy", id="strategy-btn",
-                       color="info", outline=True, size="sm",
-                       style={"fontWeight": "700"}),
-            dcc.Loading(type="circle", color=ACCENT,
-                        children=html.Div(id="strategy-content",
-                                          style={"marginTop": "12px"})),
-        ])
-    strategy_section = card(
-        f"Race Tyre Strategy — {_st_event or 'Selected Circuit'} {_st_season or ''}".strip(),
-        strategy_body,
-        info=("Data: each driver's stints in this circuit/season's race, one bar "
-              "per driver split into compound-coloured segments sized by stint "
-              "length (laps), ordered by finishing position. Why: shows who ran "
-              "which tyres and when — the strategic shape of the race at a glance."),
-    )
-
-    # ── Section 6b: Track map (corner layout + gear shifts) ───
+    # ── Section 6: Track map (corner layout + gear shifts) ───
+    # (Race tyre strategy moved to the dedicated RACE tab.)
     # Pre-load the map when it is already cached on disk (the loaded meeting's
     # map is warmed at data-load time), so it appears without a button click.
     preloaded_map, _tm_season, _tm_event = _cached_track_map(circuit_key, hist_year)
@@ -5761,7 +6047,6 @@ def update_track_content(circuit_key: str, hist_year: int):
                    "fingerprint of what a track demands — useful context for why pace "
                    "and tyre behaviour differ between venues.")),
         corners_section,
-        strategy_section,
         track_map_section,
         *hist_blocks,
     ])
@@ -5777,26 +6062,6 @@ def _sync_track_year(circuit_key):
     current if that GP has run, else N-1 — so every plot stays aligned."""
     season = _circuit_display_season(circuit_key)
     return season if season is not None else no_update
-
-
-# ── Race-strategy callback (on-demand fetch for uncached races) ──
-@app.callback(
-    Output("strategy-content", "children"),
-    Input("strategy-btn",       "n_clicks"),
-    State("track-circuit-select", "value"),
-    State("track-year-select",    "value"),
-    prevent_initial_call=True,
-)
-def render_race_strategy(_n, circuit_key, year):
-    if not circuit_key:
-        return dbc.Alert("Select a circuit first.", color="warning",
-                         style={"fontSize": "0.8rem"})
-    fig, season, event_name = _race_strategy_fig(circuit_key, year, allow_fetch=True)
-    if fig is None or not fig.data:
-        return dbc.Alert(
-            f"No race lap data available for {event_name} {season}.",
-            color="danger", style={"fontSize": "0.8rem"})
-    return dcc.Graph(figure=fig, config=GFX)
 
 
 # ── Track-map callback (on-demand FastF1 fetch + render) ─────

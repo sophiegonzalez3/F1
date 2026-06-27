@@ -1,2 +1,11 @@
 # Cache (FastF1 HTTP cache, session pickles, etc.) — not versioned
 cache/
+
+# Local virtual environment
+.venv/
+venv/
+
+# Python build/runtime artifacts
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/

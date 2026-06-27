@@ -319,6 +319,87 @@ if HIST_STANDINGS.empty and not HIST_RACE.empty:
         print(f"Constructor standings   : unavailable ({_exc})")
 print(f"Constructor standings   : {len(HIST_STANDINGS):,} rows")
 
+# ── Team car-development upgrades (per event) ─────────────────
+# Curated, human-maintained table of the technical upgrades each team brings to
+# a given Grand Prix — mirrors the FIA "Car Presentation" documents published
+# each event. One row per (season, event, team, component). The UPGRADES tab
+# reads this to show what evolution a team brought to the loaded meeting.
+#
+#   season       e.g. 2025
+#   event        must match the MEETING name, e.g. "Austrian Grand Prix"
+#   team         must match a TEAM_COLORS key, e.g. "McLaren"
+#   component    affected area, e.g. "Floor Body", "Front Wing"
+#   category     FIA-style reason: Performance / Circuit specific / Reliability /
+#                Driver comfort / Repairs
+#   description  short free-text summary of the change
+#   source       provenance tag (e.g. "FIA-2025-AUT", "starter-example")
+#
+# Edit data/upgrades.csv to add/replace rows — no code changes needed.
+_UPGRADES_PATH = Path("data/upgrades.csv")
+_UPGRADES_COLS = ["season", "event", "team", "component",
+                  "category", "description", "source"]
+
+def _load_upgrades() -> pd.DataFrame:
+    if _UPGRADES_PATH.exists():
+        try:
+            df = pd.read_csv(_UPGRADES_PATH)
+            for c in _UPGRADES_COLS:
+                if c not in df.columns:
+                    df[c] = "" if c != "season" else pd.NA
+            df["season"] = pd.to_numeric(df["season"], errors="coerce").astype("Int64")
+            for c in ("event", "team", "component", "category", "description", "source"):
+                df[c] = df[c].fillna("").astype(str).str.strip()
+            return df[_UPGRADES_COLS]
+        except Exception as _exc:
+            print(f"Team upgrades           : failed to read ({_exc})")
+    return pd.DataFrame(columns=_UPGRADES_COLS)
+
+# Cache the parsed CSV but reload automatically when the file changes on disk, so
+# editing data/upgrades.csv takes effect without restarting the app (Dash's
+# reloader only watches .py files, not data files).
+_UPGRADES_CACHE: dict = {"mtime": None, "df": pd.DataFrame(columns=_UPGRADES_COLS)}
+
+def upgrades_df() -> pd.DataFrame:
+    """Current upgrades table, re-read from disk whenever the CSV's mtime changes."""
+    try:
+        mtime = _UPGRADES_PATH.stat().st_mtime if _UPGRADES_PATH.exists() else None
+    except OSError:
+        mtime = None
+    if mtime != _UPGRADES_CACHE["mtime"]:
+        _UPGRADES_CACHE["df"] = _load_upgrades()
+        _UPGRADES_CACHE["mtime"] = mtime
+    return _UPGRADES_CACHE["df"]
+
+print(f"Team upgrades           : {len(upgrades_df()):,} rows")
+
+def _upgrades_for(season, meeting) -> pd.DataFrame:
+    """Upgrade rows for one (season, event) pair, robust to type/whitespace."""
+    up = upgrades_df()
+    if up.empty or season is None or not meeting:
+        return up.iloc[0:0]
+    try:
+        season = int(season)
+    except (TypeError, ValueError):
+        return up.iloc[0:0]
+    m = str(meeting).strip().casefold()
+    sub = up[(up["season"] == season)
+             & (up["event"].str.strip().str.casefold() == m)]
+    return sub.copy()
+
+def _loaded_meetings() -> list[tuple[int | None, str]]:
+    """Unique (season, event) meetings currently loaded, in load order."""
+    seen: list[tuple[int | None, str]] = []
+    for info in LOADED_SESSION_INFO:
+        try:
+            season = int(info.get("SEASON"))
+        except (TypeError, ValueError):
+            season = None
+        meeting = str(info.get("MEETING", "")).strip()
+        key = (season, meeting)
+        if meeting and key not in seen:
+            seen.append(key)
+    return seen
+
 # Per-round drivers' championship standings (same source, keyed by driver).
 HIST_DRIVER_STANDINGS = _load_hist("driver_standings_all.parquet")
 if HIST_DRIVER_STANDINGS.empty and not HIST_RACE.empty:
@@ -905,6 +986,7 @@ TABS = dbc.Tabs([
     dbc.Tab(label="STINTS",         tab_id="tab-stints"),
     dbc.Tab(label="RACE",           tab_id="tab-race"),
     dbc.Tab(label="TEAMMATES",      tab_id="tab-teammates"),
+    dbc.Tab(label="UPGRADES",       tab_id="tab-upgrades"),
 ], id="tabs", active_tab="tab-data",
    style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
 
@@ -951,6 +1033,7 @@ def render(tab, ss, sc, sd, st):
     if tab=="tab-race":       return tab_race(sd, st)
     if tab=="tab-teammates":  return tab_teammates(fl_d,fs_d)
     if tab=="tab-track":      return tab_track_info()
+    if tab=="tab-upgrades":   return tab_upgrades()
     return html.P("Select a tab.")
 
 # ── Raw Laps Inspector callback ───────────────────────────────
@@ -3243,6 +3326,45 @@ def _add_flag_bands(fig, df_sess):
         )
 
 
+def _rain_lap_groups(per_lap: pd.DataFrame) -> list[tuple[int, int]]:
+    """Return contiguous (start_lap, end_lap) ranges where it was raining,
+    from a per-lap frame carrying a boolean-ish 'Rainfall' column."""
+    if "Rainfall" not in per_lap.columns or "LapNo" not in per_lap.columns:
+        return []
+    wet = per_lap[per_lap["Rainfall"].fillna(False).astype(bool)].sort_values("LapNo")
+    if wet.empty:
+        return []
+    groups: list[tuple[int, int]] = []
+    for lap in wet["LapNo"].astype(int):
+        if groups and lap == groups[-1][1] + 1:
+            groups[-1] = (groups[-1][0], lap)
+        else:
+            groups.append((lap, lap))
+    return groups
+
+
+def _add_rain_bands(fig, df_sess, row=None, col=None):
+    """Shade laps run in the rain as blue vertical bands, mirroring the
+    SC/flag bands from _add_flag_bands. No-op when there is no Rainfall data
+    or the race was dry. Pass row/col to target one panel of a subplot."""
+    if "Rainfall" not in df_sess.columns or "LapNo" not in df_sess.columns:
+        return
+    per_lap = df_sess.groupby("LapNo")["Rainfall"].max().reset_index()
+    groups = _rain_lap_groups(per_lap)
+    rc = dict(row=row, col=col) if row is not None else {}
+    for i, (start, end) in enumerate(groups):
+        fig.add_vrect(
+            x0=start - 0.5, x1=end + 0.5,
+            fillcolor="rgba(0,120,255,0.12)",
+            line=dict(color="#0066CC", width=1, dash="dot"),
+            layer="below",
+            annotation_text=("\U0001f327 rain" if i == 0 else ""),
+            annotation_position="bottom left",
+            annotation_font=dict(size=9, color="#4DA3FF"),
+            **rc,
+        )
+
+
 def _lap_evolution_fig(sv, title, height=540):
     """Per-driver lap-time line chart for a SINGLE session: one line per driver,
     markers tinted by compound, track-flag periods shaded behind. Shared by the
@@ -3286,6 +3408,7 @@ def _lap_evolution_fig(sv, title, height=540):
         ))
 
     _add_flag_bands(fig, sv)
+    _add_rain_bands(fig, sv)
     theme(fig, height, title)
     fig.update_layout(
         xaxis_title="Lap Number",
@@ -3845,6 +3968,7 @@ def _position_changes_fig(rl: pd.DataFrame, title: str, height: int = 640) -> go
 
     # Track-flag bands (SC / VSC / yellow / red) behind the lines
     _add_flag_bands(fig, rl)
+    _add_rain_bands(fig, rl)
 
     theme(fig, height, title)
 
@@ -3867,6 +3991,84 @@ def _position_changes_fig(rl: pd.DataFrame, title: str, height: int = 640) -> go
         yaxis=dict(title="Position", range=[y_bottom, 0.5],
                    tickvals=[1, 5, 10, 15, 20],
                    gridcolor=GRID_CLR, zeroline=False),
+    )
+    return fig
+
+
+def _weather_race_fig(rl: pd.DataFrame, title: str, height: int = 480) -> go.Figure:
+    """Lap-aligned weather strip for a race: track & air temperature (with rain
+    periods shaded) stacked directly above the field's median lap pace, sharing
+    the lap x-axis so conditions can be read straight down onto their effect on
+    pace. Returns an empty Figure when no usable weather data is present."""
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True,
+        row_heights=[0.55, 0.45], vertical_spacing=0.07,
+    )
+
+    has_temp = any(
+        c in rl.columns and rl[c].notna().any() for c in ("TrackTemp", "AirTemp")
+    )
+    if rl.empty or "LapNo" not in rl.columns or not has_temp:
+        return go.Figure()
+
+    # ── Per-lap weather (one value per lap, averaged across cars on track) ──
+    agg: dict[str, tuple] = {}
+    for col, how in (("TrackTemp", "mean"), ("AirTemp", "mean"),
+                     ("Humidity", "mean"), ("WindSpeed", "mean"),
+                     ("Rainfall", "max")):
+        if col in rl.columns:
+            agg[col] = (col, how)
+    per_lap = rl.groupby("LapNo").agg(**agg).reset_index().sort_values("LapNo")
+
+    # ── Field pace per lap (median of racing laps; spikes show SC/rain) ──
+    racing = rl[~rl.get("PitLap", False) & rl["LapTime_s"].notna()
+                & (rl["LapTime_s"] > 0)]
+    pace = (racing.groupby("LapNo")["LapTime_s"].median().reset_index()
+            .sort_values("LapNo")) if not racing.empty else pd.DataFrame()
+
+    # ── Row 1: temperatures ──────────────────────────────────
+    if "TrackTemp" in per_lap.columns:
+        fig.add_trace(go.Scatter(
+            x=per_lap["LapNo"], y=per_lap["TrackTemp"], mode="lines",
+            name="Track temp", line=dict(color="#FF8700", width=2.2),
+            hovertemplate="Lap %{x}<br>Track %{y:.1f} °C<extra></extra>",
+        ), row=1, col=1)
+    if "AirTemp" in per_lap.columns:
+        fig.add_trace(go.Scatter(
+            x=per_lap["LapNo"], y=per_lap["AirTemp"], mode="lines",
+            name="Air temp", line=dict(color="#00D2BE", width=2.0, dash="dot"),
+            hovertemplate="Lap %{x}<br>Air %{y:.1f} °C<extra></extra>",
+        ), row=1, col=1)
+
+    # ── Row 2: field pace ────────────────────────────────────
+    if not pace.empty:
+        fig.add_trace(go.Scatter(
+            x=pace["LapNo"], y=pace["LapTime_s"], mode="lines",
+            name="Field median lap", line=dict(color=TEXT_MAIN, width=1.8),
+            hovertemplate="Lap %{x}<br>Median %{y:.3f} s<extra></extra>",
+        ), row=2, col=1)
+
+    # ── Rain bands across both rows ──────────────────────────
+    rain_groups = _rain_lap_groups(per_lap)
+    for i, (start, end) in enumerate(rain_groups):
+        for r in (1, 2):
+            fig.add_vrect(
+                x0=start - 0.5, x1=end + 0.5,
+                fillcolor="rgba(0,120,255,0.12)", line_width=0, layer="below",
+                annotation_text=("\U0001f327 rain" if (i == 0 and r == 1) else ""),
+                annotation_position="top left",
+                annotation_font=dict(size=9, color="#4DA3FF"),
+                row=r, col=1,
+            )
+
+    theme(fig, height, title)
+    fig.update_yaxes(title_text="Temp (°C)", row=1, col=1)
+    fig.update_yaxes(title_text="Lap Time (s)", row=2, col=1)
+    fig.update_xaxes(title_text="Lap Number", row=2, col=1)
+    fig.update_layout(
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="left", x=0, bgcolor="rgba(0,0,0,0)",
+                    bordercolor=GRID_CLR, borderwidth=1),
     )
     return fig
 
@@ -3954,6 +4156,9 @@ def tab_race(sel_drivers=None, sel_teams=None):
         rl, title=f"Race Tyre Strategy – {meeting} {shown_year}",
         already_race=True,
     )
+    wx_fig = _weather_race_fig(
+        rl, f"Weather & Race Pace – {meeting} {shown_year}"
+    )
 
     return html.Div([
         banner,
@@ -3983,6 +4188,17 @@ def tab_race(sel_drivers=None, sel_teams=None):
                   "segments sized by stint length (laps), ordered by finishing position; "
                   "diamonds mark pit stops and show pit-lane time (s). Why: the strategic "
                   "shape of the race — who ran which tyres, stint lengths and stop timing."),
+        ),
+        card(
+            "Weather & Race Pace",
+            dcc.Graph(figure=wx_fig, config=GFX)
+            if wx_fig.data else
+            html.P("No weather data available for this race.", style={"color": TEXT_DIM}),
+            info=("Data: track and air temperature per lap (averaged across cars), "
+                  "stacked above the field's median lap time, on a shared lap axis; "
+                  "rain periods are shaded blue. Why: reading conditions straight down "
+                  "onto pace shows how the weather shaped the race — a cooling track, "
+                  "a rain shower or the grip swing that triggered the pit cascade."),
         ),
     ])
 
@@ -5676,6 +5892,145 @@ def _resolve_track_event(circuit_key: str, year):
 
 
 # ── Main track tab layout builder ────────────────────────────
+# ── UPGRADES tab ─────────────────────────────────────────────
+_UPGRADE_CAT_COLORS = {
+    "performance":     ACCENT,
+    "circuit specific":"#FFB000",
+    "reliability":     "#0067FF",
+    "driver comfort":  "#9B59B6",
+    "repairs":         "#7A7A7A",
+}
+
+def _upgrade_cat_color(cat: str) -> str:
+    return _UPGRADE_CAT_COLORS.get(str(cat).strip().casefold(), "#7A7A7A")
+
+
+def _upgrade_meeting_block(season, meeting) -> html.Div:
+    sub = _upgrades_for(season, meeting)
+    title = f"{meeting}" + (f"  ·  {season}" if season else "")
+
+    if sub.empty:
+        return html.Div([
+            html.H4(title, style={"color": TEXT_MAIN, "fontWeight": "800",
+                                  "letterSpacing": "1px", "fontSize": "1.05rem",
+                                  "marginBottom": "8px"}),
+            dbc.Alert(
+                f"No upgrades recorded for this event yet. Add rows to "
+                f"data/upgrades.csv with event = \"{meeting}\" and season = "
+                f"{season or '<year>'}.",
+                color="secondary",
+                style={"background": CARD_BG, "border": f"1px solid {GRID_CLR}",
+                       "color": TEXT_DIM},
+            ),
+        ], className="mb-4")
+
+    # ── Summary KPIs ─────────────────────────────────────────
+    n_total = len(sub)
+    n_teams = sub["team"].nunique()
+    cat_counts = sub["category"].str.strip().str.title().value_counts()
+    top_cat = cat_counts.index[0] if not cat_counts.empty else "—"
+    kpis = dbc.Row([
+        kpi("UPGRADES", str(n_total), tooltip="Total upgrade items logged for this event."),
+        kpi("TEAMS DEVELOPING", str(n_teams),
+            tooltip="Teams that brought at least one upgrade here."),
+        kpi("MOST COMMON", top_cat, color="#FFB000",
+            tooltip="Most frequent upgrade category for this event."),
+        kpi("PERFORMANCE ITEMS",
+            str(int(cat_counts.get("Performance", 0))), color=ACCENT,
+            tooltip="Upgrades flagged as pure performance (not circuit-specific)."),
+    ], className="g-2 mb-2")
+
+    # ── One card per team, ordered by championship rank if known ─
+    rank = _team_champ_rank()
+    teams = sorted(sub["team"].unique(),
+                   key=lambda t: (rank.get(t, 999), t))
+    team_cards = []
+    for tname in teams:
+        rows = sub[sub["team"] == tname]
+        colr = TEAM_COLORS.get(tname, "#808080")
+        items = []
+        for _, r in rows.iterrows():
+            ccolor = _upgrade_cat_color(r["category"])
+            items.append(html.Div([
+                html.Div([
+                    html.Span(r["component"] or "—",
+                              style={"fontWeight": "700", "color": TEXT_MAIN,
+                                     "fontSize": "0.85rem"}),
+                    _badge((r["category"] or "—").title(), ccolor),
+                ], style={"marginBottom": "2px"}),
+                html.Div(r["description"] or "",
+                         style={"color": TEXT_DIM, "fontSize": "0.78rem",
+                                "lineHeight": "1.35"}),
+            ], style={"padding": "8px 0",
+                      "borderBottom": f"1px solid {GRID_CLR}"}))
+        header = html.Div([
+            html.Span(style={"display": "inline-block", "width": "10px",
+                             "height": "10px", "borderRadius": "2px",
+                             "background": colr, "marginRight": "8px"}),
+            html.Span(tname, style={"fontWeight": "800", "letterSpacing": "0.5px"}),
+            _badge(f"{len(rows)}", colr),
+        ])
+        team_cards.append(dbc.Col(
+            dbc.Card([dbc.CardHeader(header),
+                      dbc.CardBody(items, style={"paddingTop": "4px"})],
+                     className="mb-3",
+                     style={"background": CARD_BG,
+                            "border": f"1px solid {GRID_CLR}",
+                            "borderLeft": f"3px solid {colr}",
+                            "borderRadius": "8px"}),
+            md=6))
+
+    return html.Div([
+        html.H4(title, style={"color": TEXT_MAIN, "fontWeight": "800",
+                              "letterSpacing": "1px", "fontSize": "1.05rem",
+                              "marginBottom": "10px"}),
+        kpis,
+        dbc.Row(team_cards, className="g-3"),
+    ], className="mb-4")
+
+
+def tab_upgrades() -> html.Div:
+    """What technical evolution each team brought to the loaded meeting(s)."""
+    if upgrades_df().empty:
+        return html.Div([dbc.Alert(
+            [html.Strong("No upgrade data found. "),
+             "Create ", html.Code("data/upgrades.csv"),
+             " with columns: ",
+             html.Code("season, event, team, component, category, "
+                       "description, source"),
+             ". The ", html.Code("event"), " value must match the meeting name "
+             "(e.g. \"Austrian Grand Prix\") and ", html.Code("team"),
+             " a known team name."],
+            color="warning")])
+
+    meetings = _loaded_meetings()
+    if not meetings:
+        return html.Div([dbc.Alert(
+            "No session loaded. Load a meeting in the DATA & QUALITY tab to see "
+            "the upgrades each team brought to it.", color="secondary",
+            style={"background": CARD_BG, "border": f"1px solid {GRID_CLR}",
+                   "color": TEXT_DIM})])
+
+    legend = html.Div(
+        [html.Span("Category:", style={"color": TEXT_DIM, "fontSize": "0.72rem",
+                                       "marginRight": "8px"})]
+        + [_badge(c.title(), col) for c, col in _UPGRADE_CAT_COLORS.items()],
+        style={"marginBottom": "16px"})
+
+    blocks = [_upgrade_meeting_block(season, meeting)
+              for season, meeting in meetings]
+
+    return html.Div([
+        html.P("Technical upgrades each team brought to the loaded event(s), "
+               "in the style of the FIA Car Presentation documents. "
+               "Maintained in data/upgrades.csv.",
+               style={"color": TEXT_DIM, "fontSize": "0.8rem",
+                      "marginBottom": "10px"}),
+        legend,
+        *blocks,
+    ])
+
+
 def tab_track_info() -> html.Div:
     if CIRCUIT_CHARS.empty:
         return html.Div([

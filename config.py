@@ -54,6 +54,7 @@ FUEL_CORRECTION    = 0.035  # Seconds per lap per kg of fuel
 SPEED_PERCENTILE   = 95
 BRAKE_THRESHOLD    = 10
 THROTTLE_THRESHOLD = 95
+MINI_SECTORS       = 20     # equal-distance segments per lap for mini-sector analysis
 
 # ─────────────────────────────────────────────
 # DATA & CACHE PATHS

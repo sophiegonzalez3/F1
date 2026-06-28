@@ -298,9 +298,23 @@ def _fetch_telemetry(ff1_session) -> pd.DataFrame:
     parts = []
     for drv_num in ff1_session.drivers:
         try:
-            tel = ff1_session.car_data[drv_num].copy()
-            if tel.empty:
+            car = ff1_session.car_data[drv_num]
+            if car is None or car.empty:
                 continue
+            # Attach X/Y/Z track position (from the separate position stream).
+            # car_data and pos_data are on different clocks AND pos_data has gaps
+            # (especially in races), so FastF1's merge_channels — which resamples
+            # both onto a common time base and interpolates across gaps — is used
+            # rather than a tolerance merge_asof, which left ~80% of race rows with
+            # no coordinates and made racing-line analysis come up empty.
+            try:
+                pos = ff1_session.pos_data[drv_num]
+                tel = (car.merge_channels(pos)
+                       if pos is not None and not pos.empty else car)
+            except Exception as exc:
+                logger.warning("Position merge failed for driver %s: %s", drv_num, exc)
+                tel = car
+            tel = pd.DataFrame(tel).copy()          # demote Telemetry → plain frame
             tel["DriverNumber"] = str(drv_num)
             parts.append(tel)
         except Exception as exc:

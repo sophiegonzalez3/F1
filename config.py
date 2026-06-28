@@ -64,6 +64,11 @@ MINI_SECTORS       = 20     # equal-distance segments per lap for mini-sector an
 SESSIONS_DIR     = "data/sessions"             # per-session Parquet (data_loader.py)
 HISTORICAL_DIR   = "data/historical_results"   # historical race/quali results
 FASTF1_CACHE_DIR = "cache/fastf1"              # FastF1's own raw-data cache
+RADIO_DIR        = "data/radio"                # team-radio mp3s + transcripts (radio_loader.py)
+
+# Team-radio transcription (radio_loader.py). faster-whisper model size:
+# tiny.en / base.en (fast) · small.en (balanced, default) · medium.en (accurate, slow).
+RADIO_WHISPER_MODEL = "medium.en"
 
 # ─────────────────────────────────────────────
 # DASHBOARD LAYOUT

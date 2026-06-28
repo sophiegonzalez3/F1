@@ -4,7 +4,7 @@ Run:   python app.py
 Open:  http://127.0.0.1:8050
 """
 from __future__ import annotations
-import logging, warnings
+import logging, warnings, re
 warnings.filterwarnings("ignore")
 
 from pathlib import Path
@@ -26,6 +26,7 @@ from config import (
     HISTORICAL_DIR, FASTF1_CACHE_DIR,
 )
 from data_loader import load_sessions, cache_summary, is_cached, list_cached_sessions
+from radio_loader import load_race_radio, race_radio_available, radio_cached
 from processing import (
     clean_and_enrich_laps, analyze_stints,
     identify_quali_sim_laps, best_laps_table,
@@ -944,6 +945,19 @@ def styled_table(data, cols):
 # ── App layout ───────────────────────────────────────────────
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG],
                 title="F1 Dashboard", suppress_callback_exceptions=True)
+
+# ── Serve cached team-radio mp3s (so html.Audio can play them) ──
+from flask import send_from_directory, abort
+from config import RADIO_DIR as _RADIO_DIR
+_RADIO_ABS = Path(_RADIO_DIR).resolve()
+
+@app.server.route("/radio/<path:clip>")
+def _serve_radio(clip):
+    # clip is "<season>__<meeting>__Race/<file>.mp3"; keep it inside RADIO_DIR
+    target = (_RADIO_ABS / clip).resolve()
+    if not str(target).startswith(str(_RADIO_ABS)) or not target.exists():
+        abort(404)
+    return send_from_directory(target.parent, target.name)
 
 SIDEBAR = dbc.Col([html.Div([
     html.Img(src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/F1.svg/1200px-F1.svg.png",
@@ -4848,7 +4862,8 @@ def _load_one_race(season: int, meeting: str) -> dict | None:
     except Exception as exc:
         print(f"  [race] enrich failed {season} {meeting}: {exc}", flush=True)
         return None
-    return {"laps": rl, "stints": rs, "season": season, "meeting": meeting}
+    return {"laps": rl, "stints": rs, "season": season, "meeting": meeting,
+            "race_control": data.get("race_control", pd.DataFrame())}
 
 
 def _resolve_race_data(season: int, meeting: str) -> dict | None:
@@ -5039,6 +5054,344 @@ def _weather_race_fig(rl: pd.DataFrame, title: str, height: int = 480) -> go.Fig
     return fig
 
 
+# ── Race-control "radio" message timeline ─────────────────────
+# F1 publishes no transcribed team-radio text (only audio clips), so the
+# closest exploitable per-driver message stream is the FIA race-control
+# feed: penalties, investigations, track-limit deletions and blue flags,
+# each driver-tagged via "CAR NN (XXX)" in the message text. These are
+# laid out as a swimlane timeline (one lane per driver + a TRACK lane for
+# field-wide messages) on the race's lap axis.
+
+_RC_ABBR_RE = re.compile(r"\(([A-Z]{3})\)")
+_RC_CAR_RE  = re.compile(r"CAR \d+")
+
+# message type → (label, colour, marker symbol)
+_RC_TYPES: dict[str, tuple] = {
+    "penalty":       ("Penalty",        "#E10600", "x"),
+    "investigation": ("Investigation",  "#F59E0B", "diamond"),
+    "track_limits":  ("Track limits",   "#A855F7", "circle-open"),
+    "blue_flag":     ("Blue flag",      "#3B82F6", "triangle-up"),
+    "safety_car":    ("Safety car/VSC", "#FBBF24", "square"),
+    "drs":           ("DRS",            "#22D3EE", "star"),
+    "flag":          ("Other flag",     "#34D399", "triangle-down"),
+    "other":         ("Other",          "#9CA3AF", "circle"),
+}
+
+
+def _classify_rc(category: str, message: str, flag) -> str:
+    """Map a race-control row to one of the _RC_TYPES keys."""
+    msg = (message or "").upper()
+    cat = (category or "")
+    if "PENALTY" in msg:
+        return "penalty"
+    if any(k in msg for k in ("NOTED", "UNDER INVESTIGATION", "REVIEWED", "STEWARDS")):
+        return "investigation"
+    if "TRACK LIMITS" in msg or ("DELETED" in msg and "TIME" in msg):
+        return "track_limits"
+    if cat == "SafetyCar" or "SAFETY CAR" in msg or "VIRTUAL SAFETY" in msg:
+        return "safety_car"
+    if cat == "Drs" or "DRS" in msg:
+        return "drs"
+    if (flag and str(flag).upper() == "BLUE") or "BLUE FLAG" in msg:
+        return "blue_flag"
+    if cat == "Flag":
+        return "flag"
+    return "other"
+
+
+def _prep_rc_messages(rc: pd.DataFrame) -> pd.DataFrame:
+    """Annotate a race-control frame with driver code (or 'TRACK'), message
+    type and a readable clock time. Returns a copy ready for plotting."""
+    if rc is None or rc.empty:
+        return pd.DataFrame()
+    df = rc.copy()
+    df["Lap"] = pd.to_numeric(df.get("Lap"), errors="coerce")
+
+    # Driver code: prefer the (XXX) abbreviation in the text, else the
+    # RacingNumber mapped through the driver table, else TRACK (field-wide).
+    abbr = df["Message"].astype(str).str.extract(_RC_ABBR_RE)[0]
+    num_to_code = {}
+    try:
+        num_to_code = (laps.dropna(subset=["DriverNo", "Driver_Short"])
+                       .astype({"DriverNo": str})
+                       .drop_duplicates("DriverNo")
+                       .set_index("DriverNo")["Driver_Short"].to_dict())
+    except Exception:
+        pass
+    by_num = df.get("RacingNumber").astype("string").map(num_to_code) \
+        if "RacingNumber" in df.columns else pd.Series(index=df.index, dtype="object")
+    df["Code"] = abbr.fillna(by_num).fillna("TRACK")
+
+    df["Type"] = [
+        _classify_rc(c, m, f)
+        for c, m, f in zip(df.get("Category"), df.get("Message"), df.get("Flag"))
+    ]
+    if "Time" in df.columns:
+        t = pd.to_datetime(df["Time"], errors="coerce")
+        df["Clock"] = t.dt.strftime("%H:%M:%S").fillna("")
+    else:
+        df["Clock"] = ""
+    return df.dropna(subset=["Lap"])
+
+
+def _championship_rank(season) -> dict[str, int]:
+    """Driver code → championship rank (0 = leader) for the season's latest
+    round. Empty when standings are unavailable."""
+    try:
+        st = _driver_standings_after_round(int(season), None)
+    except Exception:
+        st = {}
+    if not st:
+        return {}
+    ordered = sorted(st.items(), key=lambda kv: -kv[1].get("pts", 0))
+    return {str(code): i for i, (code, _) in enumerate(ordered)}
+
+
+def _order_by_champ(codes, season) -> list[str]:
+    """Order driver codes by championship points (leader first); unknowns last,
+    then alphabetical for stability."""
+    rank = _championship_rank(season)
+    return sorted(codes, key=lambda c: (rank.get(c, 10_000), c))
+
+
+def _rc_driver_options(rc: pd.DataFrame, season=None) -> list[str]:
+    """Driver codes (excluding TRACK) that have at least one message. Ordered
+    by championship points when `season` is given, else by message count."""
+    df = _prep_rc_messages(rc)
+    if df.empty:
+        return []
+    codes = df[df["Code"] != "TRACK"]["Code"].value_counts().index.tolist()
+    return _order_by_champ(codes, season) if season is not None else codes
+
+
+def _radio_timeline_fig(rc: pd.DataFrame, selected_codes: list[str],
+                        title: str, height: int = 560) -> go.Figure:
+    """Swimlane timeline of race-control messages: one lane per selected
+    driver plus a TRACK lane for field-wide messages, markers placed on the
+    lap axis and coloured by message type, full text on hover."""
+    fig = go.Figure()
+    df = _prep_rc_messages(rc)
+    if df.empty:
+        theme(fig, height, title)
+        fig.add_annotation(text="No race-control messages available for this race.",
+                           xref="paper", yref="paper", x=0.5, y=0.5,
+                           showarrow=False, font=dict(color=TEXT_DIM, size=13))
+        return fig
+
+    selected_codes = selected_codes or []
+    # Lanes (bottom→top): TRACK at the bottom, then drivers with the
+    # championship leader on top. selected_codes arrives leader-first, so the
+    # driver list is reversed to put index 0 (leader) at the highest lane.
+    drivers = [c for c in selected_codes if c != "TRACK"]
+    lanes = ["TRACK"] + list(reversed(drivers))
+    keep = df[df["Code"].isin(lanes)].copy()
+    lane_idx = {code: i for i, code in enumerate(lanes)}
+    keep["y"] = keep["Code"].map(lane_idx)
+
+    # Spread markers that share a lane+lap so they don't fully overlap.
+    keep = keep.sort_values(["y", "Lap", "Clock"])
+    keep["x"] = keep["Lap"].astype(float)
+    for (_, _), grp in keep.groupby(["y", "Lap"]):
+        n = len(grp)
+        if n > 1:
+            offs = np.linspace(-0.28, 0.28, n)
+            keep.loc[grp.index, "x"] = grp["Lap"].astype(float).values + offs
+
+    n_laps = int(df["Lap"].max())
+    for tkey, (label, colour, symbol) in _RC_TYPES.items():
+        sub = keep[keep["Type"] == tkey]
+        if sub.empty:
+            continue
+        wrapped = sub["Message"].astype(str).str.replace(
+            r"(.{60}\S*)\s", r"\1<br>", regex=True)
+        fig.add_trace(go.Scatter(
+            x=sub["x"], y=sub["y"], mode="markers", name=label,
+            marker=dict(size=11, color=colour, symbol=symbol,
+                        line=dict(width=1, color="#0B0B18")),
+            customdata=np.stack([sub["Code"], sub["Clock"],
+                                 sub["Lap"].astype(int), wrapped], axis=-1),
+            hovertemplate=("<b>%{customdata[0]}</b> · Lap %{customdata[2]}"
+                           " · %{customdata[1]}<br>%{customdata[3]}<extra>"
+                           + label + "</extra>"),
+        ))
+
+    theme(fig, height, title)
+    fig.update_layout(
+        xaxis=dict(title="Lap", range=[-1, n_laps + 2],
+                   gridcolor=GRID_CLR, zeroline=False),
+        yaxis=dict(tickmode="array",
+                   tickvals=list(lane_idx.values()),
+                   ticktext=["TRACK (field-wide)" if c == "TRACK" else c
+                             for c in lanes],
+                   range=[-0.6, len(lanes) - 0.4],
+                   gridcolor=GRID_CLR, zeroline=False),
+        legend=dict(orientation="h", yanchor="top", y=-0.12,
+                    xanchor="center", x=0.5),
+        margin=dict(l=120, r=30, t=50, b=90),
+    )
+    # Faint band behind the TRACK lane to set it apart from driver lanes.
+    fig.add_hrect(y0=-0.5, y1=0.5, fillcolor="rgba(255,255,255,0.04)",
+                  line_width=0, layer="below")
+    return fig
+
+
+# ── Transcribed team-radio: figure + table ────────────────────
+# Actual driver/pit-wall radio, downloaded from the F1 live-timing archive
+# and transcribed locally (see radio_loader.py). Time-stamped (not lap-tagged),
+# so this is a clock-time swimlane: one lane per driver, the transcript on
+# hover, and a table below with inline audio players.
+
+def _code_team(code: str) -> str:
+    try:
+        m = laps.loc[laps["Driver_Short"] == code, "Team"]
+        return m.iloc[0] if len(m) else ""
+    except Exception:
+        return ""
+
+
+def _radio_text_col(mode: str) -> str:
+    """Which transcript column to display: reviewed (corrected) vs raw."""
+    return "Transcript_raw" if str(mode) == "raw" else "Transcript"
+
+
+def _team_radio_fig(rdf: pd.DataFrame, selected_codes: list[str],
+                    title: str, height: int = 520, mode: str = "reviewed",
+                    season=None) -> go.Figure:
+    fig = go.Figure()
+    if rdf is None or rdf.empty:
+        theme(fig, height, title)
+        fig.add_annotation(text="No transcribed race radio.", xref="paper",
+                           yref="paper", x=0.5, y=0.5, showarrow=False,
+                           font=dict(color=TEXT_DIM, size=13))
+        return fig
+    sel = [c for c in (selected_codes or []) if c]
+    df = rdf[rdf["Driver_Short"].isin(sel)].copy() if sel else rdf.copy()
+    if df.empty:
+        theme(fig, height, title)
+        fig.add_annotation(text="No radio for the selected drivers.",
+                           xref="paper", yref="paper", x=0.5, y=0.5,
+                           showarrow=False, font=dict(color=TEXT_DIM, size=13))
+        return fig
+
+    # Lanes ordered by championship points, leader at the top.
+    ordered = _order_by_champ(list(df["Driver_Short"].unique()), season)
+    lanes = list(reversed(ordered))            # bottom→top: leader on top
+    lane_idx = {c: i for i, c in enumerate(lanes)}
+    df["y"] = df["Driver_Short"].map(lane_idx)
+    col = _radio_text_col(mode)
+    wrapped = df[col].fillna("").astype(str).str.replace(
+        r"(.{55}\S*)\s", r"\1<br>", regex=True).replace("", "(no speech detected)")
+
+    for code in lanes:
+        sub = df[df["Driver_Short"] == code]
+        clr = TEAM_COLORS.get(_code_team(code), ACCENT)
+        fig.add_trace(go.Scatter(
+            x=sub["Utc"], y=sub["y"], mode="markers", name=code,
+            marker=dict(size=12, color=clr, symbol="circle",
+                        line=dict(width=1, color="#0B0B18")),
+            customdata=np.stack([sub["Driver_Short"], sub["Clock"],
+                                 wrapped.loc[sub.index]], axis=-1),
+            hovertemplate=("<b>%{customdata[0]}</b> · %{customdata[1]}<br>"
+                           "%{customdata[2]}<extra></extra>"),
+            showlegend=False,
+        ))
+
+    theme(fig, height, title)
+    fig.update_layout(
+        xaxis=dict(title="Time (UTC)", gridcolor=GRID_CLR, zeroline=False),
+        yaxis=dict(tickmode="array", tickvals=list(lane_idx.values()),
+                   ticktext=lanes, range=[-0.6, len(lanes) - 0.4],
+                   gridcolor=GRID_CLR, zeroline=False),
+        margin=dict(l=70, r=30, t=50, b=50),
+    )
+    return fig
+
+
+def _team_radio_table(rdf: pd.DataFrame, selected_codes: list[str],
+                      mode: str = "reviewed"):
+    """Chronological clip list: time, driver, inline audio player, transcript."""
+    sel = [c for c in (selected_codes or []) if c]
+    df = rdf[rdf["Driver_Short"].isin(sel)] if sel else rdf
+    df = df.sort_values("Utc")
+    col = _radio_text_col(mode)
+    if df.empty:
+        return html.P("No radio for the selected drivers.",
+                      style={"color": TEXT_DIM, "fontSize": "0.82rem"})
+    hdr = html.Tr([html.Th(h, style={"padding": "6px 10px", "color": ACCENT,
+                                      "textAlign": "left", "position": "sticky",
+                                      "top": 0, "background": "#09091A"})
+                   for h in ("", "Time", "Driver", "Audio", "Transcript")])
+    rows = []
+    for _, r in df.iterrows():
+        clr = TEAM_COLORS.get(_code_team(r["Driver_Short"]), ACCENT)
+        txt = (r.get(col) or "").strip() or "(no speech detected)"
+        is_reviewed = bool(r.get("reviewed", False))
+        badge = html.Span("✓" if is_reviewed else "•",
+                          title=("Reviewed — transcript checked/corrected"
+                                 if is_reviewed else "Not yet reviewed (raw transcript)"),
+                          style={"color": ("#34D399" if is_reviewed else TEXT_DIM),
+                                 "fontWeight": "800", "cursor": "help"})
+        rows.append(html.Tr([
+            html.Td(badge, style={"padding": "6px 4px 6px 10px", "textAlign": "center"}),
+            html.Td(r["Clock"], style={"padding": "6px 10px", "color": TEXT_DIM,
+                                       "whiteSpace": "nowrap", "fontVariantNumeric": "tabular-nums"}),
+            html.Td(r["Driver_Short"], style={"padding": "6px 10px",
+                    "color": clr, "fontWeight": "700"}),
+            html.Td(html.Audio(src=f"/radio/{r['Mp3']}", controls=True,
+                               preload="none", style={"height": "30px", "width": "180px"}),
+                    style={"padding": "4px 10px"}),
+            html.Td(txt, style={"padding": "6px 10px", "color": TEXT_MAIN,
+                                "fontSize": "0.82rem"}),
+        ], style={"borderBottom": f"1px solid {GRID_CLR}"}))
+    return html.Div(
+        html.Table([html.Thead(hdr), html.Tbody(rows)],
+                   style={"width": "100%", "borderCollapse": "collapse"}),
+        style={"maxHeight": "420px", "overflowY": "auto"},
+    )
+
+
+def _team_radio_block(rdf: pd.DataFrame, meeting: str, year,
+                      default_codes=None, season=None):
+    """Driver selector + raw/reviewed toggle + timeline + table for an
+    already-loaded radio frame. Driver lanes default to `default_codes`
+    (the global-filtered grid) ordered by championship points."""
+    season = season if season is not None else year
+    all_codes = _order_by_champ(list(rdf["Driver_Short"].unique()), season)
+    value = [c for c in all_codes if c in set(default_codes)] if default_codes else all_codes
+    if not value:
+        value = all_codes
+    return html.Div([
+        html.Div([
+            html.P(f"{len(rdf)} race-radio clips transcribed · driver lanes default "
+                   "to the sidebar filter (championship order). Adjust below:",
+                   style={"color": TEXT_DIM, "fontSize": "0.78rem",
+                          "marginBottom": "6px", "flex": "1 1 320px"}),
+            dcc.RadioItems(
+                id="radio-tr-mode",
+                options=[{"label": " Reviewed", "value": "reviewed"},
+                         {"label": " Raw", "value": "raw"}],
+                value="reviewed", inline=True,
+                inputStyle={"marginRight": "4px", "marginLeft": "12px"},
+                style={"color": TEXT_DIM, "fontSize": "0.78rem",
+                       "whiteSpace": "nowrap"},
+            ),
+        ], style={"display": "flex", "alignItems": "center",
+                  "justifyContent": "space-between", "flexWrap": "wrap"}),
+        dcc.Dropdown(id="radio-tr-select",
+                     options=[{"label": c, "value": c} for c in all_codes],
+                     value=value, multi=True, placeholder="Pick drivers…",
+                     style={"backgroundColor": "#111", "fontSize": "0.8rem",
+                            "marginBottom": "10px"}),
+        dcc.Graph(id="radio-tr-graph",
+                  figure=_team_radio_fig(rdf, value,
+                                         f"Team Radio – {meeting} {year}",
+                                         mode="reviewed", season=season),
+                  config=GFX),
+        html.Div(_team_radio_table(rdf, value, mode="reviewed"),
+                 id="radio-tr-table"),
+    ])
+
+
 def tab_race(sel_drivers=None, sel_teams=None):
     cur = LOADED_SESSION_INFO[0] if LOADED_SESSION_INFO else None
     if not cur:
@@ -5126,6 +5479,78 @@ def tab_race(sel_drivers=None, sel_teams=None):
         rl, f"Weather & Race Pace – {meeting} {shown_year}"
     )
 
+    # ── Race-control message timeline ("radio") ──────────────
+    # Default: every driver with messages, ordered by championship points, and
+    # narrowed to the sidebar Driver/Team filter (the same drivers visible in
+    # `rl` above), so this card responds to the global filter.
+    rc          = data.get("race_control", pd.DataFrame())
+    rc_codes    = _rc_driver_options(rc, season=shown_year)
+    visible     = set(rl["Driver_Short"].dropna().unique())
+    rc_default  = [c for c in rc_codes if c in visible] or rc_codes
+    radio_fig   = _radio_timeline_fig(
+        rc, rc_default,
+        f"Race-Control Messages – {meeting} {shown_year}",
+    )
+    radio_card = card(
+        "Race-Control Message Timeline",
+        html.Div([
+            html.P("Driver lanes default to the sidebar filter, ordered by "
+                   "championship points (the TRACK lane for field-wide messages "
+                   "is always shown). Adjust the selection below:",
+                   style={"color": TEXT_DIM, "fontSize": "0.78rem",
+                          "marginBottom": "6px"}),
+            dcc.Dropdown(
+                id="radio-driver-select",
+                options=[{"label": c, "value": c} for c in rc_codes],
+                value=rc_default, multi=True,
+                placeholder="Pick drivers…",
+                style={"backgroundColor": "#111", "fontSize": "0.8rem",
+                       "marginBottom": "10px"},
+            ),
+            dcc.Graph(id="radio-timeline-graph", figure=radio_fig, config=GFX),
+        ]) if rc_codes else
+        html.P("No driver-attributable race-control messages for this race.",
+               style={"color": TEXT_DIM}),
+        info=("Data: FIA race-control messages — penalties, stewards' "
+              "investigations, track-limit lap deletions, blue flags, safety-car "
+              "and DRS calls — placed on the race lap axis, one swimlane per "
+              "driver plus a field-wide TRACK lane, coloured by message type with "
+              "the full text on hover. (Actual driver team radio, transcribed, is in "
+              "the Team Radio card below.) Why: see at a glance who was investigated, "
+              "penalised or losing lap times, and exactly when in the race."),
+    )
+
+    # ── Transcribed team-radio card ──────────────────────────
+    tr_info = ("Data: actual driver/pit-wall team radio, downloaded from the F1 "
+               "live-timing archive and transcribed locally with faster-whisper. "
+               "One clock-time swimlane per driver with the transcript on hover, "
+               "plus a table of every clip with an inline audio player. Note: F1 "
+               "only keeps race-radio audio for recent events, so older races show "
+               "nothing; transcription is automatic and not always perfect.")
+    if radio_cached(season, meeting) or (is_fallback and radio_cached(shown_year, meeting)):
+        ry  = shown_year if (is_fallback and radio_cached(shown_year, meeting)) else season
+        rdf = load_race_radio(ry, meeting)        # instant (cached)
+        tr_body = (_team_radio_block(rdf, meeting, ry,
+                                     default_codes=visible, season=ry)
+                   if not rdf.empty else
+                   html.P("No race radio found for this meeting.",
+                          style={"color": TEXT_DIM}))
+    elif race_radio_available(season, meeting):
+        tr_body = html.Div([
+            html.P("Race radio is available for this meeting but not yet "
+                   "transcribed. This downloads the clips and transcribes them "
+                   "locally (about a minute the first time, then cached).",
+                   style={"color": TEXT_DIM, "fontSize": "0.8rem"}),
+            dbc.Button("Fetch & transcribe race radio", id="load-radio-btn",
+                       color="danger", size="sm", n_clicks=0),
+            dcc.Loading(html.Div(id="radio-tr-output"), type="default"),
+        ])
+    else:
+        tr_body = html.P(
+            "No team-radio audio is archived for this race (F1 only retains it "
+            "for recent events).", style={"color": TEXT_DIM})
+    team_radio_card = card("Team Radio (transcribed)", tr_body, info=tr_info)
+
     return html.Div([
         banner,
         card(
@@ -5166,7 +5591,87 @@ def tab_race(sel_drivers=None, sel_teams=None):
                   "onto pace shows how the weather shaped the race — a cooling track, "
                   "a rain shower or the grip swing that triggered the pit cascade."),
         ),
+        radio_card,
+        team_radio_card,
     ])
+
+
+# ── Team radio: fetch + transcribe on demand, then filter ─────
+def _current_race_meeting():
+    """(season_to_use, meeting) for the loaded meeting, preferring a cached
+    radio season (handles the race tab's previous-season fallback)."""
+    cur = LOADED_SESSION_INFO[0] if LOADED_SESSION_INFO else None
+    if not cur:
+        return None, None
+    season, meeting = int(cur["SEASON"]), cur["MEETING"]
+    if not radio_cached(season, meeting) and radio_cached(season - 1, meeting):
+        season = season - 1
+    return season, meeting
+
+
+@app.callback(
+    Output("radio-tr-output", "children"),
+    Input("load-radio-btn", "n_clicks"),
+    prevent_initial_call=True,
+)
+def fetch_team_radio(n_clicks):
+    if not n_clicks:
+        return no_update
+    cur = LOADED_SESSION_INFO[0] if LOADED_SESSION_INFO else None
+    if not cur:
+        return html.P("No meeting loaded.", style={"color": TEXT_DIM})
+    season, meeting = int(cur["SEASON"]), cur["MEETING"]
+    try:
+        rdf = load_race_radio(season, meeting)
+    except Exception as exc:
+        return dbc.Alert(f"Radio fetch/transcription failed: {exc}", color="danger")
+    if rdf.empty:
+        return html.P("No race radio could be retrieved for this meeting.",
+                      style={"color": TEXT_DIM})
+    return _team_radio_block(rdf, meeting, season, season=season)
+
+
+@app.callback(
+    Output("radio-tr-graph", "figure"),
+    Output("radio-tr-table", "children"),
+    Input("radio-tr-select", "value"),
+    Input("radio-tr-mode", "value"),
+    prevent_initial_call=True,
+)
+def filter_team_radio(selected_codes, mode):
+    season, meeting = _current_race_meeting()
+    if not meeting or not radio_cached(season, meeting):
+        return no_update, no_update
+    rdf = load_race_radio(season, meeting)        # cached → instant
+    ordered = _order_by_champ(selected_codes or [], season)
+    mode = mode or "reviewed"
+    fig = _team_radio_fig(rdf, ordered, f"Team Radio – {meeting} {season}",
+                          mode=mode, season=season)
+    return fig, _team_radio_table(rdf, ordered, mode=mode)
+
+
+# ── Race-control timeline: redraw on driver selection ─────────
+@app.callback(
+    Output("radio-timeline-graph", "figure"),
+    Input("radio-driver-select", "value"),
+)
+def update_radio_timeline(selected_codes):
+    cur = LOADED_SESSION_INFO[0] if LOADED_SESSION_INFO else None
+    if not cur:
+        return go.Figure()
+    season  = int(cur["SEASON"])
+    meeting = cur["MEETING"]
+    data    = _resolve_race_data(season, meeting)
+    if not data:
+        return go.Figure()
+    rc         = data.get("race_control", pd.DataFrame())
+    shown_year = data.get("season", season)
+    ordered    = _order_by_champ(selected_codes or [], shown_year)
+    return _radio_timeline_fig(
+        rc, ordered,
+        f"Race-Control Messages – {meeting} {shown_year}",
+    )
+
 
 # ══════════════════════════════════════════════════════════════
 # TAB 7 – TEAMMATE COMPARISON

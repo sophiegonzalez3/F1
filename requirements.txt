@@ -10,3 +10,4 @@ pyarrow>=16.0       # for Parquet caching
 scipy>=1.13
 livef1              # F1 data provider
 fastf1>=3.8         # session fetch incl. X/Y position telemetry (racing-line analysis)
+faster-whisper>=1.1 # local transcription of race team-radio clips (radio_loader.py)

@@ -1030,7 +1030,7 @@ def render(tab, ss, sc, sd, st):
     fl_d = fl[fl["Driver_Short"].isin(sd) & fl["Team"].isin(st)].copy()
     fs   = stints[stints["session_name"].isin(ss) & stints["Compound"].isin(sc)].copy()
     fs_d = fs[fs["Driver_Short"].isin(sd) & fs["Team"].isin(st)].copy()
-    dnos = laps[laps["Driver_Short"].isin(sd)]["DriverNo"].unique()
+    dnos = fl_d["DriverNo"].unique()
     ft   = telemetry[telemetry["DriverNo"].isin(dnos) & telemetry["session_name"].isin(ss)].copy() if not telemetry.empty else telemetry
     if tab=="tab-data":
         return html.Div([

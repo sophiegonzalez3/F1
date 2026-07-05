@@ -277,6 +277,14 @@ def _map_telemetry(ff1_tel: pd.DataFrame) -> pd.DataFrame:
     if "DriverNo" in df.columns:
         df["DriverNo"] = df["DriverNo"].astype(str).str.strip()
 
+    # SessionTime arrives as timedelta.  _save_df converts it to float seconds
+    # for Parquet, so cache-loaded frames are float64.  Normalize here too, so a
+    # freshly-fetched (uncached) session's in-memory frame matches — otherwise
+    # concatenating fresh (Timedelta) + cached (float) sessions yields an object
+    # column and breaks numeric comparisons in _lap_telemetry.
+    if "timestamp" in df.columns and pd.api.types.is_timedelta64_dtype(df["timestamp"]):
+        df["timestamp"] = df["timestamp"].dt.total_seconds()
+
     return df
 
 

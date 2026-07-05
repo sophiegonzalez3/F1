@@ -864,6 +864,21 @@ def enrich_telemetry(telemetry: pd.DataFrame, laps: pd.DataFrame) -> pd.DataFram
     """Join team/driver info from laps onto the telemetry frame."""
     if telemetry.empty:
         return telemetry
+    telemetry = telemetry.copy()
+    # Normalize timestamp to float seconds.  A freshly-fetched session carries
+    # timedelta values while cache-loaded ones are float; concatenating the two
+    # upstream yields an object column that breaks numeric comparisons in
+    # _lap_telemetry.  Coerce defensively so it is always float64 here.
+    if "timestamp" in telemetry.columns and telemetry["timestamp"].dtype == object:
+        ts = telemetry["timestamp"]
+        td = pd.to_timedelta(ts, errors="coerce")
+        telemetry["timestamp"] = td.dt.total_seconds().fillna(
+            pd.to_numeric(ts, errors="coerce")
+        )
+    elif "timestamp" in telemetry.columns and pd.api.types.is_timedelta64_dtype(
+        telemetry["timestamp"]
+    ):
+        telemetry["timestamp"] = telemetry["timestamp"].dt.total_seconds()
     key_cols = ["session_name", "DriverNo"]
     meta = (
         laps[key_cols + ["Driver_Short", "Team", "TeamColor"]]

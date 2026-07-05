@@ -6537,7 +6537,7 @@ _FF1_CIRCUIT_META: dict = {
 _NOTABLE_CORNERS: dict = {
     "italie":          ["T1 Prima Variante (chicane)", "T4 Seconda Variante (chicane)", "T11 Parabolica (Curva Alboreto)"],
     "monaco":          ["T1 Sainte-Dévote", "T6 Massenet", "T10 Casino", "T17 Mirabeau", "T19 Fairmont Hairpin", "T23 Rascasse", "T25 Antony Noghes"],
-    "grande_bretagne": ["T3 Vale", "T6 Maggotts", "T7 Becketts", "T8 Chapel", "T13 Stowe", "T15 Club"],
+    "grande_bretagne": ["T1 Abbey", "T2 Farm Curve", "T3 Village", "T4 The Loop", "T5 Aintree", "T6 Brooklands", "T7 Luffield", "T8 Woodcote", "T9 Copse", "T10-T14 Maggotts / Becketts / Chapel", "T15 Stowe", "T16 Vale", "T18 Club"],
     "belgique":        ["T1 La Source", "T7 Eau Rouge", "T8 Raidillon", "T14 Pouhon", "T18 Bus Stop chicane"],
     "japon":           ["T1 First Curve", "T2 S Curves", "T11 Degner 1", "T15 Hairpin", "T16 Spoon", "T18 130R", "T20 Casio"],
     "singapour":       ["T1 Turn 1", "T10 Singapore Sling", "T18 Raffles Boulevard", "T23 Anderson Bridge"],
@@ -6561,6 +6561,163 @@ _NOTABLE_CORNERS: dict = {
     "las_vegas":       ["T1-T2 opening", "T5-T7 chicane", "T9 hairpin", "T12 Sphere corner", "T14 onto the Strip", "T16-T17 final"],
 }
 
+# ── Named straights by circuit ────────────────────────────────
+# Each straight is (after_corner, name): it is the stretch of track between the
+# corner with FastF1 number `after_corner` and the next corner (wrapping past the
+# start/finish line for the final corner). Placed at the mid-point of the two
+# corner positions on the layout plot. Corner numbering was verified against the
+# cached track maps in data/track_maps/ — add more circuits after checking theirs.
+_NAMED_STRAIGHTS: dict = {
+    "grande_bretagne": [(5, "Wellington Straight"), (14, "Hangar Straight"),
+                        (18, "Hamilton Straight")],
+    "belgique":        [(4, "Kemmel Straight")],
+}
+
+# ── All-time circuit history & records ────────────────────────
+# Curated Formula 1 records for each venue (through the 2025 season). The local
+# results archive only spans 2021+, so these all-time facts are hand-maintained.
+# most_wins / most_poles are (driver, count); count=None shows the name only.
+_CIRCUIT_HISTORY: dict = {
+    "grande_bretagne": {"first_gp": 1950, "most_wins": ("Lewis Hamilton", 9),
+        "most_poles": ("Lewis Hamilton", None),
+        "note": "Host of the first-ever Formula 1 World Championship race (13 May 1950). "
+                "Lewis Hamilton is the most successful driver in British Grand Prix history."},
+    "monaco": {"first_gp": 1950, "most_wins": ("Ayrton Senna", 6),
+        "most_poles": ("Ayrton Senna", None), "most_constructor": "McLaren",
+        "note": "Run through the streets of Monte Carlo since 1929; on the F1 calendar since 1950. "
+                "The most prestigious race in the sport and the hardest place to overtake."},
+    "italie": {"first_gp": 1950, "most_wins": ("Schumacher & Hamilton", 5),
+        "most_poles": ("Lewis Hamilton", None), "most_constructor": "Ferrari",
+        "note": "The 'Temple of Speed' — the fastest circuit on the calendar and, alongside "
+                "Silverstone, a fixture since the 1950 championship."},
+    "belgique": {"first_gp": 1950, "most_wins": ("Michael Schumacher", 6),
+        "most_poles": ("Lewis Hamilton", None),
+        "note": "Spa-Francorchamps: Schumacher took his first F1 win here in 1992 and a record "
+                "six victories overall. Home of Eau Rouge / Raidillon and the Kemmel Straight."},
+    "japon": {"first_gp": 1976, "most_wins": ("Michael Schumacher", 6),
+        "most_poles": ("Michael Schumacher", None),
+        "note": "Suzuka's figure-of-eight layout has decided numerous championships. "
+                "Schumacher holds the record with six wins."},
+    "hongrie": {"first_gp": 1986, "most_wins": ("Lewis Hamilton", 8),
+        "most_poles": ("Lewis Hamilton", None),
+        "note": "The tight, twisty Hungaroring — 'Monaco without the walls'. Hamilton owns the "
+                "circuit with a record eight wins and the most poles."},
+    "espagne": {"first_gp": 1991, "most_wins": ("Schumacher & Hamilton", 6),
+        "most_poles": ("Lewis Hamilton", None),
+        "note": "Barcelona-Catalunya is F1's benchmark test track — teams know every metre from "
+                "winter testing, so it rewards outright car performance."},
+    "autriche": {"first_gp": 1970, "most_wins": ("Max Verstappen", 5),
+        "most_poles": ("Max Verstappen", None),
+        "note": "The Red Bull Ring in the Styrian mountains: short, fast and Red Bull's home "
+                "race, where Verstappen has dominated the modern era."},
+    "pays_bas": {"first_gp": 1952, "most_wins": ("Max Verstappen", 3),
+        "note": "Zandvoort returned to the calendar in 2021 with banked corners; Verstappen "
+                "won the first three home races in front of the Orange Army."},
+    "canada": {"first_gp": 1967, "most_wins": ("Lewis Hamilton", 7),
+        "most_poles": ("Lewis Hamilton", None),
+        "note": "The Circuit Gilles Villeneuve in Montréal, famous for the 'Wall of Champions'. "
+                "Hamilton leads all drivers with seven wins here."},
+    "singapour": {"first_gp": 2008, "most_wins": ("Sebastian Vettel", 5),
+        "note": "F1's original night race (since 2008). A brutal, humid street fight around "
+                "Marina Bay where Vettel took a record five wins."},
+    "etats_unis": {"first_gp": 2012, "most_wins": ("Lewis Hamilton", 5),
+        "note": "The Circuit of the Americas in Austin — a modern classic mixing Silverstone- "
+                "and Hockenheim-inspired corners. (US GPs have run at many venues since 1959.)"},
+    "mexique": {"first_gp": 1963, "most_wins": ("Max Verstappen", 5),
+        "note": "The high-altitude Autódromo Hermanos Rodríguez — thin air hurts downforce and "
+                "cooling. The stadium section is one of F1's great atmospheres."},
+    "bresil": {"first_gp": 1973, "most_wins": ("Michael Schumacher", 4),
+        "note": "Interlagos: an old-school, anti-clockwise rollercoaster that has hosted many "
+                "title-deciders and is beloved for unpredictable weather."},
+    "abu_dhabi": {"first_gp": 2009, "most_wins": ("Lewis Hamilton", 5),
+        "note": "Yas Marina hosts the season finale under floodlights at dusk — the stage for "
+                "the dramatic 2021 title decider."},
+    "australie": {"first_gp": 1985, "most_wins": ("Michael Schumacher", 4),
+        "note": "Melbourne's Albert Park has traditionally opened the season — a semi-street "
+                "circuit round a lake, reprofiled in 2022 to be faster."},
+    "bahrein": {"first_gp": 2004, "most_wins": ("Lewis Hamilton", 5),
+        "note": "The desert Bahrain International Circuit, often the season opener and a "
+                "regular pre-season test venue. Raced under lights since 2014."},
+    "chine": {"first_gp": 2004, "most_wins": ("Lewis Hamilton", 6),
+        "most_poles": ("Lewis Hamilton", None),
+        "note": "The Shanghai International Circuit, shaped like the character 上 (shàng). "
+                "Hamilton is the most successful driver here."},
+    "azerbaidjan": {"first_gp": 2016, "most_poles": ("Charles Leclerc", None),
+        "note": "The Baku City Circuit pairs medieval-castle tight sections with F1's longest "
+                "flat-out run — chaos and safety cars are almost guaranteed."},
+    "arabie_saoudite": {"first_gp": 2021,
+        "note": "Jeddah's Corniche Circuit is the fastest street track in F1 — 27 corners of "
+                "high-speed walls with barely a breath between them."},
+    "qatar": {"first_gp": 2021,
+        "note": "The flowing Lusail International Circuit, a former MotoGP venue, punishes "
+                "tyres with its long, fast, sweeping corners."},
+    "emilie_romagne": {"first_gp": 1980,
+        "note": "Imola (Autodromo Enzo e Dino Ferrari) — an old-school, anti-clockwise circuit "
+                "steeped in history and one of the few with no significant run-off."},
+    "miami": {"first_gp": 2022, "most_wins": ("Max Verstappen", 2),
+        "note": "The Miami International Autodrome laid out around the Hard Rock Stadium — a "
+                "showpiece venue that anchors F1's growth in the United States."},
+    "las_vegas": {"first_gp": 2023, "most_wins": ("Max Verstappen", 2),
+        "note": "A high-speed night race down the Las Vegas Strip — F1's most glamorous "
+                "spectacle, run in cold desert conditions that challenge tyre warm-up."},
+}
+
+# ── Race-weekend guide (pre-weekend orientation) ──────────────
+# Typical, characteristic facts per venue — what a fan checks before the weekend.
+# overtaking ∈ {Easy, Moderate, Hard, Very hard}; safety_car ∈ {Low, Medium, High};
+# strategy is the usual number of stops; race distance is derived (laps × length).
+# These are typical patterns, not guarantees — weather and incidents vary yearly.
+_CIRCUIT_WEEKEND: dict = {
+    "italie":          {"laps": 53, "overtaking": "Easy",      "safety_car": "Low",    "strategy": "1-stop",
+        "note": "A low-downforce specialist track where slipstreaming makes overtaking easy. Tyre deg is low, so it's usually a one-stopper decided by top speed and the braking zones into the Rettifilo and Ascari chicanes."},
+    "monaco":          {"laps": 78, "overtaking": "Very hard", "safety_car": "High",   "strategy": "1-stop",
+        "note": "Qualifying is everything — overtaking is almost impossible, so track position and a clean Saturday define the race. Very high safety-car risk can flip the order in an instant."},
+    "grande_bretagne": {"laps": 52, "overtaking": "Moderate",  "safety_car": "Medium", "strategy": "1–2 stop",
+        "note": "Fast, flowing corners (Maggotts–Becketts) reward aero; the Hangar and Wellington straights plus two DRS zones give decent passing. British-summer weather can swing the strategy."},
+    "belgique":        {"laps": 44, "overtaking": "Easy",      "safety_car": "Medium", "strategy": "1–2 stop",
+        "note": "The longest lap on the calendar; the Kemmel Straight after Eau Rouge is a prime passing spot. Weather is famously fickle — it can rain on one part of the circuit and stay dry on another."},
+    "japon":           {"laps": 53, "overtaking": "Hard",      "safety_car": "Low",    "strategy": "2-stop",
+        "note": "A pure drivers' circuit — the high-speed Esses and 130R reward commitment. Overtaking is tricky, so qualifying position and tyre management are decisive."},
+    "singapour":       {"laps": 62, "overtaking": "Hard",      "safety_car": "High",   "strategy": "1–2 stop",
+        "note": "A hot, humid night race on a bumpy street circuit — one of the most physically demanding of the year. Safety cars are near-guaranteed and routinely reshuffle strategy."},
+    "azerbaidjan":     {"laps": 51, "overtaking": "Easy",      "safety_car": "High",   "strategy": "1-stop",
+        "note": "A 2.2 km flat-out run creates huge slipstream battles and late-braking passes into Turn 1; walls line the old-town section and a high safety-car rate produces frequent chaos."},
+    "arabie_saoudite": {"laps": 50, "overtaking": "Moderate",  "safety_car": "High",   "strategy": "1-stop",
+        "note": "The fastest street circuit in F1 — long flat-out sections with DRS give overtaking chances, but the walls are close and safety cars are common."},
+    "hongrie":         {"laps": 70, "overtaking": "Very hard", "safety_car": "Low",    "strategy": "2-stop",
+        "note": "Tight, twisty and narrow — 'Monaco without the walls'. Track position is king; expect an undercut-driven strategy race in the mid-summer heat."},
+    "espagne":         {"laps": 66, "overtaking": "Hard",      "safety_car": "Low",    "strategy": "2-stop",
+        "note": "The ultimate aero test track — dirty air makes following hard, so it rewards outright car performance and tyre management over wheel-to-wheel action."},
+    "autriche":        {"laps": 71, "overtaking": "Easy",      "safety_car": "Medium", "strategy": "2-stop",
+        "note": "A short lap with three DRS zones and long uphill straights makes passing easy; watch for track-limits lap deletions at the exit kerbs of the final corners."},
+    "pays_bas":        {"laps": 72, "overtaking": "Hard",      "safety_car": "Medium", "strategy": "1–2 stop",
+        "note": "Old-school, narrow and banked (Turns 3 & 14). Overtaking is difficult, so qualifying and the undercut are decisive; coastal wind shifts the grip through the day."},
+    "qatar":           {"laps": 57, "overtaking": "Moderate",  "safety_car": "Low",    "strategy": "2–3 stop",
+        "note": "Fast, flowing and very hard on tyres — Pirelli often caps stint length, forcing multiple stops. A night race in the desert on a smooth, high-energy surface."},
+    "canada":          {"laps": 70, "overtaking": "Easy",      "safety_car": "High",   "strategy": "1-stop",
+        "note": "A stop-go, low-grip semi-street circuit with long straights and heavy braking; the Wall of Champions catches drivers out and safety cars are common."},
+    "etats_unis":      {"laps": 56, "overtaking": "Easy",      "safety_car": "Medium", "strategy": "1–2 stop",
+        "note": "A bumpy, anti-clockwise mix of Silverstone- and Hockenheim-style corners with a big DRS straight; the uphill Turn 1 is a classic passing spot."},
+    "mexique":         {"laps": 71, "overtaking": "Moderate",  "safety_car": "Medium", "strategy": "1-stop",
+        "note": "At 2,240 m altitude the thin air cuts downforce and cooling; the enormous run to Turn 1 is one of the longest braking zones of the year, and the stadium section is electric."},
+    "bresil":          {"laps": 71, "overtaking": "Easy",      "safety_car": "Medium", "strategy": "1–2 stop",
+        "note": "Short, anti-clockwise and undulating with a great slipstream into Turn 1; changeable weather regularly produces classics. Usually a Sprint weekend."},
+    "abu_dhabi":       {"laps": 58, "overtaking": "Moderate",  "safety_car": "Low",    "strategy": "1-stop",
+        "note": "A twilight-to-night season finale; the 2021 redesign improved flow and overtaking. Falling track temperature through the race helps the tyres."},
+    "australie":       {"laps": 58, "overtaking": "Moderate",  "safety_car": "Medium", "strategy": "1–2 stop",
+        "note": "A fast, semi-street park circuit (reprofiled in 2022) with four DRS zones; the walls are close and safety cars can appear. Often the season opener."},
+    "bahrein":         {"laps": 57, "overtaking": "Easy",      "safety_car": "Medium", "strategy": "2-stop",
+        "note": "High tyre degradation on an abrasive surface under lights — a genuine two-stopper where rear-tyre management and traction out of the slow corners decide it."},
+    "chine":           {"laps": 56, "overtaking": "Moderate",  "safety_car": "Medium", "strategy": "2-stop",
+        "note": "The long back straight into the tight Turn 14 hairpin is a prime DRS passing zone; the snail-shell Turn 1–4 punishes the front-left tyre. Usually a Sprint weekend."},
+    "emilie_romagne":  {"laps": 63, "overtaking": "Very hard", "safety_car": "Medium", "strategy": "1-stop",
+        "note": "Narrow, old-school and anti-clockwise with aggressive kerbs and gravel traps — overtaking is very hard, so qualifying and the undercut are crucial."},
+    "miami":           {"laps": 57, "overtaking": "Moderate",  "safety_car": "Medium", "strategy": "1-stop",
+        "note": "A fast street-style circuit around the stadium with three DRS zones; a slow, technical middle sector contrasts with long flat-out runs. Can be extremely hot and humid."},
+    "las_vegas":       {"laps": 50, "overtaking": "Easy",      "safety_car": "High",   "strategy": "1–2 stop",
+        "note": "Enormous top speeds down the Strip in low-grip, cold-night conditions that make tyre warm-up and braking treacherous; safety cars are likely."},
+}
+
 
 def _corner_name_map(circuit_key) -> dict[int, str]:
     """Parse _NOTABLE_CORNERS ('T7 Eau Rouge', 'T1-T3 opening complex', …) into
@@ -6577,6 +6734,96 @@ def _corner_name_map(circuit_key) -> dict[int, str]:
         for n in range(a, b + 1):
             out.setdefault(n, name)
     return out
+
+# ── All-time history & records card ───────────────────────────
+def _history_card(circuit_key) -> html.Div:
+    """Curated all-time F1 records for this venue (most wins, most poles, first
+    GP, historical note). Returns an empty Div when no data is curated."""
+    h = _CIRCUIT_HISTORY.get(circuit_key)
+    if not h:
+        return html.Div()
+
+    def _person(pair):
+        drv, n = pair
+        return f"{drv} — {n}" if n else drv
+
+    pills = []
+    if h.get("first_gp"):
+        pills.append(_stat_pill("FIRST F1 GP", str(h["first_gp"])))
+    if h.get("most_wins"):
+        pills.append(_stat_pill("MOST WINS", _person(h["most_wins"]), "#FFD700"))
+    if h.get("most_poles"):
+        pills.append(_stat_pill("MOST POLES", _person(h["most_poles"]), "#00D2BE"))
+    if h.get("most_constructor"):
+        pills.append(_stat_pill("TOP CONSTRUCTOR", h["most_constructor"]))
+
+    children = [html.Div(pills, style={
+        "display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "10px",
+    })]
+    if h.get("note"):
+        children.append(html.P(h["note"], style={
+            "color": TEXT_DIM, "fontSize": "0.8rem", "marginBottom": 0,
+            "lineHeight": "1.45",
+        }))
+    return card(
+        "Track History & Records",
+        html.Div(children),
+        info=("Data: curated all-time Formula 1 records for this venue (through the "
+              "2025 season) — first championship Grand Prix, the driver with the most "
+              "wins and poles here, and a short historical note. Why: the season "
+              "leaderboards below only cover recent years, so this gives the deeper "
+              "context of who has owned this circuit across F1 history."),
+    )
+
+
+# ── Race-weekend guide card ───────────────────────────────────
+_OVERTAKE_CLR = {"Easy": "#2ECC71", "Moderate": "#FFD700",
+                 "Hard": "#FF8700", "Very hard": "#E10600"}
+_SC_CLR       = {"Low": "#2ECC71", "Medium": "#FFD700", "High": "#E10600"}
+
+
+def _weekend_card(circuit_key) -> html.Div:
+    """Pre-weekend orientation: race distance, overtaking difficulty, safety-car
+    likelihood, typical strategy and what tends to decide the race."""
+    w = _CIRCUIT_WEEKEND.get(circuit_key)
+    if not w:
+        return html.Div()
+    meta = _FF1_CIRCUIT_META.get(circuit_key, {})
+
+    pills = []
+    if w.get("laps"):
+        length = meta.get("length_km")
+        val = f"{w['laps']} laps" + (f" · ~{round(w['laps'] * length)} km" if length else "")
+        pills.append(_stat_pill("RACE DISTANCE", val))
+    if w.get("overtaking"):
+        pills.append(_stat_pill("OVERTAKING", w["overtaking"],
+                                _OVERTAKE_CLR.get(w["overtaking"])))
+    if w.get("safety_car"):
+        pills.append(_stat_pill("SAFETY CAR", w["safety_car"],
+                                _SC_CLR.get(w["safety_car"])))
+    if w.get("strategy"):
+        pills.append(_stat_pill("TYPICAL RACE", w["strategy"], "#00D2BE"))
+
+    children = [html.Div(pills, style={
+        "display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "10px",
+    })]
+    if w.get("note"):
+        children.append(html.P([
+            html.Span("What to watch — ", style={"color": TEXT_MAIN, "fontWeight": "700"}),
+            w["note"],
+        ], style={"color": TEXT_DIM, "fontSize": "0.8rem", "marginBottom": 0,
+                  "lineHeight": "1.45"}))
+    return card(
+        "Race Weekend Guide",
+        html.Div(children),
+        info=("Data: curated, characteristic facts for this circuit — typical race "
+              "distance, how hard overtaking is, safety-car likelihood and the usual "
+              "tyre strategy, plus what tends to decide the race. Why: a quick "
+              "orientation before the weekend. Note: overtaking, safety-car and "
+              "strategy are typical patterns, not guarantees — weather and incidents "
+              "vary year to year."),
+    )
+
 
 # ── Radar chart for circuit demand profile ────────────────────
 def _radar_chart(row: pd.Series) -> go.Figure:
@@ -7161,13 +7408,16 @@ def _finish_line(xr, yr, length: float = 1100.0):
             [yr[0] - py * h, yr[0] + py * h])
 
 
-def _fig_track_map(tm: dict, corner_names: dict[int, str] | None = None) -> go.Figure:
-    """Circuit layout coloured by timing sector, with the start/finish line and
-    the numbered corner markers (corner names shown on hover)."""
+def _fig_track_map(tm: dict, corner_names: dict[int, str] | None = None,
+                   straights: list | None = None) -> go.Figure:
+    """Circuit layout coloured by timing sector, with the start/finish line, the
+    numbered corner markers (corner names shown on hover) and any named straights
+    (Hamilton Straight, Kemmel Straight, …) labelled on the layout."""
     line = tm["line"]
     ang  = tm["rotation"] / 180.0 * np.pi
     xr, yr = _rotate(line["X"].to_numpy(), line["Y"].to_numpy(), ang)
     corner_names = corner_names or {}
+    straights = straights or []
 
     fig = go.Figure()
 
@@ -7228,6 +7478,32 @@ def _fig_track_map(tm: dict, corner_names: dict[int, str] | None = None) -> go.F
             textposition="middle center", hoverinfo="text", hovertext=hovers,
             name="Corners", showlegend=False,
         ))
+
+    # Named straights — placed at the mid-point of the two corners that bracket
+    # them (wrapping past the start/finish line for the final corner).
+    if straights and corners is not None and not corners.empty:
+        cdf  = corners.reset_index(drop=True)
+        nums = cdf["Number"].astype(int).tolist()
+        sx, sy, stext = [], [], []
+        for after, nm in straights:
+            if after not in nums:
+                continue
+            i = nums.index(after)
+            j = (i + 1) % len(cdf)
+            mx = (float(cdf["X"].iloc[i]) + float(cdf["X"].iloc[j])) / 2.0
+            my = (float(cdf["Y"].iloc[i]) + float(cdf["Y"].iloc[j])) / 2.0
+            rx, ry = _rotate(mx, my, ang)
+            sx.append(rx); sy.append(ry); stext.append(nm)
+        if sx:
+            fig.add_trace(go.Scatter(
+                x=sx, y=sy, mode="markers+text",
+                marker=dict(size=8, color="#0A0A14", symbol="diamond",
+                            line=dict(color="#E8C36A", width=1.4)),
+                text=stext, textfont=dict(color="#E8C36A", size=11,
+                                          family="Inter, sans-serif"),
+                textposition="top center", hoverinfo="text", hovertext=stext,
+                name="Straights", showlegend=False,
+            ))
 
     title = f"Layout, Corners & Sectors — {tm['event']} {tm['season']}"
     fig = _track_map_layout(fig, title)
@@ -7589,8 +7865,9 @@ def _track_map_children(tm: dict, season, event_name, circuit_key=None) -> html.
         style={"color": TEXT_DIM, "fontSize": "0.74rem", "marginBottom": "8px"},
     )
     corner_names = _corner_name_map(circuit_key) if circuit_key else {}
+    straights    = _NAMED_STRAIGHTS.get(circuit_key, []) if circuit_key else []
     rows = [dbc.Row([
-        dbc.Col(dcc.Graph(figure=_fig_track_map(tm, corner_names), config=GFX), md=6),
+        dbc.Col(dcc.Graph(figure=_fig_track_map(tm, corner_names, straights), config=GFX), md=6),
         dbc.Col(dcc.Graph(figure=_fig_gear_map(tm),                config=GFX), md=6),
     ])]
     elev_fig = _fig_elevation_map(tm)
@@ -7769,14 +8046,15 @@ def update_track_content(circuit_key: str, hist_year: int):
         "Track Map — Layout, Sectors, Gears, Elevation & DRS",
         info=("Data: the fastest qualifying lap's telemetry line for this circuit "
               "(FastF1) shown four ways — layout with numbered corners (names on "
-              "hover), the start/finish line and timing sectors; gear per point; "
+              "hover), named straights, the start/finish line and timing sectors; "
+              "gear per point; "
               "elevation/relief from the line's altitude; and DRS / active-aero "
               "zones. Note: elevation is the racing-line altitude, so it shows "
               "relief and gradient (climbs/descents) but not lateral banking."),
         children=html.Div([
             html.P([
-                "Circuit layout (corners + sectors + start/finish), gears, "
-                "elevation/relief and DRS / active-aero zones, built from the "
+                "Circuit layout (corners + named straights + sectors + start/finish), "
+                "gears, elevation/relief and DRS / active-aero zones, built from the "
                 "fastest qualifying lap (FastF1 telemetry). "
                 + ("Pre-loaded from cache below."
                    if preloaded_map is not None else
@@ -7875,6 +8153,8 @@ def update_track_content(circuit_key: str, hist_year: int):
         season_banner,
         header,
         stats_pills,
+        _weekend_card(circuit_key),
+        _history_card(circuit_key),
         card("Circuit Profile", chars_block,
              info=("Data: the circuit's demand ratings (average speed, full throttle, "
                    "lateral load, tyre degradation, tyre difficulty), each scored 1–4 "

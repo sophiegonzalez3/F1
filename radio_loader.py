@@ -123,6 +123,57 @@ def _driver_from_path(path: str) -> str:
     return tok.upper() if re.fullmatch(r"[A-Z]{3}", tok or "") else ""
 
 
+# ─────────────────────────────────────────────────────────────
+# Topic tagging (keyword-based, applied to transcripts)
+# ─────────────────────────────────────────────────────────────
+# Order matters only for display; a clip can carry several topics.
+_TOPIC_RULES: dict[str, re.Pattern] = {
+    "PIT CALL": re.compile(
+        r"\bbox\b|\bpit(?:s|ting|stop| stop)?\b|stay out|in this lap", re.I),
+    "TYRES": re.compile(
+        r"tyre|tire|\bdeg\b|degradation|grip|grain|blister|puncture|"
+        r"flat.?spot|vibration|front (?:left|right)|rear (?:left|right)|"
+        r"\b(?:softs|mediums|hards|inters|slicks|wets)\b|"
+        r"the (?:soft|medium|hard|inter)\b|warm.?up", re.I),
+    "WEATHER": re.compile(
+        r"\brain(?:ing)?\b|drizzle|shower|\bwet\b|damp|drying|spitting|"
+        r"few drops|\bwind\b", re.I),
+    "TRAFFIC / FLAGS": re.compile(
+        r"blue flag|traffic|safety car|\bvsc\b|virtual safety|yellow|"
+        r"red flag|\bgap\b|car (?:behind|ahead|in front)|\bdrs\b|backmarker|"
+        r"\bP\d{1,2}\b|podium|penalt|investigat|track limits|five.second|"
+        r"\bbehind\b|\bahead\b|overtake\b|pushed (?:me|him) off", re.I),
+    "ENERGY / MODE": re.compile(
+        r"\bmode\b|\bstrat\b|battery|deploy|\benergy\b|recharge|derate|"
+        r"harvest|lift and coast|overtake button|\bcharge\b|\bsoc\b|"
+        r"\bpower\b", re.I),
+    "STRATEGY": re.compile(
+        r"\bplan [abc]\b|undercut|overcut|\bextend\b|\boffset\b|"
+        r"target(?: lap)?|opposite|\bpush\b|hammer time|\bfuel\b|"
+        r"\bswitch\b|we are (?:pitting|staying)|go(?:ing)? (?:long|short)|"
+        r"one.stop|two.stop", re.I),
+    "CAR / DAMAGE": re.compile(
+        r"\bbrakes?\b|suspension|\bbroken\b|damage|overheat|temperature|"
+        r"degrees|\bwing\b|\bfloor\b|\bseat\b|steering|gearbox|\bengine\b|"
+        r"upshift|downshift|\bride\b|cockpit|wheel shield", re.I),
+}
+
+
+def tag_topics(text) -> str:
+    """Comma-joined topic labels found in a transcript ('' when none match).
+    Keyword-based on purpose: cheap, transparent, easy to tune."""
+    t = str(text or "")
+    if not t.strip():
+        return ""
+    return ", ".join(name for name, rx in _TOPIC_RULES.items() if rx.search(t))
+
+
+def _ensure_topics(df: pd.DataFrame) -> pd.DataFrame:
+    """Add/refresh the Topics column from the working transcript."""
+    df["Topics"] = df.get("Transcript", pd.Series("", index=df.index)).map(tag_topics)
+    return df
+
+
 def _get_model():
     global _WHISPER_MODEL
     if _WHISPER_MODEL is None:
@@ -187,6 +238,9 @@ def load_race_radio(season, meeting, force: bool = False,
             df["Transcript_raw"] = df.get("Transcript", "")
         if "reviewed" not in df.columns:
             df["reviewed"] = False
+        # Topics are recomputed in memory on every load (cheap regex pass) so
+        # tuning the keyword rules takes effect without invalidating caches.
+        df = _ensure_topics(df)
         logger.info("[radio cache HIT] %s (%d clips)", _key(season, meeting), len(df))
         return df
 
@@ -235,6 +289,7 @@ def load_race_radio(season, meeting, force: bool = False,
     if df.empty:
         return df
 
+    df = _ensure_topics(df)
     df["Utc"] = pd.to_datetime(df["Utc"], errors="coerce", utc=True).dt.tz_localize(None)
     df = df.sort_values("Utc").reset_index(drop=True)
     t0 = df["Utc"].min()

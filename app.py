@@ -5,7 +5,11 @@ Open:  http://127.0.0.1:8050
 """
 from __future__ import annotations
 import logging, warnings, re
-warnings.filterwarnings("ignore")
+# Silence the known-noisy categories from the pandas/fastf1 stack only.
+# Anything else (RuntimeWarning, SettingWithCopyWarning, …) should surface:
+# it usually points at a real bug rather than upstream churn.
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from pathlib import Path
 import pandas as pd
@@ -27,6 +31,7 @@ from config import (
 )
 from data_loader import load_sessions, cache_summary, is_cached, list_cached_sessions
 from radio_loader import load_race_radio, race_radio_available, radio_cached
+from pitstops_loader import load_pitstops
 from processing import (
     clean_and_enrich_laps, analyze_stints,
     identify_quali_sim_laps, best_laps_table,
@@ -35,101 +40,19 @@ from processing import (
     detect_stint_cliffs, compound_offsets, flag_dirty_air,
     enrich_weather, enrich_track_limits,
     enrich_blue_flags, enrich_session_results,
-    flag_position_changes,
+    flag_position_changes, clipped_range,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 
-# ── Sessions to load at startup (default) ────────────────────
-SESSION_INFO_LIST = [
-    {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Practice 1"},
-    {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Practice 2"},
-    {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Practice 3"},
-    {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Qualifying"},
-    {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Race"},
-]
-
-# ── Mutable application state ─────────────────────────────────
-# These globals are (re)assigned by rebuild_state() so the Data Selection
-# tab can swap the loaded sessions at runtime without restarting the app.
-laps_raw = telemetry_raw = weather_raw = race_control_raw = results_raw = None
-laps = stints = telemetry = None
-SESSIONS = DRIVERS = COMPOUNDS = TEAMS = []
-LOADED_SESSION_INFO: list[dict] = []        # the SESSION_INFO_LIST currently loaded
-LAST_LOAD_MSG: str = ""                      # human-readable result of the last load
-
-
-def rebuild_state(session_info_list: list[dict], force_reload: bool = False) -> str:
-    """
-    Load the given sessions (cache-first) and run the full enrichment
-    pipeline, reassigning all module-level data globals in place.
-
-    Returns a short human-readable status string (also stored in
-    LAST_LOAD_MSG). Raises nothing — failures are reported in the string.
-    """
-    global laps_raw, telemetry_raw, weather_raw, race_control_raw, results_raw
-    global laps, stints, telemetry
-    global SESSIONS, DRIVERS, COMPOUNDS, TEAMS, LOADED_SESSION_INFO, LAST_LOAD_MSG
-
-    if not session_info_list:
-        LAST_LOAD_MSG = "No sessions selected — nothing loaded."
-        return LAST_LOAD_MSG
-
-    print(f"Loading {len(session_info_list)} session(s) (cache-first)…", flush=True)
-    _data = load_sessions(session_info_list, force_reload=force_reload)
-    _laps_raw = _data["laps"]
-    if _laps_raw is None or _laps_raw.empty:
-        LAST_LOAD_MSG = ("Load failed — no lap data returned for the selected "
-                         "sessions (FastF1 fetch may have failed).")
-        return LAST_LOAD_MSG
-
-    _telemetry_raw    = _data["telemetry"]
-    _weather_raw      = _data["weather"]
-    _race_control_raw = _data["race_control"]
-    _results_raw      = _data["results"]
-
-    _laps = clean_and_enrich_laps(_laps_raw)
-    _laps["stint_key"] = _laps["Stint"].astype("string") + "_" + _laps["session_name"]
-    _laps = enrich_weather(_laps, _weather_raw)
-    _laps = enrich_track_limits(_laps, _race_control_raw)
-    _laps = enrich_blue_flags(_laps, _race_control_raw)
-    _laps = identify_quali_sim_laps(_laps)
-    _laps = flag_perturbed_laps(_laps, rcm=_race_control_raw)
-    _laps = flag_dirty_air(_laps)
-    _laps = enrich_track_evolution(_laps)
-    _laps = enrich_session_results(_laps, _results_raw)
-    _laps = flag_position_changes(_laps)
-    _stints    = analyze_stints(_laps)
-    _telemetry = enrich_telemetry(_telemetry_raw, _laps)
-
-    # ── Commit to module globals atomically (after all heavy work) ──
-    laps_raw, telemetry_raw      = _laps_raw, _telemetry_raw
-    weather_raw, race_control_raw, results_raw = _weather_raw, _race_control_raw, _results_raw
-    laps, stints, telemetry      = _laps, _stints, _telemetry
-    SESSIONS  = sorted(laps["session_name"].unique())
-    DRIVERS   = sorted(laps["Driver_Short"].dropna().unique())
-    COMPOUNDS = [c for c in ["SOFT","MEDIUM","HARD","INTER","WET"]
-                 if c in laps["Compound"].unique()]
-    TEAMS     = sorted(laps["Team"].dropna().unique())
-    LOADED_SESSION_INFO = list(session_info_list)
-
-    from datetime import datetime as _dt
-    LAST_LOAD_MSG = (
-        f"Loaded {len(SESSIONS)} session(s) · {len(DRIVERS)} drivers · "
-        f"{len(TEAMS)} teams  ({_dt.now().strftime('%H:%M:%S')})"
-    )
-    print(f"Ready  sessions={len(SESSIONS)}  drivers={len(DRIVERS)}  teams={len(TEAMS)}", flush=True)
-
-    # Warm the track-map / corner-marker cache for the loaded meeting(s) in the
-    # background so the Telemetry Channels corner lines are ready without a long
-    # blocking fetch on first view. No-op at import time (helper not yet defined)
-    # and for already-cached circuits.
-    _pw = globals().get("_prewarm_track_maps")
-    if _pw is not None:
-        _pw(list(session_info_list))
-
-    return LAST_LOAD_MSG
-
+# ── Application data state ────────────────────────────────────
+# state.py owns the loaded-session data and the enrichment pipeline.
+# register(globals()) mirrors the state names (laps, stints, SESSIONS, …)
+# into this module on every rebuild, so the existing bare-name references
+# below keep working. New code should read state.laps etc. directly.
+import state
+from state import rebuild_state, SESSION_INFO_LIST
+state.register(globals())
 
 # ── Initial load (default sessions) ──────────────────────────
 print("Loading sessions (cache-first)…")
@@ -282,6 +205,43 @@ except FileNotFoundError:
     CIRCUIT_CHARS = pd.DataFrame()
     print("WARNING: data/circuit_characteristics.csv not found — Track Info tab will be limited")
 
+# Overlay telemetry-measured scores where available (written by
+# compute_circuit_characteristics.py). Speed / throttle / lateral / deg become
+# measured values; tyre difficulty and circuit type stay hand-scored.
+_CIRCUIT_COMPUTED_PATH = Path("data/circuit_characteristics_computed.csv")
+if not CIRCUIT_CHARS.empty and _CIRCUIT_COMPUTED_PATH.exists():
+    try:
+        _comp = pd.read_csv(_CIRCUIT_COMPUTED_PATH)
+        _ovr_cols = ["avg_speed_label", "avg_speed_score",
+                     "full_throttle_label", "full_throttle_score",
+                     "lateral_load_label", "lateral_load_score",
+                     "tyre_deg_label", "tyre_deg_score"]
+        _sc_cols = ["avg_speed_score", "full_throttle_score",
+                    "lateral_load_score", "tyre_deg_score",
+                    "tyre_difficulty_score"]
+        _n_applied = 0
+        for _, _crow in _comp.iterrows():
+            _mask = CIRCUIT_CHARS["circuit_key"] == _crow["circuit_key"]
+            if not _mask.any():
+                continue
+            for _c in _ovr_cols:
+                if _c in _comp.columns and pd.notna(_crow.get(_c)):
+                    CIRCUIT_CHARS.loc[_mask, _c] = _crow[_c]
+            CIRCUIT_CHARS.loc[_mask, "overall_demand_score"] = round(
+                CIRCUIT_CHARS.loc[_mask, _sc_cols].astype(float).mean(axis=1).iloc[0], 1)
+            _prov = (f"speed/throttle/lateral/deg measured from "
+                     f"{int(_crow['season'])} telemetry")
+            _old_note = str(CIRCUIT_CHARS.loc[_mask, "notes"].iloc[0] or "")
+            if "measured from" not in _old_note:
+                CIRCUIT_CHARS.loc[_mask, "notes"] = (
+                    (_old_note + "; " if _old_note and _old_note != "nan" else "")
+                    + _prov)
+            _n_applied += 1
+        print(f"Circuit characteristics: measured scores applied to "
+              f"{_n_applied} circuits")
+    except Exception as _exc:
+        print(f"Circuit characteristics: computed overlay failed ({_exc})")
+
 # ── Historical results (race + quali) ────────────────────────
 _HIST_BASE = Path(HISTORICAL_DIR)
 def _load_hist(filename):
@@ -325,85 +285,11 @@ if HIST_STANDINGS.empty and not HIST_RACE.empty:
 print(f"Constructor standings   : {len(HIST_STANDINGS):,} rows")
 
 # ── Team car-development upgrades (per event) ─────────────────
-# Curated, human-maintained table of the technical upgrades each team brings to
-# a given Grand Prix — mirrors the FIA "Car Presentation" documents published
-# each event. One row per (season, event, team, component). The UPGRADES tab
-# reads this to show what evolution a team brought to the loaded meeting.
-#
-#   season       e.g. 2025
-#   event        must match the MEETING name, e.g. "Austrian Grand Prix"
-#   team         must match a TEAM_COLORS key, e.g. "McLaren"
-#   component    affected area, e.g. "Floor Body", "Front Wing"
-#   category     FIA-style reason: Performance / Circuit specific / Reliability /
-#                Driver comfort / Repairs
-#   description  short free-text summary of the change
-#   source       provenance tag (e.g. "FIA-2025-AUT", "starter-example")
-#
-# Edit data/upgrades.csv to add/replace rows — no code changes needed.
-_UPGRADES_PATH = Path("data/upgrades.csv")
-_UPGRADES_COLS = ["season", "event", "team", "component",
-                  "category", "description", "source"]
-
-def _load_upgrades() -> pd.DataFrame:
-    if _UPGRADES_PATH.exists():
-        try:
-            df = pd.read_csv(_UPGRADES_PATH)
-            for c in _UPGRADES_COLS:
-                if c not in df.columns:
-                    df[c] = "" if c != "season" else pd.NA
-            df["season"] = pd.to_numeric(df["season"], errors="coerce").astype("Int64")
-            for c in ("event", "team", "component", "category", "description", "source"):
-                df[c] = df[c].fillna("").astype(str).str.strip()
-            return df[_UPGRADES_COLS]
-        except Exception as _exc:
-            print(f"Team upgrades           : failed to read ({_exc})")
-    return pd.DataFrame(columns=_UPGRADES_COLS)
-
-# Cache the parsed CSV but reload automatically when the file changes on disk, so
-# editing data/upgrades.csv takes effect without restarting the app (Dash's
-# reloader only watches .py files, not data files).
-_UPGRADES_CACHE: dict = {"mtime": None, "df": pd.DataFrame(columns=_UPGRADES_COLS)}
-
-def upgrades_df() -> pd.DataFrame:
-    """Current upgrades table, re-read from disk whenever the CSV's mtime changes."""
-    try:
-        mtime = _UPGRADES_PATH.stat().st_mtime if _UPGRADES_PATH.exists() else None
-    except OSError:
-        mtime = None
-    if mtime != _UPGRADES_CACHE["mtime"]:
-        _UPGRADES_CACHE["df"] = _load_upgrades()
-        _UPGRADES_CACHE["mtime"] = mtime
-    return _UPGRADES_CACHE["df"]
-
+# Curated table mirroring the FIA "Car Presentation" documents. Loader, column
+# docs, and the UPGRADES tab live in tabs/upgrades.py (the extraction template
+# for splitting further tabs out of this file — see tabs/__init__.py).
+from tabs.upgrades import tab_upgrades, upgrades_df
 print(f"Team upgrades           : {len(upgrades_df()):,} rows")
-
-def _upgrades_for(season, meeting) -> pd.DataFrame:
-    """Upgrade rows for one (season, event) pair, robust to type/whitespace."""
-    up = upgrades_df()
-    if up.empty or season is None or not meeting:
-        return up.iloc[0:0]
-    try:
-        season = int(season)
-    except (TypeError, ValueError):
-        return up.iloc[0:0]
-    m = str(meeting).strip().casefold()
-    sub = up[(up["season"] == season)
-             & (up["event"].str.strip().str.casefold() == m)]
-    return sub.copy()
-
-def _loaded_meetings() -> list[tuple[int | None, str]]:
-    """Unique (season, event) meetings currently loaded, in load order."""
-    seen: list[tuple[int | None, str]] = []
-    for info in LOADED_SESSION_INFO:
-        try:
-            season = int(info.get("SEASON"))
-        except (TypeError, ValueError):
-            season = None
-        meeting = str(info.get("MEETING", "")).strip()
-        key = (season, meeting)
-        if meeting and key not in seen:
-            seen.append(key)
-    return seen
 
 # Per-round drivers' championship standings (same source, keyed by driver).
 HIST_DRIVER_STANDINGS = _load_hist("driver_standings_all.parquet")
@@ -422,34 +308,9 @@ print(f"Driver standings        : {len(HIST_DRIVER_STANDINGS):,} rows")
 
 # circuit_characteristics.csv uses French slugs (e.g. "monaco", "etats_unis")
 # while fetch_historical_results.py slugifies the official English event name
-# (e.g. "monaco_grand_prix", "united_states_grand_prix"). This map bridges
-# the two so the Historical leaderboards filter actually matches rows.
-HIST_CIRCUIT_KEY_MAP: dict[str, list[str]] = {
-    "abu_dhabi":       ["abu_dhabi_grand_prix"],
-    "arabie_saoudite": ["saudi_arabian_grand_prix"],
-    "autriche":        ["austrian_grand_prix"],
-    "azerbaidjan":     ["azerbaijan_grand_prix"],
-    "belgique":        ["belgian_grand_prix"],
-    "bresil":          ["s\xe3o_paulo_grand_prix", "brazilian_grand_prix"],
-    "canada":          ["canadian_grand_prix"],
-    "espagne":         ["spanish_grand_prix", "barcelona_grand_prix"],
-    "etats_unis":      ["united_states_grand_prix"],
-    "grande_bretagne": ["british_grand_prix"],
-    "hongrie":         ["hungarian_grand_prix"],
-    "italie":          ["italian_grand_prix"],
-    "japon":           ["japanese_grand_prix"],
-    "mexique":         ["mexico_city_grand_prix", "mexican_grand_prix"],
-    "monaco":          ["monaco_grand_prix"],
-    "pays_bas":        ["dutch_grand_prix"],
-    "qatar":           ["qatar_grand_prix"],
-    "singapour":       ["singapore_grand_prix"],
-    "australie":       ["australian_grand_prix"],
-    "bahrein":         ["bahrain_grand_prix"],
-    "chine":           ["chinese_grand_prix"],
-    "emilie_romagne":  ["emilia_romagna_grand_prix"],
-    "miami":           ["miami_grand_prix"],
-    "las_vegas":       ["las_vegas_grand_prix"],
-}
+# (e.g. "monaco_grand_prix", "united_states_grand_prix"). The bridge map lives
+# in config.py so compute_circuit_characteristics.py can share it.
+from config import HIST_CIRCUIT_KEY_MAP
 
 # ── Constructor standings helpers (season-aware, data-driven) ─
 def _loaded_meeting_season_round() -> tuple[int | None, int | None, str | None]:
@@ -846,58 +707,13 @@ def _driver_standings_widget(fl):
         info=info,
     )
 
-# ── Theme ────────────────────────────────────────────────────
-BASE = dict(
-    paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
-    font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=12),
-    xaxis=dict(gridcolor=GRID_CLR, zeroline=False),
-    yaxis=dict(gridcolor=GRID_CLR, zeroline=False),
-    legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1),
-    margin=dict(l=60, r=20, t=50, b=50),
-)
-
-def theme(fig, h=450, t=""):
-    fig.update_layout(**BASE, height=h, title=t)
-    fig.update_xaxes(gridcolor=GRID_CLR, zeroline=False)
-    fig.update_yaxes(gridcolor=GRID_CLR, zeroline=False)
-    return fig
-
-def card(title, children, info=None):
-    """A titled card. Pass `info` to show a small ⓘ tooltip in the header
-    explaining what data the graph uses and why it is relevant (hover to read)."""
-    header = [html.Span(title, style={"fontWeight":"700","letterSpacing":"1px","fontSize":"0.85rem"})]
-    if info:
-        header.append(html.Span(
-            " ⓘ", title=info,
-            style={"cursor":"help","fontSize":"0.72rem","opacity":"0.6",
-                   "userSelect":"none","marginLeft":"6px"},
-        ))
-    return dbc.Card([
-        dbc.CardHeader(header),
-        dbc.CardBody(children),
-    ], className="mb-3",
-       style={"background":CARD_BG,"border":f"1px solid {GRID_CLR}","borderRadius":"8px"})
-
-def kpi(label, value, color=ACCENT, tooltip=None):
-    label_content = [label, html.Span(
-        " ⓘ", title=tooltip,
-        style={"cursor":"help","fontSize":"0.65rem","opacity":"0.6","userSelect":"none"}
-    )] if tooltip else [label]
-    return dbc.Col(dbc.Card(dbc.CardBody([
-        html.P(label_content, style={"color":TEXT_DIM,"fontSize":"0.72rem","marginBottom":"4px","letterSpacing":"1px"}),
-        html.H4(value, style={"color":color,"fontWeight":"800","marginBottom":0}),
-    ]), style={"background":CARD_BG,"border":f"1px solid {GRID_CLR}","borderRadius":"8px"}),
-    xs=6, md=3, className="mb-3")
-
-GFX = {"displayModeBar": False}
-
-TABLE_STYLE = dict(
-    style_table={"overflowX":"auto"},
-    style_cell={"backgroundColor":CARD_BG,"color":TEXT_MAIN,
-                "border":f"1px solid {GRID_CLR}","fontSize":"12px","padding":"8px"},
-    style_header={"backgroundColor":"#09091A","fontWeight":"bold",
-                  "color":ACCENT,"border":f"1px solid {GRID_CLR}"},
-    sort_action="native", filter_action="native", page_size=20,
+# ── Theme & shared UI building blocks (components.py) ────────
+# Pure presentation helpers live in components.py so tab modules can import
+# them without touching app.py. The aliases keep existing call sites working.
+from components import (
+    BASE, theme, card, kpi, GFX, TABLE_STYLE, styled_table,
+    badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
+    TEAM_ABBR as _TEAM_ABBR,
 )
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -941,10 +757,6 @@ def tmgaps(df):
                     rg=round(d["Race_Median"]-o["Race_Median"],3)
             out.append({**d,"Quali_Gap_to_Teammate_s":qg,"Race_Gap_to_Teammate_s":rg})
     return pd.DataFrame(out)
-
-def styled_table(data, cols):
-    return dash_table.DataTable(data=data, columns=cols, **TABLE_STYLE,
-        style_data_conditional=[{"if":{"row_index":0},"backgroundColor":ACCENT+"22","fontWeight":"700"}])
 
 # ── App layout ───────────────────────────────────────────────
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG],
@@ -1015,27 +827,29 @@ MAIN = dbc.Col([
     html.P(" | ".join(SESSIONS), id="main-subtitle",
            style={"color":TEXT_DIM,"marginBottom":"18px","fontSize":"0.78rem"}),
     TABS,
-    html.Div(id="tab-content"),
+    dcc.Loading(html.Div(id="tab-content"), type="default",
+                color=ACCENT, delay_show=250),
 ], width=10, style={"padding":"24px","background":DARK_BG,"minHeight":"100vh"})
 
 app.layout = dbc.Container(dbc.Row([SIDEBAR,MAIN],className="g-0"),
     fluid=True, style={"background":DARK_BG,"fontFamily":"Inter, sans-serif"})
 
 # ── Routing callback ─────────────────────────────────────────
-@app.callback(Output("tab-content","children"),
-              Input("tabs","active_tab"),
-              Input("session-filter","value"),
-              Input("compound-filter","value"),
-              Input("driver-filter","value"),
-              Input("team-filter","value"))
-def render(tab, ss, sc, sd, st):
-    ss=ss or SESSIONS; sc=sc or COMPOUNDS; sd=sd or DRIVERS; st=st or TEAMS
+# Tab layouts are memoized per (tab, filters, data generation): switching back
+# to an already-visited tab is instant instead of rebuilding every figure.
+# DATA_GENERATION is bumped by rebuild_state so a session reload invalidates
+# everything. tab-data is never memoized (it shows live load/cache status).
+from collections import OrderedDict as _OrderedDict
+_TAB_RENDER_MEMO: _OrderedDict = _OrderedDict()
+_TAB_MEMO_MAX = 12
+
+
+def _render_tab(tab, ss, sc, sd, st):
+    """Build a tab layout from scratch (the uncached path)."""
     fl   = laps[laps["session_name"].isin(ss) & laps["Compound"].isin(sc)].copy()
     fl_d = fl[fl["Driver_Short"].isin(sd) & fl["Team"].isin(st)].copy()
     fs   = stints[stints["session_name"].isin(ss) & stints["Compound"].isin(sc)].copy()
     fs_d = fs[fs["Driver_Short"].isin(sd) & fs["Team"].isin(st)].copy()
-    dnos = fl_d["DriverNo"].unique()
-    ft   = telemetry[telemetry["DriverNo"].isin(dnos) & telemetry["session_name"].isin(ss)].copy() if not telemetry.empty else telemetry
     if tab=="tab-data":
         return html.Div([
             tab_data_selection(),
@@ -1045,9 +859,15 @@ def render(tab, ss, sc, sd, st):
                            "marginBottom": "12px", "fontSize": "1.05rem"}),
             tab_data_quality(fl_d, fs_d),
         ])
-    if tab=="tab-overview":   return tab_overview(fl_d,fs_d,ft)
+    if tab in ("tab-overview", "tab-laps"):
+        # the 2M+-row telemetry slice is only needed by these two tabs —
+        # filtering it lazily keeps every other tab switch cheap
+        dnos = fl_d["DriverNo"].unique()
+        ft   = (telemetry[telemetry["DriverNo"].isin(dnos)
+                          & telemetry["session_name"].isin(ss)].copy()
+                if not telemetry.empty else telemetry)
+        return tab_overview(fl_d, fs_d, ft) if tab=="tab-overview" else tab_laps(fl_d, ft)
     if tab=="tab-teams":      return tab_teams(fl_d, fs_d)
-    if tab=="tab-laps":       return tab_laps(fl_d, ft)
     if tab=="tab-stints":     return tab_stints(fl_d,fs_d)
     if tab=="tab-practice":
         # Practice construction / sandbagging adapts to whichever sessions are
@@ -1059,8 +879,35 @@ def render(tab, ss, sc, sd, st):
     if tab=="tab-race":       return tab_race(sd, st)
     if tab=="tab-teammates":  return tab_teammates(fl_d,fs_d)
     if tab=="tab-track":      return tab_track_info()
-    if tab=="tab-upgrades":   return tab_upgrades()
+    if tab=="tab-upgrades":   return tab_upgrades(team_rank=_team_champ_rank())
     return html.P("Select a tab.")
+
+
+@app.callback(Output("tab-content","children"),
+              Input("tabs","active_tab"),
+              Input("session-filter","value"),
+              Input("compound-filter","value"),
+              Input("driver-filter","value"),
+              Input("team-filter","value"))
+def render(tab, ss, sc, sd, st):
+    from time import perf_counter
+    t0 = perf_counter()
+    ss=ss or SESSIONS; sc=sc or COMPOUNDS; sd=sd or DRIVERS; st=st or TEAMS
+    if tab == "tab-data":
+        return _render_tab(tab, ss, sc, sd, st)
+    key = (tab, tuple(ss), tuple(sc), tuple(sd), tuple(st), DATA_GENERATION)
+    hit = key in _TAB_RENDER_MEMO
+    if hit:
+        _TAB_RENDER_MEMO.move_to_end(key)
+        out = _TAB_RENDER_MEMO[key]
+    else:
+        out = _render_tab(tab, ss, sc, sd, st)
+        _TAB_RENDER_MEMO[key] = out
+        while len(_TAB_RENDER_MEMO) > _TAB_MEMO_MAX:
+            _TAB_RENDER_MEMO.popitem(last=False)
+    print(f"render {tab}: {'memo hit' if hit else 'built'} "
+          f"in {(perf_counter()-t0)*1000:.0f} ms", flush=True)
+    return out
 
 # ── Raw Laps Inspector callback ───────────────────────────────
 @app.callback(
@@ -1481,14 +1328,6 @@ def load_selected(_n, selected):
 # ══════════════════════════════════════════════════════════════
 # TAB 0 – DATA QUALITY
 # ══════════════════════════════════════════════════════════════
-def _badge(text, color):
-    """Small coloured pill."""
-    return html.Span(text, style={
-        "background": color, "color": "#fff", "borderRadius": "4px",
-        "padding": "2px 8px", "fontSize": "0.7rem", "fontWeight": "700",
-        "letterSpacing": "0.5px", "marginLeft": "6px",
-    })
-
 def _status_icon(ok: bool):
     return "✅" if ok else "❌"
 
@@ -1759,7 +1598,7 @@ def tab_data_quality(fl, fs):
         # ── KPI row 1 ────────────────────────────────────────
         dbc.Row([
             kpi("TOTAL LAPS (raw)",      f"{raw_rows:,}", "#808080",
-                tooltip="Raw row count from livef1 before any enrichment or cleaning."),
+                tooltip="Raw row count from FastF1 before any enrichment or cleaning."),
             kpi("TOTAL LAPS (enriched)", f"{enr_rows:,}",
                 "#00D2BE" if row_match else ACCENT,
                 tooltip="Row count after clean_and_enrich_laps(). Should match raw — a mismatch indicates a pipeline bug."),
@@ -3103,6 +2942,12 @@ def _prewarm_track_maps(session_info_list) -> None:
     threading.Thread(target=_worker, name="track-map-prewarm", daemon=True).start()
 
 
+# From now on, session reloads (Data Selection tab) prewarm the track-map
+# cache in the background. The initial import-time load intentionally runs
+# before this hook exists — same behaviour as before the state extraction.
+state.post_load_hook = _prewarm_track_maps
+
+
 def _empty_channel_fig(msg):
     fig = go.Figure()
     fig.add_annotation(text=msg, xref="paper", yref="paper", x=0.5, y=0.5,
@@ -4055,14 +3900,6 @@ def _lap_evolution_fig(sv, title, height=540):
 #  hand" (one-lap gap% − long-run gap%, both vs the field); when quali
 #  exists it is corroborated by "pace unlocked" (practice → quali).
 # ══════════════════════════════════════════════════════════════
-_TEAM_ABBR = {
-    "Ferrari": "FER", "Red Bull Racing": "RBR", "Mercedes": "MER",
-    "McLaren": "MCL", "Aston Martin": "AST", "Alpine": "ALP",
-    "Williams": "WIL", "Racing Bulls": "RB", "RB": "RB", "AlphaTauri": "RB",
-    "Haas F1 Team": "HAAS", "Audi": "AUD", "Cadillac": "CAD",
-    "Sauber": "SAU", "Kick Sauber": "SAU", "Alfa Romeo": "SAU",
-    "Alfa Romeo Racing": "SAU",
-}
 _COMPOUND_RANK = {"SOFT": 0, "MEDIUM": 1, "HARD": 2, "INTER": 3, "WET": 4}
 
 # Sandbagging flag thresholds (each crossed threshold = one 🚩)
@@ -4071,10 +3908,6 @@ _SB_BANK_THRESH = 0.40   # s of unassembled (banked) practice lap time
 _SB_PACE_THRESH = 0.30   # % more relative pace unlocked Friday→Quali (needs quali)
 _SB_TRAP_THRESH = 3.0    # km/h trap-speed gain Quali vs practice (needs quali)
 _LONGRUN_MIN_LAPS = 5    # min non-quali-sim laps for a long-run pace estimate
-
-
-def _abbr(team) -> str:
-    return _TEAM_ABBR.get(team, str(team)[:3].upper())
 
 
 def _practice_analysis(wl):
@@ -5054,7 +4887,11 @@ def tab_stints(fl, fs):
             yaxis_title="s/lap  ·  positive = second compound slower",
             showlegend=False, bargap=0.45,
         )
-        offset_body = dcc.Graph(figure=fig_off, config=GFX)
+        _off_season, _off_meeting = _laps_event(fl)
+        offset_body = html.Div([
+            _allocation_chips(_off_season, _off_meeting) or html.Div(),
+            dcc.Graph(figure=fig_off, config=GFX),
+        ])
     else:
         offset_body = html.P(
             "Compound offsets need race or sprint laps (practice fuel loads "
@@ -5605,6 +5442,76 @@ def _undercut_fig(pairs: pd.DataFrame, title: str) -> go.Figure:
 _SIM_MIN_STINT = 5      # laps — shortest stint the optimizer may schedule
 
 
+# ── Pirelli tyre allocations (hand-maintained CSV, like upgrades.csv) ──
+# data/tyre_allocations.csv maps each event to its C-compound nomination so
+# compound labels can say "SOFT (C5)" — meaningful because SOFT at Monaco and
+# SOFT at Silverstone are different tyres.
+_TYRE_ALLOC_CACHE: pd.DataFrame | None = None
+
+
+def _tyre_allocations() -> pd.DataFrame:
+    global _TYRE_ALLOC_CACHE
+    if _TYRE_ALLOC_CACHE is None:
+        try:
+            df = pd.read_csv("data/tyre_allocations.csv")
+            df["season"] = df["season"].astype(int)
+            _TYRE_ALLOC_CACHE = df
+        except Exception as exc:
+            logging.info("No tyre allocation data: %s", exc)
+            _TYRE_ALLOC_CACHE = pd.DataFrame()
+    return _TYRE_ALLOC_CACHE
+
+
+def _allocation_for(season, meeting) -> dict[str, str]:
+    """{'SOFT': 'C5', 'MEDIUM': 'C4', 'HARD': 'C3'} for a meeting;
+    {} when the event isn't in the CSV."""
+    df = _tyre_allocations()
+    if df.empty or season is None or not meeting:
+        return {}
+    try:
+        m = df[(df["season"] == int(season)) &
+               (df["event"].str.strip().str.lower()
+                == str(meeting).strip().lower())]
+    except (ValueError, TypeError):
+        return {}
+    if m.empty:
+        return {}
+    r = m.iloc[0]
+    return {"SOFT": str(r["soft"]), "MEDIUM": str(r["medium"]),
+            "HARD": str(r["hard"])}
+
+
+def _allocation_chips(season, meeting):
+    """A compact 'Pirelli allocation: SOFT C5 · MEDIUM C4 · HARD C3' strip,
+    compound-coloured. None when the allocation is unknown."""
+    alloc = _allocation_for(season, meeting)
+    if not alloc:
+        return None
+    bits = [html.Span("PIRELLI ALLOCATION ", style={
+        "color": TEXT_DIM, "fontSize": "0.68rem", "letterSpacing": "1px",
+        "marginRight": "6px"})]
+    for comp in ("SOFT", "MEDIUM", "HARD"):
+        clr = COMPOUND_COLORS.get(comp, "#808080")
+        bits.append(html.Span(f"{comp} {alloc[comp]}", style={
+            "background": clr + "22", "color": clr,
+            "border": f"1px solid {clr}66", "borderRadius": "4px",
+            "padding": "1px 8px", "fontSize": "0.7rem", "fontWeight": "700",
+            "marginRight": "6px", "whiteSpace": "nowrap",
+        }))
+    return html.Div(bits, style={"marginBottom": "8px"})
+
+
+def _laps_event(df: pd.DataFrame) -> tuple[int | None, str | None]:
+    """(season, meeting) when the frame covers exactly one meeting."""
+    if df is None or df.empty or "meeting" not in df.columns:
+        return None, None
+    meetings = df["meeting"].dropna().unique()
+    if len(meetings) != 1:
+        return None, None
+    season = pd.to_numeric(df["season"], errors="coerce").dropna().unique()
+    return (int(season[0]) if len(season) == 1 else None), str(meetings[0])
+
+
 def _estimate_pit_loss(rl: pd.DataFrame) -> float | None:
     """Median time lost across a pit cycle (in-lap + out-lap vs two normal
     laps), from clean (non-flag) stops only. This is the real 'cost of a
@@ -5870,7 +5777,9 @@ def _strategy_sim_content(rl: pd.DataFrame, pit_loss=None, stops=(1, 2)):
     if res["Extrapolated"].any():
         note_bits.append("⚠ marks plans needing stints longer than anything "
                          "observed — their deg is extrapolated.")
+    _sim_season, _sim_meeting = _laps_event(rl)
     return html.Div([
+        _allocation_chips(_sim_season, _sim_meeting) or html.Div(),
         html.P("".join(note_bits),
                style={"color": TEXT_DIM, "fontSize": "0.75rem",
                       "marginBottom": "6px", "fontStyle": "italic"}),
@@ -5955,6 +5864,170 @@ def _weather_race_fig(rl: pd.DataFrame, title: str, height: int = 480) -> go.Fig
                     bordercolor=GRID_CLR, borderwidth=1),
     )
     return fig
+
+
+# ── Pit-stop performance (real stationary / pit-lane times) ──
+# Loaded from pitstops_loader (live-timing PitStopSeries → stationary times;
+# Jolpica fallback → pit-lane durations only). Memoized per meeting so a
+# no-data race doesn't re-hit the network on every tab render.
+_PITSTOP_MEMO: dict[tuple, pd.DataFrame] = {}
+
+
+def _pitstops_for(season, meeting) -> pd.DataFrame:
+    key = (str(season), meeting)
+    if key not in _PITSTOP_MEMO:
+        try:
+            _PITSTOP_MEMO[key] = load_pitstops(season, meeting)
+        except Exception as exc:
+            logging.warning("Pit-stop load failed for %s %s: %s",
+                            season, meeting, exc)
+            _PITSTOP_MEMO[key] = pd.DataFrame()
+    return _PITSTOP_MEMO[key]
+
+
+def _pitstops_enriched(ps: pd.DataFrame, rl: pd.DataFrame) -> pd.DataFrame:
+    """Attach Driver_Short/Team from the race laps. Live-timing rows carry
+    only the racing number (matches laps DriverNo); Jolpica rows carry the
+    3-letter code (its 'permanent number' can differ from the racing number,
+    so the code is the safe join key there)."""
+    if ps.empty or rl.empty:
+        return pd.DataFrame()
+    ps = ps.copy()
+    ref = rl.dropna(subset=["Driver_Short"]).drop_duplicates("DriverNo")
+    no2code = ref.set_index(ref["DriverNo"].astype(str))["Driver_Short"].to_dict()
+    code2team = (rl.dropna(subset=["Driver_Short", "Team"])
+                 .drop_duplicates("Driver_Short")
+                 .set_index("Driver_Short")["Team"].to_dict())
+    need_code = ps["Driver_Short"].fillna("").eq("")
+    ps.loc[need_code, "Driver_Short"] = (
+        ps.loc[need_code, "DriverNo"].astype(str).map(no2code)
+    )
+    ps["Team"] = ps["Driver_Short"].map(code2team)
+    ps = ps.dropna(subset=["Driver_Short", "Team"])
+    # respect the sidebar Driver/Team filter (rl is already filtered)
+    return ps[ps["Driver_Short"].isin(rl["Driver_Short"].unique())]
+
+
+def _pitstops_fig(ps: pd.DataFrame, title: str, use_stationary: bool,
+                  height: int = 420) -> go.Figure:
+    """Left: every stop on the race-lap axis (label = driver). Right: teams
+    ranked by their median time. Uses true stationary time when the
+    live-timing feed had it, pit-lane transit time otherwise."""
+    val_col = "StationaryTime_s" if use_stationary else "PitLaneTime_s"
+    metric  = "Stationary time (s)" if use_stationary else "Pit-lane time (s)"
+    d = ps.dropna(subset=[val_col])
+    # Some live-timing feeds omit the lap number — fall back to clock time
+    # on the x-axis so the stops still plot.
+    use_lap_axis = d["LapNo"].notna().mean() >= 0.5
+    x_col, x_title = ("LapNo", "Lap") if use_lap_axis else ("Utc", "Time (UTC)")
+    if not use_lap_axis:
+        d = d.assign(Utc=pd.to_datetime(d["Utc"], errors="coerce"))
+
+    fig = make_subplots(
+        rows=1, cols=2, column_widths=[0.60, 0.40], horizontal_spacing=0.09,
+        subplot_titles=(f"Every stop, by {x_title.lower().split(' ')[0]}",
+                        "Team ranking · median"),
+    )
+    for team in _order_teams_by_champ(d["Team"].unique()):
+        g = d[d["Team"] == team].sort_values(x_col)
+        clr = TEAM_COLORS.get(team, "#808080")
+        fig.add_trace(go.Scatter(
+            x=g[x_col], y=g[val_col], mode="markers+text",
+            text=g["Driver_Short"], textposition="top center",
+            textfont=dict(size=9, color=clr),
+            marker=dict(size=10, color=clr, line=dict(width=1, color="#000")),
+            name=_abbr(team), legendgroup=team,
+            customdata=np.stack([g["Driver_Short"], g["StopNo"]], axis=-1),
+            hovertemplate=("%{customdata[0]} · stop %{customdata[1]} · "
+                           + ("lap %{x}" if use_lap_axis else "%{x}") + "<br>"
+                           + metric + ": %{y:.1f}s"
+                           "<extra>" + _abbr(team) + "</extra>"),
+        ), row=1, col=1)
+
+    med = (d.groupby("Team")[val_col].median().sort_values(ascending=False))
+    fig.add_trace(go.Bar(
+        x=med.values, y=[_abbr(t) for t in med.index], orientation="h",
+        marker_color=[TEAM_COLORS.get(t, "#808080") for t in med.index],
+        text=[f"{v:.2f}s" for v in med.values], textposition="outside",
+        textfont=dict(size=10), showlegend=False,
+        hovertemplate="%{y}: median %{x:.2f}s<extra></extra>",
+    ), row=1, col=2)
+
+    theme(fig, height, title)
+    fig.update_xaxes(title_text=x_title, row=1, col=1)
+    fig.update_yaxes(title_text=metric, row=1, col=1)
+    fig.update_xaxes(title_text=f"median {metric.lower()}", row=1, col=2)
+    fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.06,
+                                  xanchor="left", x=0,
+                                  bgcolor="rgba(0,0,0,0)"))
+    # headroom so the outside bar labels and marker text don't clip
+    if len(d):
+        fig.update_yaxes(range=clipped_range(d[val_col], 0.35), row=1, col=1)
+        fig.update_xaxes(range=[0, med.max() * 1.18], row=1, col=2)
+    return fig
+
+
+def _pitstops_card(rl: pd.DataFrame, meeting, shown_year) -> object:
+    info = ("Data: real per-stop pit data — the F1 live-timing PitStopSeries "
+            "feed (true stationary jack-up-to-jack-down time plus pit-lane "
+            "transit) for recent races, falling back to the Jolpica/Ergast "
+            "archive (pit-lane duration only) for older ones. Cached under "
+            "data/pitstops/. Why: pit-crew execution is a real performance "
+            "axis — a slow stop costs the same as a driving mistake, and "
+            "until now the dashboard only *inferred* pit loss from lap "
+            "times. The right panel ranks each crew's median stop.")
+    ps = _pitstops_for(shown_year, meeting)
+    ps = _pitstops_enriched(ps, rl)
+    if ps.empty:
+        return card(
+            "Pit Stop Performance",
+            html.P("No pit-stop data available for this race (neither the "
+                   "live-timing archive nor Jolpica has it).",
+                   style={"color": TEXT_DIM}),
+            info=info,
+        )
+
+    use_stationary = ps["StationaryTime_s"].notna().any()
+    val_col = "StationaryTime_s" if use_stationary else "PitLaneTime_s"
+    best = ps.loc[ps[val_col].idxmin()]
+    _best_lap = (f" (L{int(best['LapNo'])})"
+                 if pd.notna(best.get("LapNo")) else "")
+    kpis = dbc.Row([
+        kpi("FASTEST STOP",
+            f"{best[val_col]:.1f}s · {best['Driver_Short']}{_best_lap}",
+            "#00D2BE",
+            tooltip="Quickest single stop of the race on the measured metric "
+                    "(stationary time when available, pit-lane time otherwise)."),
+        kpi("MEDIAN STATIONARY",
+            f"{ps['StationaryTime_s'].median():.1f}s"
+            if use_stationary else "n/a",
+            tooltip="Field-wide median time stationary in the box — the "
+                    "pit-crew component of a stop, excluding pit-lane transit."),
+        kpi("MEDIAN PIT-LANE TIME",
+            f"{ps['PitLaneTime_s'].median():.1f}s"
+            if ps["PitLaneTime_s"].notna().any() else "n/a",
+            "#FF8700",
+            tooltip="Field-wide median pit-entry-to-pit-exit time. The "
+                    "strategy simulator's pit loss is larger: it also counts "
+                    "the slow in/out laps."),
+        kpi("TOTAL STOPS", f"{len(ps)}", "#808080",
+            tooltip="Number of recorded stops in this race (after the "
+                    "sidebar Driver/Team filter)."),
+    ])
+    fig = _pitstops_fig(
+        ps, f"Pit Stops – {meeting} {shown_year}", use_stationary
+    )
+    src = ps["source"].iloc[0]
+    note = html.P(
+        ("Source: F1 live-timing PitStopSeries (true stationary times)."
+         if src == "livetiming" else
+         "Source: Jolpica archive — pit-lane duration only (stationary "
+         "times aren't recorded there)."),
+        style={"color": TEXT_DIM, "fontSize": "0.72rem", "marginBottom": "4px"},
+    )
+    return card("Pit Stop Performance",
+                html.Div([kpis, dcc.Graph(figure=fig, config=GFX), note]),
+                info=info)
 
 
 # ── Race-control "radio" message timeline ─────────────────────
@@ -6157,9 +6230,53 @@ def _radio_text_col(mode: str) -> str:
     return "Transcript_raw" if str(mode) == "raw" else "Transcript"
 
 
+# Topic tags come from radio_loader.tag_topics (keyword rules on the
+# transcript). One colour per topic, used for the table badges.
+_TOPIC_COLORS = {
+    "PIT CALL":        "#E10600",
+    "TYRES":           "#FFD700",
+    "WEATHER":         "#4DA3FF",
+    "TRAFFIC / FLAGS": "#FF8700",
+    "ENERGY / MODE":   "#00D2BE",
+    "STRATEGY":        "#B07CFF",
+    "CAR / DAMAGE":    "#FF5C8A",
+}
+
+
+def _radio_row_topics(val) -> list[str]:
+    return [t for t in str(val or "").split(", ") if t]
+
+
+def _filter_radio_topics(df: pd.DataFrame, topics) -> pd.DataFrame:
+    """Keep clips carrying at least one selected topic (empty selection =
+    no topic filter)."""
+    sel = [t for t in (topics or []) if t]
+    if not sel or "Topics" not in df.columns:
+        return df
+    mask = df["Topics"].map(
+        lambda v: any(t in _radio_row_topics(v) for t in sel))
+    return df[mask]
+
+
+def _topic_badges(val) -> html.Span:
+    spans = []
+    for t in _radio_row_topics(val):
+        spans.append(html.Span(t, style={
+            "background": _TOPIC_COLORS.get(t, "#555") + "33",
+            "color": _TOPIC_COLORS.get(t, "#AAA"),
+            "border": f"1px solid {_TOPIC_COLORS.get(t, '#555')}66",
+            "borderRadius": "4px", "padding": "1px 6px",
+            "fontSize": "0.62rem", "fontWeight": "700",
+            "letterSpacing": "0.5px", "marginRight": "4px",
+            "whiteSpace": "nowrap", "display": "inline-block",
+            "marginBottom": "2px",
+        }))
+    return html.Span(spans)
+
+
 def _team_radio_fig(rdf: pd.DataFrame, selected_codes: list[str],
                     title: str, height: int = 520, mode: str = "reviewed",
-                    season=None) -> go.Figure:
+                    season=None, topics=None) -> go.Figure:
     fig = go.Figure()
     if rdf is None or rdf.empty:
         theme(fig, height, title)
@@ -6169,9 +6286,10 @@ def _team_radio_fig(rdf: pd.DataFrame, selected_codes: list[str],
         return fig
     sel = [c for c in (selected_codes or []) if c]
     df = rdf[rdf["Driver_Short"].isin(sel)].copy() if sel else rdf.copy()
+    df = _filter_radio_topics(df, topics)
     if df.empty:
         theme(fig, height, title)
-        fig.add_annotation(text="No radio for the selected drivers.",
+        fig.add_annotation(text="No radio matches the selected drivers / topics.",
                            xref="paper", yref="paper", x=0.5, y=0.5,
                            showarrow=False, font=dict(color=TEXT_DIM, size=13))
         return fig
@@ -6211,19 +6329,21 @@ def _team_radio_fig(rdf: pd.DataFrame, selected_codes: list[str],
 
 
 def _team_radio_table(rdf: pd.DataFrame, selected_codes: list[str],
-                      mode: str = "reviewed"):
-    """Chronological clip list: time, driver, inline audio player, transcript."""
+                      mode: str = "reviewed", topics=None):
+    """Chronological clip list: time, driver, inline audio player, topic
+    badges, transcript."""
     sel = [c for c in (selected_codes or []) if c]
     df = rdf[rdf["Driver_Short"].isin(sel)] if sel else rdf
+    df = _filter_radio_topics(df, topics)
     df = df.sort_values("Utc")
     col = _radio_text_col(mode)
     if df.empty:
-        return html.P("No radio for the selected drivers.",
+        return html.P("No radio matches the selected drivers / topics.",
                       style={"color": TEXT_DIM, "fontSize": "0.82rem"})
     hdr = html.Tr([html.Th(h, style={"padding": "6px 10px", "color": ACCENT,
                                       "textAlign": "left", "position": "sticky",
                                       "top": 0, "background": "#09091A"})
-                   for h in ("", "Time", "Driver", "Audio", "Transcript")])
+                   for h in ("", "Time", "Driver", "Audio", "Topics", "Transcript")])
     rows = []
     for _, r in df.iterrows():
         clr = TEAM_COLORS.get(_code_team(r["Driver_Short"]), ACCENT)
@@ -6243,6 +6363,8 @@ def _team_radio_table(rdf: pd.DataFrame, selected_codes: list[str],
             html.Td(html.Audio(src=f"/radio/{r['Mp3']}", controls=True,
                                preload="none", style={"height": "30px", "width": "180px"}),
                     style={"padding": "4px 10px"}),
+            html.Td(_topic_badges(r.get("Topics", "")),
+                    style={"padding": "6px 10px", "maxWidth": "160px"}),
             html.Td(txt, style={"padding": "6px 10px", "color": TEXT_MAIN,
                                 "fontSize": "0.82rem"}),
         ], style={"borderBottom": f"1px solid {GRID_CLR}"}))
@@ -6283,6 +6405,15 @@ def _team_radio_block(rdf: pd.DataFrame, meeting: str, year,
         dcc.Dropdown(id="radio-tr-select",
                      options=[{"label": c, "value": c} for c in all_codes],
                      value=value, multi=True, placeholder="Pick drivers…",
+                     style={"backgroundColor": "#111", "fontSize": "0.8rem",
+                            "marginBottom": "6px"}),
+        dcc.Dropdown(id="radio-tr-topics",
+                     options=[{"label": t, "value": t}
+                              for t in _TOPIC_COLORS
+                              if any(t in _radio_row_topics(v)
+                                     for v in rdf.get("Topics", []))],
+                     value=[], multi=True,
+                     placeholder="Filter by topic (pit calls, tyres, weather…) — empty = all",
                      style={"backgroundColor": "#111", "fontSize": "0.8rem",
                             "marginBottom": "10px"}),
         dcc.Graph(id="radio-tr-graph",
@@ -6482,9 +6613,12 @@ def tab_race(sel_drivers=None, sel_teams=None):
     tr_info = ("Data: actual driver/pit-wall team radio, downloaded from the F1 "
                "live-timing archive and transcribed locally with faster-whisper. "
                "One clock-time swimlane per driver with the transcript on hover, "
-               "plus a table of every clip with an inline audio player. Note: F1 "
-               "only keeps race-radio audio for recent events, so older races show "
-               "nothing; transcription is automatic and not always perfect.")
+               "plus a table of every clip with an inline audio player. Each clip "
+               "is auto-tagged by topic (pit calls, tyres, weather, traffic, "
+               "energy, strategy, car issues) from transcript keywords — use the "
+               "topic filter to isolate e.g. every pit call. Note: F1 only keeps "
+               "race-radio audio for recent events, so older races show nothing; "
+               "transcription is automatic and not always perfect.")
     if radio_cached(season, meeting) or (is_fallback and radio_cached(shown_year, meeting)):
         ry  = shown_year if (is_fallback and radio_cached(shown_year, meeting)) else season
         rdf = load_race_radio(ry, meeting)        # instant (cached)
@@ -6543,14 +6677,21 @@ def tab_race(sel_drivers=None, sel_teams=None):
         ),
         card(
             "Race Tyre Strategy",
-            dcc.Graph(figure=strat_fig, config=GFX)
+            html.Div([
+                _allocation_chips(shown_year, meeting) or html.Div(),
+                dcc.Graph(figure=strat_fig, config=GFX),
+            ])
             if strat_fig.data else
             html.P("No stint data available for this race.", style={"color": TEXT_DIM}),
             info=("Data: each driver's stints, one bar split into compound-coloured "
                   "segments sized by stint length (laps), ordered by finishing position; "
-                  "diamonds mark pit stops and show pit-lane time (s). Why: the strategic "
-                  "shape of the race — who ran which tyres, stint lengths and stop timing."),
+                  "diamonds mark pit stops and show pit-lane time (s). The chip strip "
+                  "above shows this event's Pirelli C-compound nomination (from "
+                  "data/tyre_allocations.csv) — SOFT here is not the same tyre as SOFT "
+                  "elsewhere. Why: the strategic shape of the race — who ran which "
+                  "tyres, stint lengths and stop timing."),
         ),
+        _pitstops_card(rl, meeting, shown_year),
         card(
             "Undercut / Overcut Duels",
             dcc.Graph(figure=uc_fig, config=GFX),
@@ -6623,9 +6764,10 @@ def fetch_team_radio(n_clicks):
     Output("radio-tr-table", "children"),
     Input("radio-tr-select", "value"),
     Input("radio-tr-mode", "value"),
+    Input("radio-tr-topics", "value"),
     prevent_initial_call=True,
 )
-def filter_team_radio(selected_codes, mode):
+def filter_team_radio(selected_codes, mode, topics):
     season, meeting = _current_race_meeting()
     if not meeting or not radio_cached(season, meeting):
         return no_update, no_update
@@ -6633,8 +6775,8 @@ def filter_team_radio(selected_codes, mode):
     ordered = _order_by_champ(selected_codes or [], season)
     mode = mode or "reviewed"
     fig = _team_radio_fig(rdf, ordered, f"Team Radio – {meeting} {season}",
-                          mode=mode, season=season)
-    return fig, _team_radio_table(rdf, ordered, mode=mode)
+                          mode=mode, season=season, topics=topics)
+    return fig, _team_radio_table(rdf, ordered, mode=mode, topics=topics)
 
 
 # ── Strategy simulator: recompute on control change ──────────
@@ -6709,14 +6851,7 @@ def tab_teammates(fl, fs):
         ])
 
 
-def _hex_to_rgba(hex_color: str, alpha: float = 1.0) -> str:
-    """Convert a '#RRGGBB' hex string to 'rgba(r,g,b,a)' for Plotly."""
-    h = hex_color.lstrip("#")
-    if len(h) == 6:
-        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-    else:
-        r, g, b = 128, 128, 128
-    return f"rgba({r},{g},{b},{alpha})"
+# (_hex_to_rgba now lives in components.py as hex_to_rgba)
 
 
 def _tab_teammates_inner(fl, fs):
@@ -8709,145 +8844,6 @@ def _resolve_track_event(circuit_key: str, year):
 
 
 # ── Main track tab layout builder ────────────────────────────
-# ── UPGRADES tab ─────────────────────────────────────────────
-_UPGRADE_CAT_COLORS = {
-    "performance":     ACCENT,
-    "circuit specific":"#FFB000",
-    "reliability":     "#0067FF",
-    "driver comfort":  "#9B59B6",
-    "repairs":         "#7A7A7A",
-}
-
-def _upgrade_cat_color(cat: str) -> str:
-    return _UPGRADE_CAT_COLORS.get(str(cat).strip().casefold(), "#7A7A7A")
-
-
-def _upgrade_meeting_block(season, meeting) -> html.Div:
-    sub = _upgrades_for(season, meeting)
-    title = f"{meeting}" + (f"  ·  {season}" if season else "")
-
-    if sub.empty:
-        return html.Div([
-            html.H4(title, style={"color": TEXT_MAIN, "fontWeight": "800",
-                                  "letterSpacing": "1px", "fontSize": "1.05rem",
-                                  "marginBottom": "8px"}),
-            dbc.Alert(
-                f"No upgrades recorded for this event yet. Add rows to "
-                f"data/upgrades.csv with event = \"{meeting}\" and season = "
-                f"{season or '<year>'}.",
-                color="secondary",
-                style={"background": CARD_BG, "border": f"1px solid {GRID_CLR}",
-                       "color": TEXT_DIM},
-            ),
-        ], className="mb-4")
-
-    # ── Summary KPIs ─────────────────────────────────────────
-    n_total = len(sub)
-    n_teams = sub["team"].nunique()
-    cat_counts = sub["category"].str.strip().str.title().value_counts()
-    top_cat = cat_counts.index[0] if not cat_counts.empty else "—"
-    kpis = dbc.Row([
-        kpi("UPGRADES", str(n_total), tooltip="Total upgrade items logged for this event."),
-        kpi("TEAMS DEVELOPING", str(n_teams),
-            tooltip="Teams that brought at least one upgrade here."),
-        kpi("MOST COMMON", top_cat, color="#FFB000",
-            tooltip="Most frequent upgrade category for this event."),
-        kpi("PERFORMANCE ITEMS",
-            str(int(cat_counts.get("Performance", 0))), color=ACCENT,
-            tooltip="Upgrades flagged as pure performance (not circuit-specific)."),
-    ], className="g-2 mb-2")
-
-    # ── One card per team, ordered by championship rank if known ─
-    rank = _team_champ_rank()
-    teams = sorted(sub["team"].unique(),
-                   key=lambda t: (rank.get(t, 999), t))
-    team_cards = []
-    for tname in teams:
-        rows = sub[sub["team"] == tname]
-        colr = TEAM_COLORS.get(tname, "#808080")
-        items = []
-        for _, r in rows.iterrows():
-            ccolor = _upgrade_cat_color(r["category"])
-            items.append(html.Div([
-                html.Div([
-                    html.Span(r["component"] or "—",
-                              style={"fontWeight": "700", "color": TEXT_MAIN,
-                                     "fontSize": "0.85rem"}),
-                    _badge((r["category"] or "—").title(), ccolor),
-                ], style={"marginBottom": "2px"}),
-                html.Div(r["description"] or "",
-                         style={"color": TEXT_DIM, "fontSize": "0.78rem",
-                                "lineHeight": "1.35"}),
-            ], style={"padding": "8px 0",
-                      "borderBottom": f"1px solid {GRID_CLR}"}))
-        header = html.Div([
-            html.Span(style={"display": "inline-block", "width": "10px",
-                             "height": "10px", "borderRadius": "2px",
-                             "background": colr, "marginRight": "8px"}),
-            html.Span(tname, style={"fontWeight": "800", "letterSpacing": "0.5px"}),
-            _badge(f"{len(rows)}", colr),
-        ])
-        team_cards.append(dbc.Col(
-            dbc.Card([dbc.CardHeader(header),
-                      dbc.CardBody(items, style={"paddingTop": "4px"})],
-                     className="mb-3",
-                     style={"background": CARD_BG,
-                            "border": f"1px solid {GRID_CLR}",
-                            "borderLeft": f"3px solid {colr}",
-                            "borderRadius": "8px"}),
-            md=6))
-
-    return html.Div([
-        html.H4(title, style={"color": TEXT_MAIN, "fontWeight": "800",
-                              "letterSpacing": "1px", "fontSize": "1.05rem",
-                              "marginBottom": "10px"}),
-        kpis,
-        dbc.Row(team_cards, className="g-3"),
-    ], className="mb-4")
-
-
-def tab_upgrades() -> html.Div:
-    """What technical evolution each team brought to the loaded meeting(s)."""
-    if upgrades_df().empty:
-        return html.Div([dbc.Alert(
-            [html.Strong("No upgrade data found. "),
-             "Create ", html.Code("data/upgrades.csv"),
-             " with columns: ",
-             html.Code("season, event, team, component, category, "
-                       "description, source"),
-             ". The ", html.Code("event"), " value must match the meeting name "
-             "(e.g. \"Austrian Grand Prix\") and ", html.Code("team"),
-             " a known team name."],
-            color="warning")])
-
-    meetings = _loaded_meetings()
-    if not meetings:
-        return html.Div([dbc.Alert(
-            "No session loaded. Load a meeting in the DATA & QUALITY tab to see "
-            "the upgrades each team brought to it.", color="secondary",
-            style={"background": CARD_BG, "border": f"1px solid {GRID_CLR}",
-                   "color": TEXT_DIM})])
-
-    legend = html.Div(
-        [html.Span("Category:", style={"color": TEXT_DIM, "fontSize": "0.72rem",
-                                       "marginRight": "8px"})]
-        + [_badge(c.title(), col) for c, col in _UPGRADE_CAT_COLORS.items()],
-        style={"marginBottom": "16px"})
-
-    blocks = [_upgrade_meeting_block(season, meeting)
-              for season, meeting in meetings]
-
-    return html.Div([
-        html.P("Technical upgrades each team brought to the loaded event(s), "
-               "in the style of the FIA Car Presentation documents. "
-               "Maintained in data/upgrades.csv.",
-               style={"color": TEXT_DIM, "fontSize": "0.8rem",
-                      "marginBottom": "10px"}),
-        legend,
-        *blocks,
-    ])
-
-
 def tab_track_info() -> html.Div:
     if CIRCUIT_CHARS.empty:
         return html.Div([
@@ -9288,6 +9284,10 @@ def render_track_map(_n, circuit_key, year):
 
 
 if __name__=="__main__":
-    import os
-    _port = int(os.environ.get("PORT", "8050"))
-    app.run(debug=True, host="0.0.0.0", port=_port)
+    import os, sys
+    _port  = int(os.environ.get("PORT", "8050"))
+    # debug mode is opt-in: the reloader imports the app twice (two full data
+    # loads at startup) and the dev server is slower. Normal use gets a
+    # threaded server so long callbacks don't block the whole UI.
+    _debug = "--debug" in sys.argv or os.environ.get("DASH_DEBUG") == "1"
+    app.run(debug=_debug, threaded=True, host="0.0.0.0", port=_port)

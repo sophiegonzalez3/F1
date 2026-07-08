@@ -69,20 +69,16 @@ def _clean_compounds_inplace(df: pd.DataFrame) -> pd.DataFrame:
     The original labels are expected to already be stored in Compound_RAW
     before this function is called.
     """
-    def _assign_dominant(group: pd.DataFrame) -> pd.DataFrame:
-        real = group.loc[
-            ~group["Compound"].isin(_UNKNOWN_COMPOUNDS) & group["Compound"].notna(),
-            "Compound",
-        ]
-        dominant = real.mode()[0] if (not real.empty and real.notna().any()) else "MISSING"
-        group = group.copy()
-        group["Compound"] = dominant
-        return group
+    def _dominant(s: pd.Series) -> str:
+        real = s[~s.isin(_UNKNOWN_COMPOUNDS) & s.notna()]
+        return real.mode().iloc[0] if not real.empty else "MISSING"
 
     before_missing = (df["Compound"].isna() | df["Compound"].isin(_UNKNOWN_COMPOUNDS)).sum()
-    df = (
-        df.groupby(["Driver_Short", "Stint_key"], group_keys=False)
-        .apply(_assign_dominant)
+    # transform (not apply) keeps row order/index, never touches the grouping
+    # columns, and survives the pandas-3 groupby.apply behaviour change.
+    df["Compound"] = (
+        df.groupby(["Driver_Short", "Stint_key"])["Compound"]
+        .transform(_dominant)
     )
     after_missing = (df["Compound"] == "MISSING").sum()
     logger.info(
@@ -1543,7 +1539,7 @@ def enrich_weather(laps: pd.DataFrame, weather: pd.DataFrame) -> pd.DataFrame:
     AirTemp        – ambient air temperature (°C)
     Humidity       – relative humidity (%)
     Pressure       – barometric pressure (mbar)
-    WindSpeed      – wind speed (m/s or km/h depending on livef1 version)
+    WindSpeed      – wind speed (m/s)
     WindDirection  – wind direction (degrees)
     Rainfall       – bool: rain detected during this reading
 

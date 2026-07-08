@@ -56,10 +56,22 @@ pip install -r requirements.txt
 ## Running the app
 
 ```bash
-python app.py
+python app.py            # threaded server, single data load
+python app.py --debug    # Dash debug mode + hot reload (slower, loads data twice)
 ```
 
 Then open **http://127.0.0.1:8050** in your browser.
+
+Tab layouts are memoized per data-load + filter combination, so returning to
+an already-visited tab is instant; changing sessions in the Data tab
+invalidates the cache automatically.
+
+For development, install the dev dependencies and run the tests:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
 
 On first launch the app loads the default sessions defined in `SESSION_INFO_LIST`
 near the top of [app.py](app.py). If those sessions are already cached under
@@ -76,11 +88,16 @@ inside the app — no restart needed.
 
 | Path | What it is |
 |------|------------|
-| [app.py](app.py) | The Dash app — all UI, tabs, and callbacks. Entry point. |
+| [app.py](app.py) | The Dash app — UI, tabs, and callbacks. Entry point. |
+| [state.py](state.py) | Owns the loaded-session data + enrichment pipeline (`rebuild_state`). Tab modules read `state.laps` etc. |
+| [components.py](components.py) | Shared UI building blocks: Plotly theme, `card`, `kpi`, table styles. |
+| `tabs/` | Tab modules split out of app.py — `tabs/upgrades.py` is the template; see `tabs/__init__.py` for the migration recipe. New tabs start here. |
+| `tests/` | Pytest suite for the enrichment pipeline and loaders (`pytest`; FutureWarnings are errors — the pandas-3 tripwire). |
 | [config.py](config.py) | Team/compound colours, analysis parameters, and data/cache paths. |
 | [data_loader.py](data_loader.py) | Loads sessions via FastF1, maps columns, and caches to Parquet. |
 | [processing.py](processing.py) | Lap cleaning, stint analysis, telemetry enrichment, etc. |
-| [radio_loader.py](radio_loader.py) | Fetches + transcribes team radio (faster-whisper). |
+| [radio_loader.py](radio_loader.py) | Fetches + transcribes team radio (faster-whisper), tags topics. |
+| [pitstops_loader.py](pitstops_loader.py) | Fetches real per-stop pit data (stationary + pit-lane times). |
 | `data/` | Bundled, version-controlled datasets (Parquet/CSV) — see below. |
 | `cache/` | FastF1's raw API cache. **Not** version-controlled; regenerated on demand. |
 
@@ -89,8 +106,11 @@ inside the app — no restart needed.
 - `sessions/` — per-session Parquet (laps, telemetry, weather, results, race control).
 - `historical_results/` — race/quali/sprint results and championship standings (2021→present).
 - `radio/` — downloaded team-radio mp3s plus their transcripts.
+- `pitstops/` — real per-stop pit data (live-timing PitStopSeries → true stationary times; Jolpica fallback → pit-lane durations).
 - `track_maps/`, `circuit_characteristics.csv` — circuit reference data.
+- `circuit_characteristics_computed.csv` — telemetry-measured circuit scores (speed, full-throttle %, lateral load, tyre deg); overlays the manual CSV at startup. Regenerate with `compute_circuit_characteristics.py`.
 - `upgrades.csv` — car-upgrade log sourced from FIA Car Presentation PDFs.
+- `tyre_allocations.csv` — Pirelli C-compound nomination per event (soft/medium/hard → C1–C5), hand-maintained from Pirelli press releases. Feeds the "SOFT C5" chips on the strategy cards.
 
 ---
 
@@ -106,6 +126,13 @@ python fetch_historical_results.py
 # Rebuild older session caches so telemetry includes X/Y track position
 # (needed for the racing-line view on sessions cached before that feature)
 python refetch_positions.py
+
+# Backfill the previous season's Race for every cached meeting (so the RACE
+# tab's season fallback and year-on-year comparisons work offline)
+python fetch_previous_races.py            # add --dry-run to preview
+
+# Recompute the telemetry-measured circuit characteristics after caching new events
+python compute_circuit_characteristics.py
 ```
 
 Team radio is fetched and transcribed on demand by `radio_loader.py` when you

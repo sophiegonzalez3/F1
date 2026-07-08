@@ -71,10 +71,44 @@ SESSIONS_DIR     = "data/sessions"             # per-session Parquet (data_loade
 HISTORICAL_DIR   = "data/historical_results"   # historical race/quali results
 FASTF1_CACHE_DIR = "cache/fastf1"              # FastF1's own raw-data cache
 RADIO_DIR        = "data/radio"                # team-radio mp3s + transcripts (radio_loader.py)
+PITSTOPS_DIR     = "data/pitstops"             # real per-stop pit data (pitstops_loader.py)
 
 # Team-radio transcription (radio_loader.py). faster-whisper model size:
 # tiny.en / base.en (fast) · small.en (balanced, default) · medium.en (accurate, slow).
 RADIO_WHISPER_MODEL = "medium.en"
+
+# ─────────────────────────────────────────────
+# CIRCUIT KEY BRIDGE
+# ─────────────────────────────────────────────
+# circuit_characteristics.csv uses French slugs (e.g. "monaco", "etats_unis")
+# while event names slugify to English (e.g. "monaco_grand_prix"). This map
+# bridges the two; used by app.py and compute_circuit_characteristics.py.
+HIST_CIRCUIT_KEY_MAP: dict[str, list[str]] = {
+    "abu_dhabi":       ["abu_dhabi_grand_prix"],
+    "arabie_saoudite": ["saudi_arabian_grand_prix"],
+    "autriche":        ["austrian_grand_prix"],
+    "azerbaidjan":     ["azerbaijan_grand_prix"],
+    "belgique":        ["belgian_grand_prix"],
+    "bresil":          ["s\xe3o_paulo_grand_prix", "brazilian_grand_prix"],
+    "canada":          ["canadian_grand_prix"],
+    "espagne":         ["spanish_grand_prix", "barcelona_grand_prix"],
+    "etats_unis":      ["united_states_grand_prix"],
+    "grande_bretagne": ["british_grand_prix"],
+    "hongrie":         ["hungarian_grand_prix"],
+    "italie":          ["italian_grand_prix"],
+    "japon":           ["japanese_grand_prix"],
+    "mexique":         ["mexico_city_grand_prix", "mexican_grand_prix"],
+    "monaco":          ["monaco_grand_prix"],
+    "pays_bas":        ["dutch_grand_prix"],
+    "qatar":           ["qatar_grand_prix"],
+    "singapour":       ["singapore_grand_prix"],
+    "australie":       ["australian_grand_prix"],
+    "bahrein":         ["bahrain_grand_prix"],
+    "chine":           ["chinese_grand_prix"],
+    "emilie_romagne":  ["emilia_romagna_grand_prix"],
+    "miami":           ["miami_grand_prix"],
+    "las_vegas":       ["las_vegas_grand_prix"],
+}
 
 # ─────────────────────────────────────────────
 # DASHBOARD LAYOUT

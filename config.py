@@ -51,6 +51,12 @@ MIN_LAPS_HARD   = 10
 
 OUTLIER_THRESHOLD  = 1.25   # Laps >25% slower than median excluded
 FUEL_CORRECTION    = 0.035  # Seconds per lap per kg of fuel
+RACE_FUEL_KG       = 105.0  # Starting fuel load for a Grand Prix distance
+FUEL_BURN_PER_LAP  = 1.5    # kg/lap fallback burn rate (non-race sessions)
+
+# Track-evolution estimation (processing.enrich_track_evolution)
+TRACK_EVO_BINS     = 10     # session-time bins for the evolution regression
+TRACK_EVO_MIN_LAPS = 80     # min clean laps in a session to attempt the fit
 SPEED_PERCENTILE   = 95
 BRAKE_THRESHOLD    = 10
 THROTTLE_THRESHOLD = 95

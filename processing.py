@@ -39,6 +39,10 @@ from config import (
     TEAM_COLORS,
     OUTLIER_THRESHOLD,
     FUEL_CORRECTION,
+    RACE_FUEL_KG,
+    FUEL_BURN_PER_LAP,
+    TRACK_EVO_BINS,
+    TRACK_EVO_MIN_LAPS,
     get_min_laps_for_compound,
     MIN_LAPS_MEDIUM,
 )
@@ -289,10 +293,35 @@ def clean_and_enrich_laps(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # ── Fuel-corrected lap time ──────────────────────────────
+    # Race / Sprint: fuel is a function of the RACE lap number — the car
+    # starts with the full load and burns it linearly over the race distance
+    # regardless of pit stops. Modelling it per stint (the old approach)
+    # "refuelled" the car at every stop, which made cross-stint fuel-corrected
+    # comparisons invalid.
+    #   Race   : burn = RACE_FUEL_KG / total_laps  (auto-adapts per circuit)
+    #   Sprint : same linear shape at the fallback burn rate (short distance,
+    #            car fuelled for the sprint only, so the level is ~right)
+    # Practice / Quali: the true load is unknown (teams run different
+    # programmes), so we keep a per-stint model — the level is arbitrary but
+    # the within-stint SLOPE (what degradation fits consume) is correct.
+    _lap_no = pd.to_numeric(df["LapNo"], errors="coerce")
+    _total_laps = _lap_no.groupby(df["session_name"]).transform("max")
+
+    _is_race   = df["session_name"].astype(str).str.startswith("Race_")
+    _is_sprint = df["session_name"].astype(str).str.startswith("Sprint_")
+
+    _burn = pd.Series(FUEL_BURN_PER_LAP, index=df.index)
+    _burn[_is_race] = (RACE_FUEL_KG / _total_laps[_is_race]).clip(upper=3.0)
+
     _max_lap_in_stint = df.groupby(
         ["session_name", "DriverNo", "Stint"]
     )["LapInStint"].transform("max")
-    df["FuelLoad_kg"] = ((_max_lap_in_stint - df["LapInStint"]) * 1.5).clip(lower=0)
+
+    _fuel_race  = (_total_laps - _lap_no) * _burn
+    _fuel_stint = (_max_lap_in_stint - df["LapInStint"]) * _burn
+    df["FuelLoad_kg"] = (
+        _fuel_race.where(_is_race | _is_sprint, _fuel_stint).clip(lower=0)
+    )
     df["LapTime_FuelCorrected"] = df["LapTime_s"] - (df["FuelLoad_kg"] * FUEL_CORRECTION)
 
     # ── Team color ───────────────────────────────────────────
@@ -303,6 +332,191 @@ def clean_and_enrich_laps(df: pd.DataFrame) -> pd.DataFrame:
     )
     logger.info("clean_and_enrich_laps: output %d rows  ✓", len(df))
     return df
+
+
+# ─────────────────────────────────────────────────────────────
+# Track-evolution estimation
+# ─────────────────────────────────────────────────────────────
+
+def enrich_track_evolution(
+    laps: pd.DataFrame,
+    n_bins: int = TRACK_EVO_BINS,
+    min_laps: int = TRACK_EVO_MIN_LAPS,
+) -> pd.DataFrame:
+    """
+    Estimate field-wide track evolution (grip gain as rubber goes down) per
+    session and remove it from the fuel-corrected lap times.
+
+    The track typically gains 0.5–1.5 s of grip across a session. Left in the
+    data, that improvement cancels part of the tyre-degradation signal — deg
+    slopes come out too flat or even negative ("the tyre got faster"), which
+    is track evolution, not tyre behaviour.
+
+    Model (per session, on clean laps only)
+    ---------------------------------------
+    LapTime_FuelCorrected ~ driver + TyreAge×compound + session-time bin
+
+    Driver dummies absorb car/driver pace, per-compound tyre-age slopes absorb
+    degradation, and the session-time bin coefficients are the evolution
+    estimate. Solved with ordinary least squares (np.linalg.lstsq). The bin
+    effects are then linearly interpolated over session time (a step-wise
+    correction would inject artificial jumps into within-stint deg slopes).
+
+    Practice sessions: the pool is restricted to SHORT runs (stints of
+    ≤ 8 laps). Long practice runs are race sims on heavy, unknown fuel —
+    including them makes the "evolution" estimate track the run-programme mix
+    (verified on 2026 Australia FP2: ±3.4 s swings) instead of grip. Short
+    runs are all on comparably low fuel throughout the session.
+
+    Races: the trend also absorbs any systematic error in the linear fuel
+    model, which is exactly what the degradation fits want removed.
+
+    Columns added
+    -------------
+    TrackEvo_s             – estimated field-wide pace offset vs session start
+                             (negative = field got faster). 0 when the session
+                             has too little data to fit.
+    LapTime_TrackCorrected – LapTime_FuelCorrected − TrackEvo_s. Use this for
+                             degradation analysis.
+
+    Guard rails
+    -----------
+    - Sessions with < min_laps clean laps, or < 3 usable time bins → no fit.
+    - If tyre age and session time are near-collinear in the pool (|r| > 0.97,
+      e.g. a sprint where nobody stops), the two effects cannot be separated
+      → no fit, logged as a warning.
+    """
+    laps = laps.copy()
+    laps["TrackEvo_s"] = 0.0
+
+    has_perturb = "Perturbed_Lap" in laps.columns
+    if not has_perturb:
+        logger.warning(
+            "enrich_track_evolution: Perturbed_Lap column missing — "
+            "call after flag_perturbed_laps for a cleaner fit."
+        )
+
+    _age_col = "TyreAge" if "TyreAge" in laps.columns else "LapInStint"
+
+    # Stint length (all laps, incl. pit laps) for the practice short-run filter
+    _stint_len = laps.groupby(
+        ["session_name", "DriverNo", "Stint"]
+    )["LapInStint"].transform("max")
+
+    for sess in laps["session_name"].unique():
+        s_mask  = laps["session_name"] == sess
+        is_race = str(sess).startswith(("Race_", "Sprint_"))
+
+        pool_mask = (
+            s_mask
+            & laps["ValidLap"]
+            & laps["LapTime_FuelCorrected"].notna()
+            & pd.to_numeric(laps["LapStartTime"], errors="coerce").notna()
+            & (laps["LapInStint"] >= 2)          # skip out-lap-adjacent laps
+        )
+        if has_perturb:
+            pool_mask &= ~laps["Perturbed_Lap"]
+        if "Dirty_Air" in laps.columns:
+            pool_mask &= ~laps["Dirty_Air"]
+        if not is_race:
+            pool_mask &= _stint_len <= 8         # practice: short runs only
+
+        pool = laps[pool_mask]
+        if len(pool) < min_laps:
+            logger.info(
+                "enrich_track_evolution: %s — only %d clean laps (<%d), skipped",
+                sess, len(pool), min_laps,
+            )
+            continue
+
+        t   = pd.to_numeric(pool["LapStartTime"], errors="coerce")
+        age = pd.to_numeric(pool[_age_col], errors="coerce").fillna(
+            pool["LapInStint"]
+        )
+
+        # Identifiability guard: age vs session time collinearity
+        r = np.corrcoef(t, age)[0, 1] if t.nunique() > 1 and age.nunique() > 1 else 1.0
+        if not np.isfinite(r) or abs(r) > 0.97:
+            logger.warning(
+                "enrich_track_evolution: %s — tyre age and session time are "
+                "collinear (r=%.3f), evolution not identifiable, skipped",
+                sess, r,
+            )
+            continue
+
+        # Session-time bins (quantile → roughly equal lap counts per bin).
+        # Adaptive count: at least ~20 laps per bin, otherwise sparse bins
+        # containing only one or two drivers confound the bin effect with
+        # those drivers' identities and the fit explodes.
+        n_bins_req = int(np.clip(len(pool) // 20, 3, n_bins))
+        try:
+            bins, edges = pd.qcut(
+                t, q=n_bins_req, labels=False, retbins=True, duplicates="drop"
+            )
+        except ValueError:
+            continue
+        n_eff_bins = int(bins.max()) + 1
+        if n_eff_bins < 3:
+            continue
+
+        # ── Design matrix ────────────────────────────────────
+        y = pool["LapTime_FuelCorrected"].values.astype(float)
+
+        drivers   = pd.get_dummies(pool["Driver_Short"], drop_first=False)
+        compounds = pool["Compound"].astype(str)
+        age_cols  = {}
+        for comp in compounds.unique():
+            age_cols[f"_age_{comp}"] = np.where(compounds == comp, age, 0.0)
+        age_df   = pd.DataFrame(age_cols, index=pool.index)
+        bin_dum  = pd.get_dummies(bins, prefix="_bin", drop_first=True)
+
+        X = pd.concat([drivers, age_df, bin_dum], axis=1).astype(float)
+        X_cols = list(X.columns)
+
+        # Mild ridge penalty on the bin coefficients only: shrinks bins whose
+        # laps come from few drivers toward 0 instead of letting them blow up,
+        # while leaving driver and tyre-age effects untouched.
+        _lam = np.zeros(len(X_cols))
+        _lam[[i for i, c in enumerate(X_cols) if c.startswith("_bin_")]] = 4.0
+        Xv = X.values
+        try:
+            beta = np.linalg.solve(Xv.T @ Xv + np.diag(_lam), Xv.T @ y)
+        except np.linalg.LinAlgError:
+            try:
+                beta, *_ = np.linalg.lstsq(Xv, y, rcond=None)
+            except np.linalg.LinAlgError:
+                logger.warning(
+                    "enrich_track_evolution: %s — fit failed, skipped", sess)
+                continue
+
+        coef = dict(zip(X_cols, beta))
+        # Evolution per bin, relative to the first bin (dropped dummy = 0)
+        evo_by_bin = {0: 0.0}
+        for b in range(1, n_eff_bins):
+            evo_by_bin[b] = float(coef.get(f"_bin_{b}", 0.0))
+
+        # Interpolate over bin CENTERS so the correction is a smooth curve —
+        # a step function would put artificial jumps inside stints that span
+        # a bin boundary, distorting their fitted deg slopes.
+        centers = t.groupby(bins).mean()
+        xp = centers.sort_index().values.astype(float)
+        fp = np.array([evo_by_bin[b] for b in sorted(evo_by_bin)])
+
+        t_all = pd.to_numeric(laps.loc[s_mask, "LapStartTime"], errors="coerce")
+        evo_all = np.interp(t_all.values.astype(float), xp, fp)
+        laps.loc[s_mask, "TrackEvo_s"] = np.where(
+            np.isfinite(evo_all), evo_all, 0.0
+        )
+
+        logger.info(
+            "enrich_track_evolution: %s — %d clean laps (%s), %d bins, "
+            "evolution %.3f → %.3f s vs session start",
+            sess, len(pool), "all stints" if is_race else "short runs ≤8 laps",
+            n_eff_bins, fp.min(), fp.max(),
+        )
+
+    laps["LapTime_TrackCorrected"] = laps["LapTime_FuelCorrected"] - laps["TrackEvo_s"]
+    return laps
 
 
 # ─────────────────────────────────────────────────────────────
@@ -319,31 +533,70 @@ def _trimmed_median(s: pd.Series) -> float:
 
 
 def _degradation_rate(group: pd.DataFrame) -> pd.Series:
-    """Linear tyre-degradation fit for one stint (fuel-corrected)."""
-    nan_result = pd.Series({"Stint_Deg_Rate": np.nan, "Stint_Deg_R2": np.nan})
+    """
+    Linear tyre-degradation fit for one stint.
+
+    Uses LapTime_TrackCorrected (fuel- AND track-evolution-corrected) when
+    available, falling back to LapTime_FuelCorrected. The first flying lap of
+    the stint is dropped when the stint is long enough (≥5 laps) — the tyre
+    is still coming up to temperature there, and that warm-up transient
+    contaminates a linear fit.
+
+    Returns
+    -------
+    Stint_Deg_Rate – slope in s/lap of tyre age
+    Stint_Deg_R2   – fit R² (kept for reference; NOT a good stint selector,
+                     because R² is proportional to |slope| — a genuinely flat
+                     stint always has low R²)
+    Stint_Deg_SE   – standard error of the slope. Use this for reliability:
+                     it is small when the stint is long and the laps are
+                     consistent, regardless of how steep the slope is.
+    """
+    nan_result = pd.Series({
+        "Stint_Deg_Rate": np.nan, "Stint_Deg_R2": np.nan, "Stint_Deg_SE": np.nan,
+    })
     if len(group) < 3:
         return nan_result
 
     # Use the real tyre age (FastF1 TyreLife → TyreAge) as the degradation
     # x-axis; fall back to LapInStint only if it is unavailable.
     _age_col = "TyreAge" if "TyreAge" in group.columns else "LapInStint"
-    x = group[_age_col].values.astype(float)
-    y = group["LapTime_FuelCorrected"].values.astype(float)
+    _y_col = ("LapTime_TrackCorrected"
+              if "LapTime_TrackCorrected" in group.columns
+              else "LapTime_FuelCorrected")
+
+    g = group
+    if "Dirty_Air" in g.columns:
+        g_clean = g[~g["Dirty_Air"]]
+        if len(g_clean) >= 3:                    # keep fit possible in traffic-heavy stints
+            g = g_clean
+    if len(g) >= 5:
+        g = g[g[_age_col] > g[_age_col].min()]   # drop the warm-up lap
+
+    x = g[_age_col].values.astype(float)
+    y = g[_y_col].values.astype(float)
     mask = np.isfinite(x) & np.isfinite(y)
     if mask.sum() < 3:
         return nan_result
 
     x, y = x[mask], y[mask]
+    if np.ptp(x) == 0:
+        return nan_result
     try:
         coeffs = np.polyfit(x, y, 1)
         slope  = float(coeffs[0])
         y_hat  = np.polyval(coeffs, x)
+        n      = len(x)
         ss_res = float(np.sum((y - y_hat) ** 2))
         ss_tot = float(np.sum((y - y.mean()) ** 2))
+        ss_x   = float(np.sum((x - x.mean()) ** 2))
         r2     = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
+        se     = (np.sqrt((ss_res / (n - 2)) / ss_x)
+                  if (n > 2 and ss_x > 0) else np.nan)
         return pd.Series({
             "Stint_Deg_Rate": round(slope, 4),
             "Stint_Deg_R2":   round(r2,    4),
+            "Stint_Deg_SE":   round(se,    4) if np.isfinite(se) else np.nan,
         })
     except (np.linalg.LinAlgError, ValueError):
         return nan_result
@@ -366,21 +619,25 @@ def analyze_stints(df: pd.DataFrame) -> pd.DataFrame:
 
     _tyre_start_col = "TyreAge" if "TyreAge" in valid.columns else "LapInStint"
 
+    _agg_kwargs = dict(
+        Stint_Avg_Lap    =("LapTime_s",             "mean"),
+        Stint_Median_Lap =("LapTime_s",             "median"),
+        Stint_Rep_Lap    =("LapTime_s",             _trimmed_median),
+        Stint_Best_Lap   =("LapTime_s",             "min"),
+        Stint_P10_Lap    =("LapTime_s",             lambda s: s.quantile(0.10)),
+        Stint_P90_Lap    =("LapTime_s",             lambda s: s.quantile(0.90)),
+        Stint_Std_Dev    =("LapTime_s",             "std"),
+        Stint_Laps_Count =("LapTime_s",             "count"),
+        Stint_FuelCorr   =("LapTime_FuelCorrected", _trimmed_median),
+        Stint_Start_Tyre =(_tyre_start_col,         "min"),
+        Stint_Max_Tyre   =(_tyre_start_col,         "max"),
+    )
+    if "LapTime_TrackCorrected" in valid.columns:
+        _agg_kwargs["Stint_TrackCorr"] = ("LapTime_TrackCorrected", _trimmed_median)
+
     stint_summary = (
         valid.groupby(["session_name", "Driver_Short", "Team", "Stint", "Compound"])
-        .agg(
-            Stint_Avg_Lap    =("LapTime_s",             "mean"),
-            Stint_Median_Lap =("LapTime_s",             "median"),
-            Stint_Rep_Lap    =("LapTime_s",             _trimmed_median),
-            Stint_Best_Lap   =("LapTime_s",             "min"),
-            Stint_P10_Lap    =("LapTime_s",             lambda s: s.quantile(0.10)),
-            Stint_P90_Lap    =("LapTime_s",             lambda s: s.quantile(0.90)),
-            Stint_Std_Dev    =("LapTime_s",             "std"),
-            Stint_Laps_Count =("LapTime_s",             "count"),
-            Stint_FuelCorr   =("LapTime_FuelCorrected", _trimmed_median),
-            Stint_Start_Tyre =(_tyre_start_col,         "min"),
-            Stint_Max_Tyre   =(_tyre_start_col,         "max"),
-        )
+        .agg(**_agg_kwargs)
         .round(3)
         .reset_index()
     )
@@ -475,6 +732,378 @@ def analyze_stints(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     return stint_summary
+
+
+# ─────────────────────────────────────────────────────────────
+# Field-level degradation curves
+# ─────────────────────────────────────────────────────────────
+
+def field_deg_curves(
+    laps: pd.DataFrame,
+    compound: str,
+    baseline_laps: int = 3,
+    min_stint_laps: int = 5,
+    min_stints_per_age: int = 3,
+) -> dict | None:
+    """
+    Pool every clean stint on *compound* into a field-level degradation curve,
+    plus per-team median curves and a per-driver deviation ranking.
+
+    This is the paddock-style view of degradation: instead of fitting each
+    stint in isolation (noisy), every stint contributes its lap-time delta
+    vs its own early-stint baseline, and the pooled median at each tyre age
+    is the field curve. Individual teams/drivers are then read as deviations
+    from that curve — much more robust than comparing per-stint slopes.
+
+    Per stint (≥ min_stint_laps clean laps):
+        Delta_s(lap) = corrected lap time − median of the stint's first
+                       `baseline_laps` clean laps
+    Uses LapTime_TrackCorrected when present (fuel + track evolution removed),
+    else LapTime_FuelCorrected.
+
+    Returns None when there is not enough data, else a dict of DataFrames:
+    curve       – _age, median, q25, q75, n_stints   (ages with enough stints)
+    team_curves – Team, _age, median, n              (per-team median deltas)
+    driver_dev  – Driver_Short, Team, Avg_Dev_s, N_Laps
+                  Avg_Dev_s = mean residual vs the field median at equal tyre
+                  age; negative = degrades less than the field.
+    """
+    _y   = ("LapTime_TrackCorrected"
+            if "LapTime_TrackCorrected" in laps.columns
+            else "LapTime_FuelCorrected")
+    _age = "TyreAge" if "TyreAge" in laps.columns else "LapInStint"
+
+    pool = laps[
+        laps["ValidLap"]
+        & (laps["Compound"] == compound)
+        & laps[_y].notna()
+    ].copy()
+    if "Perturbed_Lap" in pool.columns:
+        pool = pool[~pool["Perturbed_Lap"]]
+    if "Dirty_Air" in pool.columns:
+        pool = pool[~pool["Dirty_Air"]]
+    if pool.empty:
+        return None
+
+    pool["_age"] = (
+        pd.to_numeric(pool[_age], errors="coerce")
+        .fillna(pool["LapInStint"])
+        .round()
+        .astype(int)
+    )
+
+    parts = []
+    for (sess, drv_no, stint), g in pool.groupby(
+        ["session_name", "DriverNo", "Stint"]
+    ):
+        if len(g) < min_stint_laps:
+            continue
+        g = g.sort_values("_age")
+        base = g[_y].head(baseline_laps).median()
+        if pd.isna(base):
+            continue
+        d = g[["Driver_Short", "Team", "_age"]].copy()
+        d["Delta_s"]   = g[_y] - base
+        d["_stint_id"] = f"{sess}|{drv_no}|{stint}"
+        parts.append(d)
+    if not parts:
+        return None
+    long_df = pd.concat(parts, ignore_index=True)
+
+    curve = (
+        long_df.groupby("_age")
+        .agg(
+            median  =("Delta_s",   "median"),
+            q25     =("Delta_s",   lambda s: s.quantile(0.25)),
+            q75     =("Delta_s",   lambda s: s.quantile(0.75)),
+            n_stints=("_stint_id", "nunique"),
+        )
+        .reset_index()
+    )
+    curve = curve[curve["n_stints"] >= min_stints_per_age]
+    if len(curve) < 3:
+        return None
+
+    team_curves = (
+        long_df[long_df["_age"].isin(curve["_age"])]
+        .groupby(["Team", "_age"])
+        .agg(median=("Delta_s", "median"), n=("Delta_s", "size"))
+        .reset_index()
+    )
+    team_curves = team_curves[team_curves["n"] >= 2]
+
+    fm = curve.set_index("_age")["median"]
+    long_df["_resid"] = long_df["Delta_s"] - long_df["_age"].map(fm)
+    driver_dev = (
+        long_df.dropna(subset=["_resid"])
+        .groupby(["Driver_Short", "Team"])
+        .agg(Avg_Dev_s=("_resid", "mean"), N_Laps=("_resid", "size"))
+        .reset_index()
+    )
+    driver_dev = driver_dev[driver_dev["N_Laps"] >= 8]
+
+    logger.info(
+        "field_deg_curves: %s — %d stints pooled, ages %d–%d, %d drivers ranked",
+        compound, long_df["_stint_id"].nunique(),
+        int(curve["_age"].min()), int(curve["_age"].max()), len(driver_dev),
+    )
+    return {"curve": curve, "team_curves": team_curves, "driver_dev": driver_dev}
+
+
+# ─────────────────────────────────────────────────────────────
+# Tyre-cliff detection
+# ─────────────────────────────────────────────────────────────
+
+def detect_stint_cliffs(
+    laps: pd.DataFrame,
+    min_stint_laps: int = 10,
+    min_tail: int = 3,
+    min_extra_slope: float = 0.10,
+    min_sse_gain: float = 0.25,
+    min_base_slope: float = -0.10,
+    min_cliff_slope: float = 0.05,
+) -> pd.DataFrame:
+    """
+    Detect degradation cliffs — the point where a tyre's slow linear phase
+    turns into a sharply steeper one — in every long clean stint.
+
+    Model: two-segment hinge fit  y = a + b·x + c·max(0, x − x0), scanned
+    over candidate breakpoints x0. A cliff is reported when
+      - the post-cliff EXTRA slope c ≥ min_extra_slope (s/lap on top of the
+        base rate),
+      - the hinge fit explains ≥ min_sse_gain more of the variance than a
+        plain straight line (so noise doesn't fake a cliff),
+      - at least min_tail laps lie after the breakpoint,
+      - the base phase is not strongly IMPROVING (base slope ≥
+        min_base_slope) and the post phase genuinely degrades (total slope
+        ≥ min_cliff_slope). Without these two, the tyre warm-up phase or a
+        post-Safety-Car pace recovery gets mislabelled as a "cliff" — those
+        are improving→degrading transitions, not late-stint drop-offs.
+
+    Uses LapTime_TrackCorrected (fuel + evolution removed) so a cliff is a
+    tyre event, not a fuel or grip artefact. Dirty-air laps are excluded
+    when the column exists.
+
+    Returns one row per detected cliff:
+    session_name, Driver_Short, Team, Stint, Compound,
+    Cliff_Age (tyre age where it starts), Base_Slope (s/lap before),
+    Cliff_Slope (s/lap after = base + extra), N_Laps, Tail_Laps.
+    """
+    _y   = ("LapTime_TrackCorrected"
+            if "LapTime_TrackCorrected" in laps.columns
+            else "LapTime_FuelCorrected")
+    _age = "TyreAge" if "TyreAge" in laps.columns else "LapInStint"
+
+    pool = laps[laps["ValidLap"] & laps[_y].notna()].copy()
+    if "Perturbed_Lap" in pool.columns:
+        pool = pool[~pool["Perturbed_Lap"]]
+    if "Dirty_Air" in pool.columns:
+        pool = pool[~pool["Dirty_Air"]]
+    if pool.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for (sess, drv_no, stint), g in pool.groupby(
+        ["session_name", "DriverNo", "Stint"]
+    ):
+        if len(g) < min_stint_laps:
+            continue
+        g = g.sort_values(_age)
+        x = pd.to_numeric(g[_age], errors="coerce").values.astype(float)
+        y = g[_y].values.astype(float)
+        ok = np.isfinite(x) & np.isfinite(y)
+        x, y = x[ok], y[ok]
+        if len(x) < min_stint_laps or np.ptp(x) == 0:
+            continue
+
+        # Plain linear reference
+        X1 = np.column_stack([np.ones_like(x), x])
+        beta1, *_ = np.linalg.lstsq(X1, y, rcond=None)
+        sse_lin = float(np.sum((y - X1 @ beta1) ** 2))
+        if sse_lin <= 0:
+            continue
+
+        # Hinge scan: breakpoint must leave ≥4 laps before, ≥min_tail after
+        best = None
+        for k in range(4, len(x) - min_tail + 1):
+            x0 = x[k - 1]
+            hinge = np.maximum(0.0, x - x0)
+            if hinge.max() == 0:
+                continue
+            X2 = np.column_stack([np.ones_like(x), x, hinge])
+            try:
+                beta2, *_ = np.linalg.lstsq(X2, y, rcond=None)
+            except np.linalg.LinAlgError:
+                continue
+            sse2 = float(np.sum((y - X2 @ beta2) ** 2))
+            if best is None or sse2 < best[0]:
+                best = (sse2, x0, beta2, len(x) - k)
+
+        if best is None:
+            continue
+        sse2, x0, beta2, tail_n = best
+        base  = float(beta2[1])
+        extra = float(beta2[2])
+        gain  = 1.0 - sse2 / sse_lin
+        if (extra < min_extra_slope or gain < min_sse_gain
+                or base < min_base_slope
+                or base + extra < min_cliff_slope):
+            continue
+
+        rows.append(dict(
+            session_name=sess,
+            Driver_Short=g["Driver_Short"].iloc[0],
+            Team=g["Team"].iloc[0],
+            Stint=stint,
+            Compound=g["Compound"].iloc[0],
+            Cliff_Age=float(x0),
+            Base_Slope=round(float(beta2[1]), 4),
+            Cliff_Slope=round(float(beta2[1] + extra), 4),
+            N_Laps=int(len(x)),
+            Tail_Laps=int(tail_n),
+        ))
+
+    out = pd.DataFrame(rows)
+    logger.info("detect_stint_cliffs: %d cliffs found in %d candidate stints",
+                len(out), pool.groupby(["session_name", "DriverNo", "Stint"]).ngroups)
+    return out
+
+
+# ─────────────────────────────────────────────────────────────
+# Compound pace offsets (race sessions)
+# ─────────────────────────────────────────────────────────────
+
+def compound_offsets(
+    laps: pd.DataFrame,
+    max_age: int = 10,
+    min_laps_per_side: int = 3,
+) -> pd.DataFrame:
+    """
+    Estimate the pace offset between tyre compounds from RACE/Sprint laps.
+
+    Race laps only: the race fuel model is anchored to the real race lap
+    number, so corrected times are comparable across compounds. (Practice is
+    excluded on purpose — fuel loads there are unknown and differ by run
+    programme, which would contaminate the offsets.)
+
+    Method: within each driver, take the trimmed median of corrected lap
+    times on each compound at tyre age ≤ max_age; difference the compounds
+    within the driver (cancels car+driver pace); aggregate the per-driver
+    differences across the field (median + IQR).
+
+    Returns one row per compound pair:
+    Pair ("SOFT → MEDIUM"), Offset_s (median; positive = second compound
+    slower), Q25, Q75, N_Drivers.
+    """
+    _y   = ("LapTime_TrackCorrected"
+            if "LapTime_TrackCorrected" in laps.columns
+            else "LapTime_FuelCorrected")
+    _age = "TyreAge" if "TyreAge" in laps.columns else "LapInStint"
+
+    pool = laps[
+        laps["session_name"].astype(str).str.startswith(("Race_", "Sprint_"))
+        & laps["ValidLap"]
+        & laps[_y].notna()
+    ].copy()
+    if "Perturbed_Lap" in pool.columns:
+        pool = pool[~pool["Perturbed_Lap"]]
+    if "Dirty_Air" in pool.columns:
+        pool = pool[~pool["Dirty_Air"]]
+    pool = pool[pd.to_numeric(pool[_age], errors="coerce") <= max_age]
+    if pool.empty:
+        return pd.DataFrame()
+
+    per_dc = (
+        pool.groupby(["Driver_Short", "Compound"])[_y]
+        .agg(rep=_trimmed_median, n="size")
+        .reset_index()
+    )
+    per_dc = per_dc[per_dc["n"] >= min_laps_per_side]
+
+    order = ["SOFT", "MEDIUM", "HARD", "INTER", "WET"]
+    comps = [c for c in order if c in per_dc["Compound"].unique()]
+    rows = []
+    for i, c1 in enumerate(comps):
+        for c2 in comps[i + 1:]:
+            wide = per_dc.pivot(index="Driver_Short", columns="Compound",
+                                values="rep")
+            if c1 not in wide.columns or c2 not in wide.columns:
+                continue
+            diff = (wide[c2] - wide[c1]).dropna()
+            if len(diff) < 3:
+                continue
+            rows.append(dict(
+                Pair=f"{c1} → {c2}",
+                Offset_s=round(float(diff.median()), 3),
+                Q25=round(float(diff.quantile(0.25)), 3),
+                Q75=round(float(diff.quantile(0.75)), 3),
+                N_Drivers=int(len(diff)),
+            ))
+    out = pd.DataFrame(rows)
+    if not out.empty:
+        logger.info("compound_offsets: %s",
+                    "; ".join(f"{r.Pair}: {r.Offset_s:+.2f}s (n={r.N_Drivers})"
+                              for r in out.itertuples()))
+    return out
+
+
+# ─────────────────────────────────────────────────────────────
+# Dirty-air flagging (races)
+# ─────────────────────────────────────────────────────────────
+
+def flag_dirty_air(laps: pd.DataFrame, threshold_s: float = 2.0) -> pd.DataFrame:
+    """
+    Flag race laps run close behind another car ("dirty air").
+
+    A car within ~2 s of the car ahead loses downforce and slides more, and
+    within ~1 s it is usually pace-limited by the leader — either way the lap
+    says nothing about the tyre. Degradation fits and field curves exclude
+    these laps.
+
+    Gap estimate: within each race session and lap number, cars are ordered
+    by Position and the gap is the difference in end-of-lap timestamps
+    between consecutive classification positions. (Approximation: lapped
+    traffic sitting directly ahead is not caught, but blue-flag laps are
+    already flagged separately.)
+
+    Column added: Dirty_Air (bool, False outside races / when Position or
+    timing data is missing).
+    """
+    laps = laps.copy()
+    laps["Dirty_Air"] = False
+
+    need = {"Position", "LapNo", "LapStartTime", "LapTime_s"}
+    if not need.issubset(laps.columns):
+        logger.info("flag_dirty_air: required columns missing — no laps flagged")
+        return laps
+
+    is_race = laps["session_name"].astype(str).str.startswith(("Race_", "Sprint_"))
+    race = laps[is_race].copy()
+    if race.empty:
+        return laps
+
+    race["_t_end"] = (
+        pd.to_numeric(race["LapStartTime"], errors="coerce")
+        + pd.to_numeric(race["LapTime_s"], errors="coerce")
+    )
+    race["_pos"] = pd.to_numeric(race["Position"], errors="coerce")
+    race = race[race["_t_end"].notna() & race["_pos"].notna()]
+
+    race = race.sort_values(["session_name", "LapNo", "_pos"])
+    grp = race.groupby(["session_name", "LapNo"])
+    gap_ahead = race["_t_end"] - grp["_t_end"].shift(1)
+    pos_gap   = race["_pos"] - grp["_pos"].shift(1)
+
+    dirty_idx = race.index[
+        gap_ahead.notna() & (gap_ahead >= 0) & (gap_ahead < threshold_s)
+        & (pos_gap == 1)
+    ]
+    laps.loc[dirty_idx, "Dirty_Air"] = True
+
+    n = int(laps["Dirty_Air"].sum())
+    logger.info("flag_dirty_air: %d race laps flagged (< %.1f s behind the car ahead)",
+                n, threshold_s)
+    return laps
 
 
 # ─────────────────────────────────────────────────────────────

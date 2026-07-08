@@ -31,6 +31,8 @@ from processing import (
     clean_and_enrich_laps, analyze_stints,
     identify_quali_sim_laps, best_laps_table,
     format_lap_time, enrich_telemetry, flag_perturbed_laps,
+    enrich_track_evolution, field_deg_curves,
+    detect_stint_cliffs, compound_offsets, flag_dirty_air,
     enrich_weather, enrich_track_limits,
     enrich_blue_flags, enrich_session_results,
     flag_position_changes,
@@ -93,6 +95,8 @@ def rebuild_state(session_info_list: list[dict], force_reload: bool = False) -> 
     _laps = enrich_blue_flags(_laps, _race_control_raw)
     _laps = identify_quali_sim_laps(_laps)
     _laps = flag_perturbed_laps(_laps, rcm=_race_control_raw)
+    _laps = flag_dirty_air(_laps)
+    _laps = enrich_track_evolution(_laps)
     _laps = enrich_session_results(_laps, _results_raw)
     _laps = flag_position_changes(_laps)
     _stints    = analyze_stints(_laps)
@@ -1286,7 +1290,12 @@ def _tab_data_selection_inner() -> html.Div:
                 tooltip="Sessions currently active in the dashboard."),
         ]),
 
-        card("Select Sessions", html.Div([
+        card("Select Sessions", info=(
+            "Data: every session of the chosen season that has already taken "
+            "place, with a cache indicator (green = stored locally, instant "
+            "load). Why: this controls what every other tab analyses — swap "
+            "events or add sessions here without restarting the app."
+        ), children=html.Div([
             # ── Season selector ───────────────────────────────
             dbc.Row([
                 dbc.Col([
@@ -1806,7 +1815,12 @@ def tab_data_quality(fl, fs):
                    "judge how representative the surviving 'valid' laps are.")),
 
         # ── Per-session table ────────────────────────────────
-        card("Per-Session Statistics", sess_tbl),
+        card("Per-Session Statistics", sess_tbl,
+             info=("Data: one row per loaded session — total/valid/pit lap "
+                   "counts, lap-time coverage, driver/team/stint counts and the "
+                   "session's best lap. Why: a health check of what actually "
+                   "loaded; a session with low valid % or missing lap times "
+                   "will produce weak numbers everywhere else.")),
 
         # ── Timing leaderboard (sanity) ──────────────────────
         card(
@@ -1815,6 +1829,11 @@ def tab_data_quality(fl, fs):
                 _badge("compare against live memory", "#444"),
             ]),
             sanity_tbl,
+            info=("Data: the three fastest valid laps per session with driver "
+                  "and gap. Why: a sanity anchor — if these top-3 don't match "
+                  "what you remember from the live session, something is wrong "
+                  "in the load/cleaning pipeline and nothing downstream should "
+                  "be trusted."),
         ),
 
         # ── Compound × Driver heatmap (sidebar-filtered) ─────
@@ -1857,6 +1876,12 @@ def tab_data_quality(fl, fs):
                 ], className="mb-3"),
                 html.Div(id="inspector-table"),
             ]),
+            info=("Data: the full lap-by-lap record for one driver in one "
+                  "session — times, stint number, tyre age, compound, pit and "
+                  "validity flags, exactly as the pipeline sees them. Why: the "
+                  "ground-truth view for debugging — when a chart looks odd, "
+                  "check here whether the underlying laps are real or a "
+                  "stint/tyre-age detection error."),
         ),
 
         # ── Multi-compound stints ────────────────────────────
@@ -1867,6 +1892,12 @@ def tab_data_quality(fl, fs):
                 _badge("Raw labels before cleaning — non-zero is expected", "#444"),
             ]),
             dirty_tbl,
+            info=("Data: stints whose raw feed carried more than one compound "
+                  "label (before cleaning reassigned them to the stint's "
+                  "dominant compound). Why: transparency on how much the "
+                  "compound-cleaning step had to fix — a high dirty share for "
+                  "a session means compound-split charts there rest on "
+                  "reconstructed labels."),
         ),
 
         # ── TyreAge cross-validation ─────────────────────────
@@ -1890,6 +1921,11 @@ def tab_data_quality(fl, fs):
                 _badge("green = 0% NaN  |  yellow = <50%  |  red = >50%", "#444"),
             ]),
             schema_tbl,
+            info=("Data: every column in the enriched laps frame with its dtype "
+                  "and NaN percentage, colour-coded. Why: shows which signals "
+                  "are actually available for the loaded sessions — a red "
+                  "column (mostly NaN) silently disables the analyses that "
+                  "depend on it."),
         ),
     ])
 
@@ -2077,7 +2113,12 @@ def tab_overview(fl, fs, ft=None):
                                     "across the current filter. Why: context for the "
                                     "pace figures — a field that ran mostly softs is "
                                     "not directly comparable to one on hards.")),md=4)]),
-        card("Team Performance Overview",tbl),
+        card("Team Performance Overview",tbl,
+             info=("Data: per-team aggregates over valid laps in the current "
+                   "filter — best/average/median lap, consistency (std ÷ median), "
+                   "fuel-corrected median, gap to the fastest team, lap and stint "
+                   "counts. Why: the one-table summary of the competitive order "
+                   "and how much data sits behind it.")),
         card("Driver Performance Matrix",dcc.Graph(figure=fig_bub,config=GFX),
              info=("Data: each driver plotted by best lap (x) vs median lap (y); "
                    "bubble size = number of valid laps. Why: separates one-lap "
@@ -3660,7 +3701,12 @@ def tab_laps(fl, ft):
                    "sectors — it shows exactly which stretches of track each driver "
                    "owns and where the lap time is really won or lost.")),
         card("Best Lap Leaderboard",
-             html.Div([
+             info=("Data: each driver's best valid lap per compound and session, "
+                   "ranked, with sector times and speed-trap figures. Why: the "
+                   "entry point for telemetry work — tick laps here to overlay "
+                   "their full telemetry traces in the charts below and see "
+                   "where the time difference is made."),
+             children=html.Div([
                  html.P("Select one or more laps (checkbox at left) to drive the "
                         "Telemetry Channels overlay below.",
                         style={"color":TEXT_DIM,"fontSize":"0.74rem","marginBottom":"8px"}),
@@ -4547,13 +4593,16 @@ def tab_stints(fl, fs):
         ))
 
     # 3. Tyre Degradation – per compound:
-    #    (a) Ranked horizontal bar: Stint_Deg_Rate from the stint with best R²
-    #        (most statistically reliable regression, not necessarily fastest stint)
-    #        Source: analyze_stints() which uses LapTime_FuelCorrected and ValidLap.
-    #        Additional filter: exclude Perturbed_Lap laps fed into the viz.
-    #    (b) Normalised evolution: LapTime_FuelCorrected delta from lap-1 baseline,
-    #        using the LONGEST valid non-perturbed stint per driver x compound
-    #        (more laps = better shape; fuel-corrected so car weight doesn’t mask deg).
+    #    (a) Ranked horizontal bar: Stint_Deg_Rate from each driver's LONGEST
+    #        valid stint (ties → lowest slope standard error). Selecting by
+    #        best R² — the previous approach — is biased: R² scales with
+    #        |slope|, so it systematically picked each driver's most-degrading
+    #        stint and hid flat (well-managed) ones. Error bars show ±1.96×SE.
+    #        Source: analyze_stints(), fuel- AND track-evolution-corrected.
+    #    (b) Normalised evolution: track-corrected lap-time delta from a
+    #        baseline of the stint's first 3 clean laps (median — a single
+    #        lap-1 baseline is the noisiest lap of the stint), using the
+    #        LONGEST valid non-perturbed stint per driver × compound.
     deg_cards = []
     valid_stints = fs[fs["Valid_Stint"]].copy() if not fs.empty else pd.DataFrame()
 
@@ -4561,36 +4610,34 @@ def tab_stints(fl, fs):
     _perturb_mask = fl["Perturbed_Lap"] if "Perturbed_Lap" in fl.columns else pd.Series(False, index=fl.index)
     clean_laps = fl[fl["ValidLap"] & ~_perturb_mask].copy()
 
+    # Cliff detection across all compounds (markers on the evolution charts
+    # below + the dedicated Cliff Map card after the per-compound cards)
+    cliffs_df = detect_stint_cliffs(fl)
+
     for compound in COMPOUNDS:
         comp_stints = (
             valid_stints[valid_stints["Compound"] == compound].copy()
             if not valid_stints.empty else pd.DataFrame()
         )
 
-        # --- (a) Deg rate bar: best-R² stint per driver ---
+        # --- (a) Deg rate bar: longest valid stint per driver ---
+        # Longest stint = most degradation signal. Ties broken by lowest
+        # slope standard error (most consistent laps).
         fig_bar = None
         df_deg  = pd.DataFrame()
         if not comp_stints.empty and "Stint_Deg_Rate" in comp_stints.columns:
-            has_r2 = comp_stints["Stint_Deg_R2"].notna()
-            # Pick the stint with the highest R² for each driver; fall back to
-            # highest lap count when R² is unavailable for all stints of that driver.
-            best_r2 = (
-                comp_stints[has_r2]
-                .sort_values("Stint_Deg_R2", ascending=False)
+            _se_sort = (comp_stints["Stint_Deg_SE"]
+                        if "Stint_Deg_SE" in comp_stints.columns
+                        else pd.Series(np.nan, index=comp_stints.index))
+            df_deg = (
+                comp_stints.assign(_se=_se_sort.fillna(np.inf))
+                .sort_values(["Stint_Laps_Count", "_se"],
+                             ascending=[False, True])
                 .groupby("Driver_Short", sort=False)
                 .first()
                 .reset_index()
+                .drop(columns=["_se"])
             )
-            # Drivers whose stints all have NaN R² → fall back to longest stint
-            drivers_with_r2 = set(best_r2["Driver_Short"])
-            fallback = (
-                comp_stints[~comp_stints["Driver_Short"].isin(drivers_with_r2)]
-                .sort_values("Stint_Laps_Count", ascending=False)
-                .groupby("Driver_Short", sort=False)
-                .first()
-                .reset_index()
-            )
-            df_deg = pd.concat([best_r2, fallback], ignore_index=True)
             df_deg = df_deg[df_deg["Stint_Deg_Rate"].notna()].copy()
 
         if not df_deg.empty:
@@ -4599,14 +4646,21 @@ def tab_stints(fl, fs):
             df_deg["DegFmt"]  = df_deg["Stint_Deg_Rate"].apply(
                 lambda x: f"+{x:.4f}" if x >= 0 else f"{x:.4f}"
             )
-            df_deg["R2Fmt"]   = df_deg["Stint_Deg_R2"].apply(
+            _has_se = "Stint_Deg_SE" in df_deg.columns
+            df_deg["CI95"] = (
+                (1.96 * pd.to_numeric(df_deg["Stint_Deg_SE"], errors="coerce"))
+                if _has_se else np.nan
+            )
+            df_deg["CIFmt"] = df_deg["CI95"].apply(
+                lambda x: f"±{x:.4f}" if pd.notna(x) else "±n/a"
+            )
+            df_deg["R2Fmt"] = df_deg["Stint_Deg_R2"].apply(
                 lambda x: f"R²={x:.2f}" if pd.notna(x) else "R²=n/a"
             )
-            df_deg["R2Color"] = df_deg["Stint_Deg_R2"].apply(
-                lambda x: ("#00D2BE" if x >= 0.50 else ("#FF8700" if x >= 0.20 else "#E10600"))
-                if pd.notna(x) else "#808080"
+            max_abs = (
+                (df_deg["Stint_Deg_Rate"].abs() + df_deg["CI95"].fillna(0))
+                .max() * 1.3 or 0.05
             )
-            max_abs = df_deg["Stint_Deg_Rate"].abs().max() * 1.4 or 0.05
 
             fig_bar = go.Figure(go.Bar(
                 y=df_deg["Driver_Short"],
@@ -4616,12 +4670,18 @@ def tab_stints(fl, fs):
                     color=df_deg["Color"],
                     line=dict(color=GRID_CLR, width=0.5),
                 ),
-                customdata=df_deg[["Team", "DegFmt", "R2Fmt", "R2Color",
+                error_x=dict(
+                    type="data",
+                    array=df_deg["CI95"].fillna(0),
+                    color="rgba(255,255,255,0.55)",
+                    thickness=1.2, width=4,
+                ) if _has_se else None,
+                customdata=df_deg[["Team", "DegFmt", "CIFmt", "R2Fmt",
                                    "Stint_Laps_Count", "session_name"]].values,
                 hovertemplate=(
                     "<b>%{y}</b>  Team: %{customdata[0]}<br>"
-                    "Deg rate: %{customdata[1]} s/lap<br>"
-                    "<span style='color:%{customdata[3]}'>%{customdata[2]}</span><br>"
+                    "Deg rate: %{customdata[1]} %{customdata[2]} s/lap (95% CI)<br>"
+                    "%{customdata[3]}<br>"
                     "Laps in stint: %{customdata[4]}<br>"
                     "Session: %{customdata[5]}<extra></extra>"
                 ),
@@ -4636,17 +4696,17 @@ def tab_stints(fl, fs):
                 fillcolor="rgba(225,6,0,0.05)", line_width=0, layer="below")
             ht = max(300, 28 * len(df_deg) + 80)
             theme(fig_bar, ht,
-                  f"{compound} – Degradation Rate (best-R² stint, fuel-corrected)")
+                  f"{compound} – Degradation Rate (longest stint, fuel- & track-corrected)")
             fig_bar.update_layout(
                 xaxis=dict(
-                    title="s/lap  ← better tyre management",
+                    title="s/lap of tyre age  ·  lower = less degradation",
                     range=[-max_abs, max_abs],
                     gridcolor=GRID_CLR, zeroline=False,
                 ),
                 yaxis=dict(gridcolor=GRID_CLR, zeroline=False, autorange="reversed"),
                 bargap=0.25, showlegend=False,
                 annotations=[dict(
-                    text="🟢 R²≥0.50 good  🟠 0.20–0.50  🔴 <0.20 / n/a",
+                    text="whiskers = 95% confidence interval of the fitted slope",
                     xref="paper", yref="paper", x=1, y=1.02,
                     xanchor="right", showarrow=False,
                     font=dict(size=9, color=TEXT_DIM),
@@ -4687,11 +4747,17 @@ def tab_stints(fl, fs):
                     ]
                     .sort_values(_age_col)
                 )
-                baseline = df_drv.iloc[0]["LapTime_FuelCorrected"]
+                _y_col = ("LapTime_TrackCorrected"
+                          if "LapTime_TrackCorrected" in df_drv.columns
+                          else "LapTime_FuelCorrected")
+                # Baseline = median of the stint's first 3 clean laps. A
+                # single-lap baseline (the old approach) anchored every
+                # subsequent point to the noisiest lap of the stint.
+                baseline = df_drv[_y_col].head(3).median()
                 if pd.isna(baseline) or baseline <= 0:
                     continue
                 clr   = TEAM_COLORS.get(df_drv["Team"].iloc[0], "#808080")
-                delta = df_drv["LapTime_FuelCorrected"] - baseline
+                delta = df_drv[_y_col] - baseline
                 sess_label = sess.split("_")[0]
                 fig_norm.add_trace(go.Scatter(
                     x=df_drv[_age_col],
@@ -4707,6 +4773,32 @@ def tab_stints(fl, fs):
                         "<extra></extra>"
                     ),
                 ))
+                # Star marker where this stint's deg cliff was detected
+                if not cliffs_df.empty:
+                    cl = cliffs_df[
+                        (cliffs_df["Driver_Short"] == drv)
+                        & (cliffs_df["session_name"] == sess)
+                        & (cliffs_df["Stint"] == snt)
+                    ]
+                    if not cl.empty:
+                        c_age = float(cl["Cliff_Age"].iloc[0])
+                        ages  = pd.to_numeric(df_drv[_age_col], errors="coerce")
+                        j     = (ages - c_age).abs().idxmin()
+                        fig_norm.add_trace(go.Scatter(
+                            x=[df_drv.loc[j, _age_col]],
+                            y=[float(delta.loc[j])],
+                            mode="markers",
+                            marker=dict(symbol="star", size=14, color="#FFD700",
+                                        line=dict(color="#000", width=1)),
+                            showlegend=False,
+                            hovertemplate=(
+                                f"<b>{drv} — tyre cliff</b><br>"
+                                f"From age {c_age:.0f}: "
+                                f"{cl['Cliff_Slope'].iloc[0]:+.2f} s/lap "
+                                f"(was {cl['Base_Slope'].iloc[0]:+.2f} before)"
+                                "<extra></extra>"
+                            ),
+                        ))
             if fig_norm.data:
                 fig_norm.add_hline(y=0, line=dict(color="white", width=1, dash="dash"))
                 fig_norm.add_hrect(y0=0, y1=999,
@@ -4715,10 +4807,10 @@ def tab_stints(fl, fs):
                     fillcolor="rgba(0,200,100,0.03)", line_width=0, layer="below")
 
         theme(fig_norm, 460,
-              f"{compound} – Normalised Deg (Δ fuel-corrected vs stint start, longest clean stint)")
+              f"{compound} – Normalised Deg (Δ fuel- & track-corrected vs early-stint baseline, longest clean stint)")
         fig_norm.update_layout(
             xaxis_title="Tyre Age (laps)",
-            yaxis_title="Δ Fuel-corrected lap time (s)  ↓ better",
+            yaxis_title="Δ Corrected lap time (s)  ↓ better",
             legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1),
             annotations=[dict(
                 text="Perturbed laps (yellow / SC / VSC / red) excluded",
@@ -4729,12 +4821,16 @@ def tab_stints(fl, fs):
         )
 
         _deg_info = (
-            f"Data ({compound}): left bar = degradation rate (s/lap) from a linear "
-            "fit on each driver's most reliable stint — the one with the highest R² "
-            "(fit quality colour-coded), fuel-corrected; right line = lap-time delta "
-            "from the start of each driver's longest clean stint. Perturbed laps "
-            "(yellow/SC/VSC/red flags) are excluded. Why: isolates how much the tyre "
-            "slows down with age — lower/flatter = better tyre management."
+            f"Data ({compound}): left bar = degradation rate (s/lap of tyre age) "
+            "from a linear fit on each driver's longest valid stint, corrected for "
+            "fuel burn AND field-wide track evolution; whiskers show the 95% "
+            "confidence interval of the slope. Right line = corrected lap-time "
+            "delta from an early-stint baseline (median of the first 3 clean laps) "
+            "for each driver's longest clean stint, with a gold star where a deg "
+            "cliff was detected. Perturbed laps (yellow/SC/VSC/red flags) are "
+            "excluded, and the fits also drop laps run in dirty air (<2 s behind "
+            "another car). Why: with fuel, track-grip trends and traffic removed, "
+            "what remains is the tyre itself — lower/flatter = less degradation."
         )
         if fig_bar is not None:
             deg_cards.append(card(
@@ -4751,6 +4847,231 @@ def tab_stints(fl, fs):
                 dcc.Graph(figure=fig_norm, config=GFX),
                 info=_deg_info,
             ))
+
+        # --- (c) Field degradation curve + driver deviation ranking ---
+        # Pools EVERY clean stint on this compound (not just each driver's
+        # longest), so it borrows statistical strength from the whole field.
+        fd = field_deg_curves(fl, compound)
+        if fd is not None:
+            curve, tcurves, dev = fd["curve"], fd["team_curves"], fd["driver_dev"]
+
+            fig_field = go.Figure()
+            # IQR band (q25–q75) behind everything
+            fig_field.add_trace(go.Scatter(
+                x=curve["_age"], y=curve["q75"], mode="lines",
+                line=dict(width=0), showlegend=False, hoverinfo="skip",
+            ))
+            fig_field.add_trace(go.Scatter(
+                x=curve["_age"], y=curve["q25"], mode="lines",
+                line=dict(width=0), fill="tonexty",
+                fillcolor="rgba(255,255,255,0.09)",
+                name="field IQR", showlegend=True, hoverinfo="skip",
+            ))
+            # Per-team median curves
+            for team in sorted(tcurves["Team"].dropna().unique()):
+                tg = tcurves[tcurves["Team"] == team].sort_values("_age")
+                if len(tg) < 3:
+                    continue
+                clr = TEAM_COLORS.get(team, "#808080")
+                fig_field.add_trace(go.Scatter(
+                    x=tg["_age"], y=tg["median"], mode="lines",
+                    name=_abbr(team),
+                    line=dict(color=clr, width=1.4),
+                    hovertemplate=(
+                        f"<b>{team}</b><br>"
+                        "Tyre age: %{x} laps<br>"
+                        "Δ vs stint start: %{y:+.3f} s<extra></extra>"
+                    ),
+                ))
+            # Field median on top
+            fig_field.add_trace(go.Scatter(
+                x=curve["_age"], y=curve["median"], mode="lines",
+                name="FIELD",
+                line=dict(color="#FFFFFF", width=3, dash="dot"),
+                customdata=curve[["n_stints"]].values,
+                hovertemplate=(
+                    "<b>Field median</b><br>"
+                    "Tyre age: %{x} laps<br>"
+                    "Δ vs stint start: %{y:+.3f} s<br>"
+                    "Stints contributing: %{customdata[0]}<extra></extra>"
+                ),
+            ))
+            fig_field.add_hline(y=0, line=dict(color="white", width=1, dash="dash"))
+            theme(fig_field, 480,
+                  f"{compound} – Field Degradation Curve (all clean stints, corrected)")
+            fig_field.update_layout(
+                xaxis_title="Tyre Age (laps)",
+                yaxis_title="Δ Corrected lap time vs stint start (s)",
+                legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR,
+                            borderwidth=1, font=dict(size=9)),
+            )
+
+            fig_dev = None
+            if not dev.empty:
+                dev_s = dev.sort_values("Avg_Dev_s")
+                dev_s["Color"]  = dev_s["Team"].map(TEAM_COLORS).fillna("#808080")
+                dev_s["DevFmt"] = dev_s["Avg_Dev_s"].apply(lambda x: f"{x:+.3f}")
+                _dmax = max(dev_s["Avg_Dev_s"].abs().max() * 1.35, 0.05)
+                fig_dev = go.Figure(go.Bar(
+                    y=dev_s["Driver_Short"], x=dev_s["Avg_Dev_s"],
+                    orientation="h",
+                    marker=dict(color=dev_s["Color"],
+                                line=dict(color=GRID_CLR, width=0.5)),
+                    customdata=dev_s[["Team", "N_Laps"]].values,
+                    hovertemplate=(
+                        "<b>%{y}</b>  Team: %{customdata[0]}<br>"
+                        "Avg vs field at equal tyre age: %{x:+.3f} s<br>"
+                        "Clean laps used: %{customdata[1]}<extra></extra>"
+                    ),
+                    text=dev_s["DevFmt"], textposition="outside",
+                    textfont=dict(size=10, color=TEXT_MAIN),
+                ))
+                fig_dev.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
+                ht_dev = max(300, 24 * len(dev_s) + 80)
+                theme(fig_dev, ht_dev, f"{compound} – Deg vs Field")
+                fig_dev.update_layout(
+                    xaxis=dict(title="s vs field median  ·  negative = degrades less",
+                               range=[-_dmax, _dmax],
+                               gridcolor=GRID_CLR, zeroline=False),
+                    yaxis=dict(gridcolor=GRID_CLR, zeroline=False),
+                    bargap=0.25, showlegend=False,
+                )
+
+            _field_info = (
+                f"Data ({compound}): every clean stint of ≥5 laps contributes its "
+                "corrected lap-time delta vs its own early-stint baseline; the "
+                "white dotted line is the field median at each tyre age, the grey "
+                "band the 25–75% spread, coloured lines the per-team medians. "
+                "Right bar (when enough data): each driver's average gap to the "
+                "field curve at equal tyre age — negative = manages tyres better "
+                "than the field. Perturbed laps and laps in dirty air (<2 s "
+                "behind another car) are excluded. "
+                "Why: pooling all stints is far more robust than "
+                "any single-stint fit, and deviations from the pooled curve are "
+                "the cleanest tyre-management signal this data can give."
+            )
+            deg_cards.append(card(
+                f"Field Degradation – {compound}",
+                dbc.Row([
+                    dbc.Col(dcc.Graph(figure=fig_field, config=GFX),
+                            md=7 if fig_dev is not None else 12),
+                ] + ([dbc.Col(dcc.Graph(figure=fig_dev, config=GFX), md=5)]
+                     if fig_dev is not None else [])),
+                info=_field_info,
+            ))
+
+    # 3b. Cliff Map — all detected cliffs across compounds in one view
+    if not cliffs_df.empty:
+        cm = cliffs_df.copy()
+        cm["Extra"]   = cm["Cliff_Slope"] - cm["Base_Slope"]
+        cm["SessLbl"] = cm["session_name"].astype(str).str.split("_").str[0]
+        fig_cliff = go.Figure()
+        for comp in COMPOUNDS:
+            sub = cm[cm["Compound"] == comp]
+            if sub.empty:
+                continue
+            fig_cliff.add_trace(go.Scatter(
+                x=sub["Cliff_Age"], y=sub["Extra"],
+                mode="markers+text",
+                name=comp,
+                text=sub["Driver_Short"],
+                textposition="top center",
+                textfont=dict(size=9, color=TEXT_DIM),
+                marker=dict(
+                    size=10,
+                    color=COMPOUND_COLORS.get(comp, "#808080"),
+                    line=dict(color="#000", width=1),
+                    symbol="star",
+                ),
+                customdata=sub[["Driver_Short", "Team", "SessLbl",
+                                "Base_Slope", "Cliff_Slope", "N_Laps"]].values,
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b> · %{customdata[1]} "
+                    "(%{customdata[2]})<br>"
+                    "Cliff from tyre age %{x:.0f} laps<br>"
+                    "Deg before: %{customdata[3]:+.3f} s/lap → after: "
+                    "%{customdata[4]:+.3f} s/lap<br>"
+                    "Stint length: %{customdata[5]} laps<extra></extra>"
+                ),
+            ))
+        theme(fig_cliff, 440, "Tyre Cliff Map — every detected cliff")
+        fig_cliff.update_layout(
+            xaxis_title="Tyre age at cliff onset (laps)",
+            yaxis_title="Extra deg after cliff (s/lap on top of base rate)",
+            legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR,
+                        borderwidth=1),
+        )
+        cliff_body = dcc.Graph(figure=fig_cliff, config=GFX)
+    else:
+        cliff_body = html.P(
+            "No degradation cliffs detected in the loaded sessions "
+            "(needs clean stints of ≥10 laps with a clear late break in the "
+            "deg trend).", style={"color": TEXT_DIM})
+    cliff_card = card(
+        "Tyre Cliff Detection",
+        cliff_body,
+        info=("Data: every clean stint of ≥10 laps is tested with a "
+              "two-segment fit on corrected lap times; a star appears when "
+              "the late-stint deg rate breaks sharply upward from the earlier "
+              "trend (statistically better than a straight line, ≥+0.10 s/lap "
+              "extra). Position on the chart: further right = the tyre lasted "
+              "longer before falling off; higher = the harder it fell. Why: "
+              "the cliff, not the average deg rate, is what forces a pit stop "
+              "— knowing at what age each compound cliffs at this circuit is "
+              "the single most valuable strategy number."),
+    )
+
+    # 3c. Compound pace offsets (race sessions only — comparable fuel)
+    co = compound_offsets(fl)
+    if not co.empty:
+        err_plus  = (co["Q75"] - co["Offset_s"]).clip(lower=0)
+        err_minus = (co["Offset_s"] - co["Q25"]).clip(lower=0)
+        fig_off = go.Figure(go.Bar(
+            x=co["Pair"], y=co["Offset_s"],
+            marker=dict(
+                color=[COMPOUND_COLORS.get(p.split(" → ")[1], "#808080")
+                       for p in co["Pair"]],
+                line=dict(color=GRID_CLR, width=0.5),
+            ),
+            error_y=dict(type="data", array=err_plus, arrayminus=err_minus,
+                         color="rgba(255,255,255,0.6)", thickness=1.2, width=5),
+            customdata=co[["N_Drivers", "Q25", "Q75"]].values,
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                "Median offset: %{y:+.2f} s/lap (+ = second compound slower)"
+                "<br>Driver spread (IQR): %{customdata[1]:+.2f} … "
+                "%{customdata[2]:+.2f} s<br>"
+                "Drivers compared: %{customdata[0]}<extra></extra>"
+            ),
+            text=co["Offset_s"].apply(lambda v: f"{v:+.2f}s"),
+            textposition="outside",
+            textfont=dict(size=11, color=TEXT_MAIN),
+        ))
+        fig_off.add_hline(y=0, line=dict(color="white", width=1, dash="dash"))
+        theme(fig_off, 400, "Compound Pace Offsets — race laps, corrected")
+        fig_off.update_layout(
+            xaxis_title="Compound pair",
+            yaxis_title="s/lap  ·  positive = second compound slower",
+            showlegend=False, bargap=0.45,
+        )
+        offset_body = dcc.Graph(figure=fig_off, config=GFX)
+    else:
+        offset_body = html.P(
+            "Compound offsets need race or sprint laps (practice fuel loads "
+            "are unknown, which would contaminate the comparison). Load a "
+            "race session in the Data tab.", style={"color": TEXT_DIM})
+    offset_card = card(
+        "Compound Pace Offsets",
+        offset_body,
+        info=("Data: race/sprint laps only, tyre age ≤ 10, fuel- and "
+              "track-corrected. Each driver who ran both compounds "
+              "contributes their personal pace difference (which cancels out "
+              "car and driver speed); the bar is the field median, the "
+              "whiskers the driver-to-driver spread. Why: the compound offset "
+              "sets the strategy crossover — how many laps of tyre advantage "
+              "a fresh soft buys over a hard determines whether an extra stop "
+              "pays for itself."),
+    )
 
     # 4. Stint Lap Inspector
     avail_drivers = sorted(fl["Driver_Short"].dropna().unique())
@@ -4801,6 +5122,8 @@ def tab_stints(fl, fs):
                    "interruptions reshaped the running order.")),
         *violin_cards,
         *deg_cards,
+        cliff_card,
+        offset_card,
         card(
             "Tyre Compound Usage — Current Meeting",
             dcc.Graph(figure=tyre_usage_fig, config=GFX)
@@ -4811,7 +5134,13 @@ def tab_stints(fl, fs):
                   "spread their tyre allocation across the weekend and which "
                   "compounds saw real running."),
         ),
-        card("Stint Lap Inspector", stint_inspector),
+        card("Stint Lap Inspector", stint_inspector,
+             info=("Data: the individual laps of any stint, picked from a "
+                   "dropdown that pre-ranks each driver's stints by pace — "
+                   "times, tyre age, flags and validity per lap. Why: the "
+                   "drill-down behind the stint aggregates above; use it to "
+                   "check what a suspicious deg rate or stint average is "
+                   "actually made of.")),
     ])
 
 # ══════════════════════════════════════════════════════════════
@@ -4839,6 +5168,8 @@ def _enrich_race_laps(data: dict) -> pd.DataFrame:
     _laps = enrich_blue_flags(_laps, data["race_control"])
     _laps = identify_quali_sim_laps(_laps)
     _laps = flag_perturbed_laps(_laps, rcm=data["race_control"])
+    _laps = flag_dirty_air(_laps)
+    _laps = enrich_track_evolution(_laps)
     _laps = enrich_session_results(_laps, data["results"])
     _laps = flag_position_changes(_laps)
     return _laps
@@ -4974,6 +5305,578 @@ def _position_changes_fig(rl: pd.DataFrame, title: str, height: int = 640) -> go
                    gridcolor=GRID_CLR, zeroline=False),
     )
     return fig
+
+
+def _race_trace_fig(rl: pd.DataFrame, title: str, height: int = 640) -> go.Figure:
+    """Strategist-style race trace: cumulative race time vs a constant
+    reference pace (the winner's average lap), one line per driver.
+
+    y(lap) = ref_pace × lap − elapsed_race_time(driver, lap)
+    Higher = ahead of the reference schedule. Undercuts, deg cliffs, pit-stop
+    losses and Safety-Car compression all read directly off the slopes: a
+    driver's line rising = lapping faster than the reference, falling =
+    slower; a vertical drop ≈ a pit stop.
+
+    Uses per-lap LapStartTime + LapTime_s for the elapsed-time stamp (immune
+    to isolated missing laps, unlike a cumulative sum of lap times).
+    """
+    fig = go.Figure()
+    need = {"LapNo", "LapStartTime", "LapTime_s"}
+    if rl.empty or not need.issubset(rl.columns):
+        theme(fig, height, title)
+        fig.add_annotation(
+            text="No lap-timing data available for a race trace.",
+            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+            font=dict(color=TEXT_DIM, size=13),
+        )
+        return fig
+
+    df = rl.copy()
+    df["_t_end"] = (
+        pd.to_numeric(df["LapStartTime"], errors="coerce")
+        + pd.to_numeric(df["LapTime_s"], errors="coerce")
+    )
+    df = df[df["_t_end"].notna() & df["LapNo"].notna()]
+    if df.empty:
+        theme(fig, height, title)
+        fig.add_annotation(
+            text="No usable lap timestamps for a race trace.",
+            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+            font=dict(color=TEXT_DIM, size=13),
+        )
+        return fig
+
+    # Race clock zero = earliest lap-1 start (≈ lights out)
+    _lap1 = pd.to_numeric(
+        df.loc[df["LapNo"] == df["LapNo"].min(), "LapStartTime"], errors="coerce"
+    )
+    t0 = _lap1.min()
+    if not np.isfinite(t0):
+        t0 = float(df["_t_end"].min())
+    df["_race_t"] = df["_t_end"] - t0
+
+    # Reference pace: winner's average lap (Classified_Position 1 when known,
+    # else whoever completes the most laps in the least time)
+    win_drv = None
+    if "Classified_Position" in df.columns:
+        _w = df[pd.to_numeric(df["Classified_Position"], errors="coerce") == 1]
+        if not _w.empty:
+            win_drv = _w["Driver_Short"].iloc[0]
+    if win_drv is None:
+        _last = df[df["LapNo"] == df["LapNo"].max()]
+        if _last.empty:
+            _last = df
+        win_drv = _last.sort_values("_race_t")["Driver_Short"].iloc[0]
+    win = df[df["Driver_Short"] == win_drv]
+    ref_pace = float(win["_race_t"].max()) / float(win["LapNo"].max())
+
+    # Leader elapsed time per lap → gap-to-leader in the hover
+    lead_t = df.groupby("LapNo")["_race_t"].min()
+
+    end_labels: list[tuple] = []
+    for team in sorted(df["Team"].dropna().unique()):
+        drv_team = (
+            df[df["Team"] == team]
+            .sort_values("DriverNo")["Driver_Short"].dropna().unique().tolist()
+        )
+        clr = TEAM_COLORS.get(team, "#808080")
+        for i, drv in enumerate(drv_team):
+            dv = df[df["Driver_Short"] == drv].sort_values("LapNo")
+            if dv.empty:
+                continue
+            y = ref_pace * dv["LapNo"] - dv["_race_t"]
+            gap_lead = dv["_race_t"] - dv["LapNo"].map(lead_t)
+            fig.add_trace(go.Scatter(
+                x=dv["LapNo"], y=y, mode="lines", name=drv,
+                line=dict(color=clr, width=2.0,
+                          dash="solid" if i == 0 else "dash"),
+                customdata=np.column_stack([gap_lead]),
+                hovertemplate=(
+                    f"<b>{drv}</b> · {team}<br>"
+                    "Lap %{x}<br>"
+                    "vs reference: %{y:+.1f} s<br>"
+                    "Gap to leader: +%{customdata[0]:.1f} s<extra></extra>"
+                ),
+                showlegend=False,
+            ))
+            end_labels.append((dv["LapNo"].iloc[-1], float(y.iloc[-1]), drv, clr))
+
+    _add_flag_bands(fig, rl)
+    _add_rain_bands(fig, rl)
+    theme(fig, height, title)
+
+    for xe, ye, drv, clr in end_labels:
+        fig.add_annotation(
+            x=xe, y=ye, text=f"  {drv}", showarrow=False, xanchor="left",
+            font=dict(size=10, color=clr, family="Inter, sans-serif"),
+        )
+
+    n_laps = int(df["LapNo"].max())
+    fig.update_layout(
+        showlegend=False,
+        xaxis=dict(title="Lap", range=[-1, n_laps + 3.5],
+                   gridcolor=GRID_CLR, zeroline=False),
+        yaxis=dict(
+            title=f"Time vs reference (s) · ref = {win_drv} avg pace "
+                  f"({format_lap_time(ref_pace)})",
+            gridcolor=GRID_CLR, zeroline=False,
+        ),
+    )
+    return fig
+
+
+def _undercut_pairs(rl: pd.DataFrame, max_stop_gap: int = 5,
+                    max_track_gap_s: float = 15.0) -> pd.DataFrame:
+    """Find every undercut/overcut duel in a race and measure its net outcome.
+
+    A duel = driver A pits on lap L_A, and a rival B running within
+    max_track_gap_s of A on track (at the end of lap L_A−1) pits within the
+    next max_stop_gap laps. The gap between them is measured before A's stop
+    and again at the end of B's out-lap (lap L_B+1), when both cars have
+    completed the pit cycle.
+
+    Net_Gain > 0  →  the first stopper (A, the undercutter) gained time.
+
+    Columns: Attacker (first stopper), Defender, Team (attacker's),
+    Stop_A, Stop_B, Gap_Before, Gap_After, Net_Gain, Jumped (A passed B
+    through the cycle), Lost_Position, Flag_Affected (any yellow/SC/VSC/red
+    on either car between L_A−1 and L_B+1 — pit-cycle maths is unreliable
+    under those).
+    """
+    need = {"LapNo", "LapStartTime", "LapTime_s", "PitIn"}
+    if rl.empty or not need.issubset(rl.columns):
+        return pd.DataFrame()
+
+    df = rl.copy()
+    df["LapNo"] = pd.to_numeric(df["LapNo"], errors="coerce")
+    df["_t_end"] = (
+        pd.to_numeric(df["LapStartTime"], errors="coerce")
+        + pd.to_numeric(df["LapTime_s"], errors="coerce")
+    )
+    df = df[df["_t_end"].notna() & df["LapNo"].notna()]
+    if df.empty:
+        return pd.DataFrame()
+    df["LapNo"] = df["LapNo"].astype(int)
+
+    # Elapsed race time at the end of each completed lap, per driver
+    t = df.pivot_table(index="LapNo", columns="Driver_Short",
+                       values="_t_end", aggfunc="first")
+    teams = df.groupby("Driver_Short")["Team"].first()
+
+    # (driver, lap) pairs run under a disturbing flag
+    flagged: set = set()
+    if "TrackStatus_Flag" in df.columns:
+        _f = df[df["TrackStatus_Flag"].fillna("Clear") != "Clear"]
+        flagged = set(zip(_f["Driver_Short"], _f["LapNo"]))
+
+    stops = {
+        drv: sorted(g.loc[g["PitIn"].notna(), "LapNo"].tolist())
+        for drv, g in df.groupby("Driver_Short")
+    }
+
+    rows = []
+    for a, a_stops in stops.items():
+        for la in a_stops:
+            for b, b_stops in stops.items():
+                if b == a:
+                    continue
+                lb = next((s for s in b_stops if la < s <= la + max_stop_gap),
+                          None)
+                if lb is None:
+                    continue
+                m = lb + 1
+                try:
+                    ta0, tb0 = t.at[la - 1, a], t.at[la - 1, b]
+                    ta1, tb1 = t.at[m, a],      t.at[m, b]
+                except KeyError:
+                    continue
+                if any(pd.isna(v) for v in (ta0, tb0, ta1, tb1)):
+                    continue
+                gap_before = float(ta0 - tb0)     # > 0 : A behind B on track
+                if abs(gap_before) > max_track_gap_s:
+                    continue
+                gap_after = float(ta1 - tb1)
+                dist = any(
+                    (d, l) in flagged
+                    for d in (a, b) for l in range(la - 1, m + 1)
+                )
+                rows.append(dict(
+                    Attacker=a, Defender=b, Team=teams.get(a, ""),
+                    Stop_A=la, Stop_B=lb,
+                    Gap_Before=gap_before, Gap_After=gap_after,
+                    Net_Gain=gap_before - gap_after,
+                    Jumped=(gap_before > 0) and (gap_after < 0),
+                    Lost_Position=(gap_before < 0) and (gap_after > 0),
+                    Flag_Affected=dist,
+                ))
+    return pd.DataFrame(rows)
+
+
+def _undercut_fig(pairs: pd.DataFrame, title: str) -> go.Figure:
+    """Diverging bar chart of pit-cycle duels: one row per undercut attempt,
+    positive = the first stopper gained time. Flag-affected cycles are dimmed."""
+    fig = go.Figure()
+    if pairs.empty:
+        theme(fig, 320, title)
+        fig.add_annotation(
+            text="No comparable pit-cycle duels found (cars must be within "
+                 "15 s and stop within 5 laps of each other).",
+            xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+            font=dict(color=TEXT_DIM, size=13),
+        )
+        return fig
+
+    p = pairs.sort_values("Net_Gain").reset_index(drop=True)
+    p["Label"] = [
+        f"{r.Attacker} L{r.Stop_A} → {r.Defender} L{r.Stop_B}"
+        for r in p.itertuples()
+    ]
+    base_clr = p["Team"].map(TEAM_COLORS).fillna("#808080")
+    p["Color"] = [
+        "rgba({},{},{},0.33)".format(
+            int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16)
+        ) if fa else c
+        for c, fa in zip(base_clr, p["Flag_Affected"])
+    ]
+    p["Outcome"] = np.select(
+        [p["Jumped"], p["Lost_Position"]],
+        ["✓ jumped ahead", "✗ lost the place"],
+        default="held station",
+    )
+    p["FlagNote"] = np.where(
+        p["Flag_Affected"], "⚠ flag/SC during cycle — unreliable", "clean cycle"
+    )
+    p["GainFmt"] = p["Net_Gain"].apply(lambda x: f"{x:+.1f}")
+    p["Text"] = [
+        f"{g}{' ✓' if j else ''}" for g, j in zip(p["GainFmt"], p["Jumped"])
+    ]
+
+    _max = max(p["Net_Gain"].abs().max() * 1.35, 3.0)
+    fig.add_trace(go.Bar(
+        y=p["Label"], x=p["Net_Gain"], orientation="h",
+        marker=dict(color=p["Color"], line=dict(color=GRID_CLR, width=0.5)),
+        customdata=p[["Gap_Before", "Gap_After", "Outcome", "FlagNote"]].values,
+        hovertemplate=(
+            "<b>%{y}</b><br>"
+            "Gap before first stop: %{customdata[0]:+.1f} s "
+            "(+ = attacker behind)<br>"
+            "Gap after both stops: %{customdata[1]:+.1f} s<br>"
+            "Net gain for first stopper: %{x:+.1f} s<br>"
+            "%{customdata[2]}  ·  %{customdata[3]}<extra></extra>"
+        ),
+        text=p["Text"], textposition="outside",
+        textfont=dict(size=10, color=TEXT_MAIN),
+    ))
+    fig.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
+    fig.add_vrect(x0=0, x1=_max, fillcolor="rgba(0,200,100,0.05)",
+                  line_width=0, layer="below")
+    fig.add_vrect(x0=-_max, x1=0, fillcolor="rgba(225,6,0,0.05)",
+                  line_width=0, layer="below")
+
+    clean = p[~p["Flag_Affected"]]["Net_Gain"]
+    subtitle = (
+        f"median clean-cycle undercut value: {clean.median():+.1f} s"
+        if len(clean) >= 3 else "too few clean cycles for a median"
+    )
+    ht = max(340, 26 * len(p) + 110)
+    theme(fig, ht, title)
+    fig.update_layout(
+        xaxis=dict(
+            title="s gained by the first stopper  ·  positive = undercut worked",
+            range=[-_max, _max], gridcolor=GRID_CLR, zeroline=False,
+        ),
+        yaxis=dict(gridcolor=GRID_CLR, zeroline=False),
+        bargap=0.3, showlegend=False,
+        annotations=[dict(
+            text=subtitle, xref="paper", yref="paper", x=1, y=1.02,
+            xanchor="right", showarrow=False,
+            font=dict(size=10, color=TEXT_DIM),
+        )],
+    )
+    return fig
+
+
+# ══════════════════════════════════════════════════════════════
+#  STRATEGY WHAT-IF SIMULATOR
+#  Built entirely from quantities the pipeline already estimates:
+#  field deg curves + compound offsets + pit loss measured in-race.
+# ══════════════════════════════════════════════════════════════
+
+_SIM_MIN_STINT = 5      # laps — shortest stint the optimizer may schedule
+
+
+def _estimate_pit_loss(rl: pd.DataFrame) -> float | None:
+    """Median time lost across a pit cycle (in-lap + out-lap vs two normal
+    laps), from clean (non-flag) stops only. This is the real 'cost of a
+    stop' the strategy optimizer needs — pit-lane transit plus the slow
+    in/out phases."""
+    need = {"LapNo", "LapTime_s", "PitIn"}
+    if rl.empty or not need.issubset(rl.columns):
+        return None
+    losses = []
+    for drv, g in rl.groupby("Driver_Short"):
+        g = g.sort_values("LapNo")
+        clean = g[g["ValidLap"]] if "ValidLap" in g.columns else g
+        med = clean["LapTime_s"].median()
+        if pd.isna(med):
+            continue
+        lt = g.set_index("LapNo")["LapTime_s"]
+        fl = (g.set_index("LapNo")["TrackStatus_Flag"]
+              if "TrackStatus_Flag" in g.columns else None)
+        for l_in in g.loc[g["PitIn"].notna(), "LapNo"]:
+            t_in, t_out = lt.get(l_in), lt.get(l_in + 1)
+            if pd.isna(t_in) or pd.isna(t_out):
+                continue
+            if fl is not None:
+                f1 = str(fl.get(l_in, "Clear")); f2 = str(fl.get(l_in + 1, "Clear"))
+                if f1 not in ("Clear", "nan") or f2 not in ("Clear", "nan"):
+                    continue        # SC/VSC stops are artificially cheap
+            loss = (t_in + t_out) - 2 * med
+            if 5 < loss < 60:
+                losses.append(loss)
+    return round(float(np.median(losses)), 1) if len(losses) >= 3 else None
+
+
+def _strategy_model(rl: pd.DataFrame, total_laps: int) -> dict | None:
+    """Per-compound per-lap cost arrays for the simulator.
+
+    cost[a] (a = tyre age 1..total_laps) = compound offset + field deg curve
+    value at that age. The offset chain is anchored on the softest compound
+    present; the deg curve is linearly extrapolated beyond the longest
+    observed stint (slope of its last 4 observed points, floored at
+    +0.02 s/lap so an extrapolated tyre never becomes immortal).
+
+    Returns {comp: {"cost": np.ndarray (index 0 unused), "max_obs": int}}
+    or None when fewer than two dry compounds have usable curves.
+    """
+    order = ["SOFT", "MEDIUM", "HARD"]
+    comps = [c for c in order if c in rl["Compound"].unique()]
+    if len(comps) < 2:
+        return None
+
+    # ── Offsets chained to the softest compound present ──────
+    off_df = compound_offsets(rl)
+    offsets = {comps[0]: 0.0}
+    if not off_df.empty:
+        pair_map = {r.Pair: r.Offset_s for r in off_df.itertuples()}
+        for c in comps[1:]:
+            direct = pair_map.get(f"{comps[0]} → {c}")
+            if direct is not None:
+                offsets[c] = float(direct)
+                continue
+            # chain through an intermediate compound if needed
+            for mid in comps:
+                if mid in offsets and f"{mid} → {c}" in pair_map:
+                    offsets[c] = offsets[mid] + float(pair_map[f"{mid} → {c}"])
+                    break
+    for c in comps:                     # unreachable pairs → assume 0 offset
+        offsets.setdefault(c, 0.0)
+
+    # ── Deg curves → per-lap cost arrays ─────────────────────
+    model = {}
+    for c in comps:
+        fd = field_deg_curves(rl, c)
+        if fd is None:
+            continue
+        curve = fd["curve"]
+        ages  = curve["_age"].values.astype(float)
+        delta = curve["median"].values.astype(float)
+        max_obs = int(ages.max())
+
+        # slope of the last 4 observed points for extrapolation
+        tail = curve.tail(4)
+        if len(tail) >= 2 and np.ptp(tail["_age"].values) > 0:
+            slope = float(np.polyfit(tail["_age"], tail["median"], 1)[0])
+        else:
+            slope = 0.05
+        slope = max(slope, 0.02)
+
+        a_all = np.arange(1, total_laps + 1, dtype=float)
+        d_all = np.interp(a_all, ages, delta)          # clamps at both ends
+        beyond = a_all > max_obs
+        d_all[beyond] = delta[-1] + slope * (a_all[beyond] - max_obs)
+        # Enforce monotonic deg: pooled medians can DIP at high ages because
+        # only the healthiest stints survive that long (survivor bias), and
+        # the optimizer would exploit those dips. A tyre never un-degrades.
+        d_all = np.maximum.accumulate(d_all)
+
+        cost = np.empty(total_laps + 1)
+        cost[0] = 0.0
+        cost[1:] = offsets[c] + d_all
+        model[c] = {"cost": cost, "max_obs": max_obs}
+
+    return model if len(model) >= 2 else None
+
+
+def _simulate_strategies(model: dict, total_laps: int, pit_loss: float,
+                         allowed_stops=(1, 2)):
+    """Grid-search optimal stop laps for every legal compound plan.
+
+    Returns (results DataFrame sorted by Total, sensitivity dict
+    {label: (s1_array, delta_vs_best_array)} for the pit-window chart).
+    Times are relative — only differences between strategies matter.
+    """
+    L, minS = total_laps, _SIM_MIN_STINT
+    comps = list(model)
+    cum = {c: np.concatenate([[0.0], np.cumsum(model[c]["cost"][1:])])
+           for c in comps}     # cum[c][n] = cost of an n-lap stint on c
+
+    rows, sens = [], {}
+
+    if 1 in allowed_stops and L >= 2 * minS:
+        s_range = np.arange(minS, L - minS + 1)
+        for c1 in comps:
+            for c2 in comps:
+                if c1 == c2:
+                    continue                     # two-compound rule
+                totals = (cum[c1][s_range] + cum[c2][L - s_range]
+                          + pit_loss)
+                k = int(np.argmin(totals))
+                s1 = int(s_range[k])
+                label = f"{c1[0]}({s1}) → {c2[0]}({L - s1})"
+                rows.append(dict(
+                    Label=label, Stops=1, Total=float(totals[k]),
+                    StopLaps=f"L{s1}",
+                    Extrapolated=(s1 > model[c1]["max_obs"]
+                                  or (L - s1) > model[c2]["max_obs"]),
+                    Compounds=f"{c1} → {c2}",
+                ))
+                sens[label] = (s_range, totals)
+
+    if 2 in allowed_stops and L >= 3 * minS:
+        from itertools import product
+        s1_range = np.arange(minS, L - 2 * minS + 1)
+        for c1, c2, c3 in product(comps, repeat=3):
+            if len({c1, c2, c3}) < 2:
+                continue
+            best = None
+            best_curve = np.full(len(s1_range), np.inf)
+            for i, s1 in enumerate(s1_range):
+                s2r = np.arange(s1 + minS, L - minS + 1)
+                if len(s2r) == 0:
+                    continue
+                t = (cum[c1][s1] + cum[c2][s2r - s1] + cum[c3][L - s2r]
+                     + 2 * pit_loss)
+                j = int(np.argmin(t))
+                best_curve[i] = t[j]
+                if best is None or t[j] < best[0]:
+                    best = (float(t[j]), int(s1), int(s2r[j]))
+            if best is None:
+                continue
+            tot, s1, s2 = best
+            label = f"{c1[0]}({s1}) → {c2[0]}({s2 - s1}) → {c3[0]}({L - s2})"
+            rows.append(dict(
+                Label=label, Stops=2, Total=tot,
+                StopLaps=f"L{s1} / L{s2}",
+                Extrapolated=(s1 > model[c1]["max_obs"]
+                              or (s2 - s1) > model[c2]["max_obs"]
+                              or (L - s2) > model[c3]["max_obs"]),
+                Compounds=f"{c1} → {c2} → {c3}",
+            ))
+            sens[label] = (s1_range, best_curve)
+
+    if not rows:
+        return pd.DataFrame(), {}
+    res = pd.DataFrame(rows).sort_values("Total").reset_index(drop=True)
+    best_total = res["Total"].iloc[0]
+    res["Delta_s"] = (res["Total"] - best_total).round(2)
+    sens = {k: (s, v - best_total) for k, (s, v) in sens.items()}
+    return res, sens
+
+
+def _strategy_sim_content(rl: pd.DataFrame, pit_loss=None, stops=(1, 2)):
+    """Build the simulator output (ranked board + pit-window chart)."""
+    if rl.empty or "LapNo" not in rl.columns:
+        return html.P("No race laps available.", style={"color": TEXT_DIM})
+    total_laps = int(pd.to_numeric(rl["LapNo"], errors="coerce").max())
+    est_loss = _estimate_pit_loss(rl)
+    if pit_loss is None:
+        pit_loss = est_loss if est_loss is not None else 22.0
+    pit_loss = float(pit_loss)
+
+    model = _strategy_model(rl, total_laps)
+    if model is None:
+        return html.P(
+            "Not enough dry-compound data to build deg curves for at least "
+            "two compounds — the simulator needs a dry race with mixed "
+            "strategies.", style={"color": TEXT_DIM})
+
+    stops = tuple(int(s) for s in (stops or (1, 2)))
+    res, sens = _simulate_strategies(model, total_laps, pit_loss, stops)
+    if res.empty:
+        return html.P("No legal strategies for the chosen settings.",
+                      style={"color": TEXT_DIM})
+
+    top = res.head(10).iloc[::-1]          # best at the top of a h-bar chart
+    labels = [f"{'⚠ ' if e else ''}{l}"
+              for l, e in zip(top["Label"], top["Extrapolated"])]
+    fig_rank = go.Figure(go.Bar(
+        y=labels, x=top["Delta_s"], orientation="h",
+        marker=dict(
+            color=[COMPOUND_COLORS.get(c.split(" → ")[0], "#808080")
+                   for c in top["Compounds"]],
+            line=dict(color=GRID_CLR, width=0.5),
+        ),
+        customdata=top[["StopLaps", "Stops", "Compounds"]].values,
+        hovertemplate=(
+            "<b>%{customdata[2]}</b><br>"
+            "Optimal stop(s): %{customdata[0]} (%{customdata[1]}-stop)<br>"
+            "Time vs best strategy: +%{x:.1f} s<extra></extra>"
+        ),
+        text=[f"+{v:.1f}s" if v > 0 else "BEST" for v in top["Delta_s"]],
+        textposition="outside",
+        textfont=dict(size=10, color=TEXT_MAIN),
+    ))
+    theme(fig_rank, max(320, 30 * len(top) + 90),
+          f"Strategy Board — {total_laps} laps · pit loss {pit_loss:.1f}s")
+    fig_rank.update_layout(
+        xaxis=dict(title="time lost vs optimal strategy (s)",
+                   gridcolor=GRID_CLR, zeroline=False,
+                   range=[0, max(float(top['Delta_s'].max()) * 1.25, 3)]),
+        yaxis=dict(gridcolor=GRID_CLR, zeroline=False),
+        showlegend=False, bargap=0.3,
+    )
+
+    fig_sens = go.Figure()
+    for label in res.head(5)["Label"]:
+        if label not in sens:
+            continue
+        s_arr, d_arr = sens[label]
+        first_comp = label.split("(")[0]
+        clr = COMPOUND_COLORS.get(
+            {"S": "SOFT", "M": "MEDIUM", "H": "HARD"}.get(first_comp, ""),
+            "#808080")
+        fig_sens.add_trace(go.Scatter(
+            x=s_arr, y=d_arr, mode="lines", name=label,
+            line=dict(width=2),
+            hovertemplate=(f"<b>{label}</b><br>First stop lap %{{x}}<br>"
+                           "+%{y:.1f} s vs optimal<extra></extra>"),
+        ))
+    fig_sens.add_hline(y=1.0, line=dict(color=TEXT_DIM, width=1, dash="dot"),
+                       annotation_text="+1 s", annotation_font_size=9)
+    theme(fig_sens, 380, "Pit Window Sensitivity — cost of mistiming the first stop")
+    fig_sens.update_layout(
+        xaxis_title="First stop lap",
+        yaxis_title="Time lost vs optimal (s)",
+        yaxis=dict(range=[0, 15], gridcolor=GRID_CLR),
+        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR,
+                    borderwidth=1, font=dict(size=9)),
+    )
+
+    note_bits = [f"Pit loss estimated from this race: "
+                 f"{est_loss:.1f} s. " if est_loss is not None else
+                 "Pit loss could not be estimated from this race — using the "
+                 "value above. "]
+    if res["Extrapolated"].any():
+        note_bits.append("⚠ marks plans needing stints longer than anything "
+                         "observed — their deg is extrapolated.")
+    return html.Div([
+        html.P("".join(note_bits),
+               style={"color": TEXT_DIM, "fontSize": "0.75rem",
+                      "marginBottom": "6px", "fontStyle": "italic"}),
+        dcc.Graph(figure=fig_rank, config=GFX),
+        dcc.Graph(figure=fig_sens, config=GFX),
+    ])
 
 
 def _weather_race_fig(rl: pd.DataFrame, title: str, height: int = 480) -> go.Figure:
@@ -5471,9 +6374,64 @@ def tab_race(sel_drivers=None, sel_teams=None):
     pos_fig = _position_changes_fig(
         rl, f"Race Position by Lap – {meeting} {shown_year}"
     )
+    trace_fig = _race_trace_fig(
+        rl, f"Race Trace – {meeting} {shown_year}"
+    )
     strat_fig = _tyre_strategy_chart(
         rl, title=f"Race Tyre Strategy – {meeting} {shown_year}",
         already_race=True,
+    )
+    uc_pairs = _undercut_pairs(rl)
+    uc_fig   = _undercut_fig(
+        uc_pairs, f"Undercut / Overcut Duels – {meeting} {shown_year}"
+    )
+    _sim_pitloss_default = _estimate_pit_loss(rl) or 22.0
+    sim_controls = dbc.Row([
+        dbc.Col([
+            html.Label("PIT LOSS (s)",
+                       style={"color": TEXT_DIM, "fontSize": "0.72rem",
+                              "letterSpacing": "1px"}),
+            dcc.Input(id="strat-sim-pitloss", type="number",
+                      value=_sim_pitloss_default, min=5, max=60, step=0.5,
+                      debounce=True,
+                      style={"width": "100%", "background": "#111",
+                             "color": TEXT_MAIN, "border": f"1px solid {GRID_CLR}",
+                             "borderRadius": "4px", "padding": "4px 8px"}),
+        ], md=2),
+        dbc.Col([
+            html.Label("STRATEGIES",
+                       style={"color": TEXT_DIM, "fontSize": "0.72rem",
+                              "letterSpacing": "1px"}),
+            dcc.Checklist(
+                id="strat-sim-stops",
+                options=[{"label": " 1-stop", "value": 1},
+                         {"label": " 2-stop", "value": 2}],
+                value=[1, 2], inline=True,
+                inputStyle={"marginRight": "4px", "accentColor": ACCENT},
+                labelStyle={"marginRight": "16px", "color": TEXT_MAIN,
+                            "fontSize": "0.8rem"},
+            ),
+        ], md=4),
+    ], className="mb-2")
+    sim_card = card(
+        "Strategy What-If Simulator",
+        html.Div([
+            sim_controls,
+            dcc.Loading(html.Div(id="strat-sim-output",
+                                 children=_strategy_sim_content(rl)),
+                        type="default"),
+        ]),
+        info=("Data: a race model assembled from this race's own measurements "
+              "— per-compound field degradation curves (extrapolated beyond "
+              "the longest observed stint, marked ⚠), compound pace offsets, "
+              "and the pit loss measured from actual stops (editable above). "
+              "The optimizer grid-searches every legal 1- and 2-stop compound "
+              "plan and its stop laps. Top chart: every plan ranked by time "
+              "lost vs the optimum. Bottom chart: how much mistiming the "
+              "first stop costs — a flat valley means a wide, forgiving pit "
+              "window. Why: answers 'was the winning strategy actually "
+              "optimal, and what would X have gained with the alternative?' "
+              "using only what the tyres really did that day."),
     )
     wx_fig = _weather_race_fig(
         rl, f"Weather & Race Pace – {meeting} {shown_year}"
@@ -5571,6 +6529,19 @@ def tab_race(sel_drivers=None, sel_teams=None):
                   "shuffles and Safety-Car bunching at a glance."),
         ),
         card(
+            "Race Trace",
+            dcc.Graph(figure=trace_fig, config=GFX),
+            info=("Data: each driver's cumulative race time compared against a "
+                  "constant reference — the winner's average lap — so the vertical "
+                  "axis is 'how far ahead/behind the winner's average schedule'. "
+                  "Teammates split solid/dashed; flag periods banded behind. Why: "
+                  "the classic strategist's chart. Line slope = relative pace "
+                  "(rising = faster than the reference), a sudden drop = a pit "
+                  "stop, converging lines = a battle for track position, and the "
+                  "field bunching to a point = Safety Car. Undercuts and tyre "
+                  "cliffs are visible as slope changes around the pit windows."),
+        ),
+        card(
             "Race Tyre Strategy",
             dcc.Graph(figure=strat_fig, config=GFX)
             if strat_fig.data else
@@ -5580,6 +6551,22 @@ def tab_race(sel_drivers=None, sel_teams=None):
                   "diamonds mark pit stops and show pit-lane time (s). Why: the strategic "
                   "shape of the race — who ran which tyres, stint lengths and stop timing."),
         ),
+        card(
+            "Undercut / Overcut Duels",
+            dcc.Graph(figure=uc_fig, config=GFX),
+            info=("Data: every pit-cycle duel — two cars within 15 s on track "
+                  "whose stops fall within 5 laps of each other. The gap between "
+                  "them is measured just before the first stop and again at the "
+                  "end of the second stopper's out-lap; the bar is the time the "
+                  "FIRST stopper gained (+) or lost (−) through the cycle, "
+                  "coloured by the first stopper's team. ✓ marks a completed "
+                  "on-track jump; duels run under yellow/SC/VSC are dimmed "
+                  "(cheap SC stops distort the maths). Why: quantifies each "
+                  "strategy call — who won the pit exchanges, and how powerful "
+                  "the undercut actually was at this circuit (see the median in "
+                  "the corner)."),
+        ),
+        sim_card,
         card(
             "Weather & Race Pace",
             dcc.Graph(figure=wx_fig, config=GFX)
@@ -5648,6 +6635,27 @@ def filter_team_radio(selected_codes, mode):
     fig = _team_radio_fig(rdf, ordered, f"Team Radio – {meeting} {season}",
                           mode=mode, season=season)
     return fig, _team_radio_table(rdf, ordered, mode=mode)
+
+
+# ── Strategy simulator: recompute on control change ──────────
+@app.callback(
+    Output("strat-sim-output", "children"),
+    Input("strat-sim-pitloss", "value"),
+    Input("strat-sim-stops", "value"),
+    prevent_initial_call=True,
+)
+def update_strategy_sim(pit_loss, stops):
+    cur = LOADED_SESSION_INFO[0] if LOADED_SESSION_INFO else None
+    if not cur:
+        return html.P("No meeting loaded.", style={"color": TEXT_DIM})
+    data = _resolve_race_data(int(cur["SEASON"]), cur["MEETING"])
+    if not data:
+        return html.P("No race data available.", style={"color": TEXT_DIM})
+    return _strategy_sim_content(
+        data["laps"],
+        pit_loss=pit_loss,
+        stops=tuple(stops) if stops else (1, 2),
+    )
 
 
 # ── Race-control timeline: redraw on driver selection ─────────
@@ -6231,6 +7239,10 @@ def _tab_teammates_inner(fl, fs):
                     }),
                 ]),
                 dcc.Graph(figure=fig, config=GFX),
+                info=(f"Data: teammates' fuel-corrected representative pace on "
+                      f"their best valid {cmp} stint (trimmed median). Why: "
+                      "same car, same compound — the cleanest possible "
+                      "race-pace comparison between two drivers."),
             ), md=col_w))
     else:
         pace_col_items = [dbc.Col(html.P(
@@ -6305,7 +7317,14 @@ def _tab_teammates_inner(fl, fs):
                 unit="s",
             )
             quali_col_items.append(
-                dbc.Col(card(qs_label, dcc.Graph(figure=qs_fig, config=GFX)), md=6)
+                dbc.Col(card(
+                    qs_label, dcc.Graph(figure=qs_fig, config=GFX),
+                    info=("Data: each teammate's best one-lap effort — quali-sim "
+                          "laps (within 0.5% of personal best, tyre age ≤ 4) when "
+                          "identified, else the best valid lap. Why: isolates "
+                          "single-lap speed from race pace; a driver can win one "
+                          "duel and lose the other."),
+                ), md=6)
             )
         if quali_time_rows:
             qt_fig = _gap_chart(
@@ -6318,7 +7337,15 @@ def _tab_teammates_inner(fl, fs):
                 unit="s",
             )
             quali_col_items.append(
-                dbc.Col(card("Qualifying Classification Time", dcc.Graph(figure=qt_fig, config=GFX)), md=6)
+                dbc.Col(card(
+                    "Qualifying Classification Time",
+                    dcc.Graph(figure=qt_fig, config=GFX),
+                    info=("Data: the official best quali lap from the "
+                          "classification (Q3, else Q2, else Q1). Why: the "
+                          "teammate duel as it counted on Saturday — unlike the "
+                          "practice-based one-lap estimate, this is the result "
+                          "that set the grid."),
+                ), md=6)
             )
 
     # ══════════════════════════════════════════════════════════
@@ -6337,7 +7364,15 @@ def _tab_teammates_inner(fl, fs):
                 unit="s",
             )
             race_col_items.append(
-                dbc.Col(card("Pit Stop Duration", dcc.Graph(figure=pit_fig, config=GFX)), md=6)
+                dbc.Col(card(
+                    "Pit Stop Duration",
+                    dcc.Graph(figure=pit_fig, config=GFX),
+                    info=("Data: average pit-lane transit time (PitOut − PitIn) "
+                          "per driver across matched stops. Why: mostly a team/"
+                          "crew metric, but consistent differences between "
+                          "teammates reveal pit-entry/exit driving and box-stop "
+                          "discipline."),
+                ), md=6)
             )
 
         if finish_rows:
@@ -6351,7 +7386,14 @@ def _tab_teammates_inner(fl, fs):
                 unit="pos",
             )
             race_col_items.append(
-                dbc.Col(card("Race Finish Position", dcc.Graph(figure=fin_fig, config=GFX)), md=6)
+                dbc.Col(card(
+                    "Race Finish Position",
+                    dcc.Graph(figure=fin_fig, config=GFX),
+                    info=("Data: official classified finishing position per "
+                          "race (DNF/DSQ shown as —). Why: the bottom line of "
+                          "the teammate comparison — pace only matters if it "
+                          "converts into results."),
+                ), md=6)
             )
 
         if pgain_rows:
@@ -6365,7 +7407,14 @@ def _tab_teammates_inner(fl, fs):
                 unit="pos",
             )
             race_col_items.append(
-                dbc.Col(card("Positions Gained / Lost", dcc.Graph(figure=pg_fig, config=GFX)), md=6)
+                dbc.Col(card(
+                    "Positions Gained / Lost",
+                    dcc.Graph(figure=pg_fig, config=GFX),
+                    info=("Data: grid position minus classified finish "
+                          "(positive = moved forward). Why: race-day execution "
+                          "— starts, restarts, strategy and racecraft — "
+                          "independent of where qualifying put the car."),
+                ), md=6)
             )
 
         if overtake_rows:
@@ -6379,7 +7428,14 @@ def _tab_teammates_inner(fl, fs):
                 unit="overtakes",
             )
             race_col_items.append(
-                dbc.Col(card("Overtakes", dcc.Graph(figure=ov_fig, config=GFX)), md=6)
+                dbc.Col(card(
+                    "Overtakes",
+                    dcc.Graph(figure=ov_fig, config=GFX),
+                    info=("Data: count of on-track positions gained on non-pit "
+                          "laps (pit-cycle shuffles excluded). Why: a proxy for "
+                          "wheel-to-wheel racecraft rather than pace — who "
+                          "actually passes cars on track."),
+                ), md=6)
             )
 
         if champ_rows:
@@ -6437,6 +7493,11 @@ def _tab_teammates_inner(fl, fs):
                     dbc.Row(champ_kpis, className="mb-3"),
                     dcc.Graph(figure=champ_fig, config=GFX),
                 ]),
+                info=("Data: championship points each teammate scored in the "
+                      "race/sprint sessions of the current filter, as KPI tiles "
+                      "plus the head-to-head gap. Why: the currency the team "
+                      "actually cares about — the intra-team points split often "
+                      "decides careers."),
             ), md=12))
 
     # ══════════════════════════════════════════════════════════
@@ -8032,6 +9093,10 @@ def update_track_content(circuit_key: str, hist_year: int):
         corners_section = card(
             "Notable Corners",
             corner_pills,
+            info=("Data: the circuit's named/numbered signature corners from "
+                  "the circuit-characteristics reference file. Why: quick "
+                  "orientation — these are the corners commentators and "
+                  "telemetry analysis keep referring to."),
         )
     else:
         corners_section = html.Div()
@@ -8101,6 +9166,11 @@ def update_track_content(circuit_key: str, hist_year: int):
                     html.P(f"No historical {sess_type.lower()} data for this circuit yet. "
                            "Run fetch_historical_results.py to populate.",
                            style={"color": TEXT_DIM, "fontStyle": "italic"}),
+                    info=(f"Data: official {sess_type.lower()} classifications "
+                          "for this circuit from the historical archive (empty "
+                          "until fetched). Why: past results here give context "
+                          "for what a normal race weekend at this track looks "
+                          "like."),
                 ))
                 continue
 

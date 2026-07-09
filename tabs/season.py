@@ -1,0 +1,206 @@
+"""
+SEASON tab — championship-long form view.
+
+Answers "who's trending up?" across a whole season instead of one weekend:
+team qualifying pace gap and race pace gap round by round, the cumulative
+points race, and each team's Saturday-vs-Sunday character. All of it reads
+data/team_pace_by_event.csv (compute_team_pace.py); no session loads.
+"""
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+from dash import html, dcc, callback, Input, Output
+import dash_bootstrap_components as dbc
+
+from components import theme, card, GFX, abbr
+from config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
+from tabs.pace_data import team_pace_df, seasons, event_short
+
+
+def _team_order(s: pd.DataFrame) -> list[str]:
+    """Teams ordered by final championship points (best first)."""
+    last = s.sort_values("round").groupby("team")["cum_points"].last()
+    return list(last.sort_values(ascending=False).index)
+
+
+def _round_axis(s: pd.DataFrame) -> tuple[list[int], list[str]]:
+    ev = s.drop_duplicates("round").sort_values("round")
+    return ev["round"].tolist(), [event_short(e) for e in ev["event"]]
+
+
+def _trend_fig(s: pd.DataFrame, ycol: str, ytitle: str, title: str,
+               height: int = 480) -> go.Figure:
+    fig = go.Figure()
+    rounds, labels = _round_axis(s)
+    for team in _team_order(s):
+        g = s[(s["team"] == team) & s[ycol].notna()].sort_values("round")
+        if g.empty:
+            continue
+        clr = TEAM_COLORS.get(team, "#808080")
+        fig.add_trace(go.Scatter(
+            x=g["round"], y=g[ycol], mode="lines+markers", name=abbr(team),
+            line=dict(color=clr, width=2), marker=dict(size=6, color=clr),
+            customdata=np.stack([g["event"].map(event_short)], axis=-1),
+            hovertemplate=(f"<b>{abbr(team)}</b> · %{{customdata[0]}}<br>"
+                           f"{ytitle}: %{{y:.2f}}<extra></extra>"),
+        ))
+    theme(fig, height, title)
+    fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,
+                     tickangle=-40, title_text=None)
+    fig.update_yaxes(title_text=ytitle)
+    fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                  xanchor="left", x=0))
+    return fig
+
+
+def _points_fig(s: pd.DataFrame, height: int = 480) -> go.Figure:
+    fig = go.Figure()
+    rounds, labels = _round_axis(s)
+    for team in _team_order(s):
+        g = s[s["team"] == team].sort_values("round")
+        clr = TEAM_COLORS.get(team, "#808080")
+        fig.add_trace(go.Scatter(
+            x=g["round"], y=g["cum_points"], mode="lines", name=abbr(team),
+            line=dict(color=clr, width=2),
+            customdata=np.stack([g["event"].map(event_short), g["points"]], axis=-1),
+            hovertemplate=(f"<b>{abbr(team)}</b> · %{{customdata[0]}}<br>"
+                           "Total: %{y:.0f} pts (+%{customdata[1]:.0f})"
+                           "<extra></extra>"),
+        ))
+    theme(fig, height, "Constructors' points race")
+    fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,
+                     tickangle=-40)
+    fig.update_yaxes(title_text="Cumulative points")
+    fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                  xanchor="left", x=0))
+    return fig
+
+
+def _character_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
+    """Season-average quali gap vs race-pace gap per team. The diagonal is
+    'same car Saturday and Sunday'; below it = stronger in the race."""
+    avg = (s.groupby("team")[["quali_gap_pct", "race_pace_gap_pct"]]
+           .mean().dropna())
+    fig = go.Figure()
+    if not avg.empty:
+        lim = float(max(avg.max().max(), 0.5)) * 1.15
+        fig.add_trace(go.Scatter(
+            x=[0, lim], y=[0, lim], mode="lines",
+            line=dict(color=TEXT_DIM, width=1, dash="dot"),
+            hoverinfo="skip", showlegend=False))
+        for team, r in avg.iterrows():
+            clr = TEAM_COLORS.get(team, "#808080")
+            fig.add_trace(go.Scatter(
+                x=[r["quali_gap_pct"]], y=[r["race_pace_gap_pct"]],
+                mode="markers+text", text=[abbr(team)],
+                textposition="top center", textfont=dict(size=10, color=clr),
+                marker=dict(size=13, color=clr, line=dict(width=1, color="#000")),
+                name=abbr(team), showlegend=False,
+                hovertemplate=(f"<b>{abbr(team)}</b><br>"
+                               "Avg quali gap: %{x:.2f}%<br>"
+                               "Avg race gap: %{y:.2f}%<extra></extra>"),
+            ))
+        fig.add_annotation(x=lim * 0.97, y=lim * 0.80, text="better on Sunday ↓",
+                           showarrow=False, font=dict(size=10, color=TEXT_DIM),
+                           xanchor="right")
+    theme(fig, height, "Saturday vs Sunday character — season averages")
+    fig.update_xaxes(title_text="Avg qualifying gap to pole (%)")
+    fig.update_yaxes(title_text="Avg race-pace gap to best (%)")
+    return fig
+
+
+def _season_content(season: int) -> html.Div:
+    df = team_pace_df()
+    s = df[df["season"] == season]
+    if s.empty:
+        return html.P("No pace data for this season — run compute_team_pace.py.",
+                      style={"color": TEXT_DIM})
+    n_race = s["race_pace_gap_pct"].notna().sum()
+    return html.Div([
+        card(
+            "Qualifying Pace Gap by Round",
+            dcc.Graph(figure=_trend_fig(
+                s, "quali_gap_pct", "Gap to pole (%)",
+                f"Qualifying gap to pole – {season}"), config=GFX),
+            info=("Data: each team's best single qualifying lap (best of "
+                  "Q1/Q2/Q3 across both drivers) as % gap to pole, every "
+                  "round of the season, from the results archive. Why: the "
+                  "cleanest read of raw car pace over a season — development "
+                  "trends, upgrades working (or not), and who is closing on "
+                  "whom. Click the legend to isolate teams."),
+        ),
+        card(
+            "Race Pace Gap by Round",
+            dcc.Graph(figure=_trend_fig(
+                s, "race_pace_gap_pct", "Gap to best (%)",
+                f"Race pace gap – {season}"), config=GFX)
+            if n_race else
+            html.P("No cached race laps for this season — run "
+                   "fetch_previous_races.py, then compute_team_pace.py.",
+                   style={"color": TEXT_DIM}),
+            info=("Data: each team's best driver's median race lap — fuel- "
+                  "and track-evolution-corrected, valid clean-air laps only "
+                  "(≥10 laps) — as % gap to the event's fastest team. Only "
+                  "rounds whose race laps are cached locally appear. Why: "
+                  "Sunday car performance, free of qualifying engine modes "
+                  "and low-fuel glory runs; compare with the qualifying "
+                  "chart to spot one-lap vs race-run cars."),
+        ),
+        card(
+            "Constructors' Points Race",
+            dcc.Graph(figure=_points_fig(s), config=GFX),
+            info=("Data: cumulative constructor points (race + sprint) after "
+                  "each round. Why: the championship story in one picture — "
+                  "where gaps opened, and whether pace trends above are "
+                  "converting into points."),
+        ),
+        card(
+            "Saturday vs Sunday Character",
+            dcc.Graph(figure=_character_fig(s), config=GFX),
+            info=("Data: season-average qualifying gap (x) vs season-average "
+                  "race-pace gap (y) per team; the dotted diagonal means "
+                  "'same relative pace both days'. Why: teams below the line "
+                  "race better than they qualify (tyre-gentle, heavy-fuel "
+                  "strong) — expect them to gain on Sundays; above the line "
+                  "is a quali car that goes backwards in races."),
+        ),
+    ])
+
+
+def tab_season() -> html.Div:
+    yrs = seasons()
+    if not yrs:
+        return html.Div(dbc.Alert(
+            ["No season pace table found. Generate it with ",
+             html.Code("python compute_team_pace.py"), "."],
+            color="warning"))
+    default = max(yrs)
+    return html.Div([
+        html.Div([
+            html.Span("SEASON", style={
+                "background": ACCENT, "color": "#fff", "borderRadius": "4px",
+                "padding": "3px 10px", "fontWeight": "800",
+                "letterSpacing": "2px", "fontSize": "0.8rem",
+                "marginRight": "12px"}),
+            html.Span("Championship-long form view", style={
+                "color": TEXT_MAIN, "fontWeight": "800", "fontSize": "1.05rem",
+                "marginRight": "16px"}),
+            dcc.Dropdown(id="season-select",
+                         options=[{"label": str(y), "value": y} for y in yrs],
+                         value=default, clearable=False,
+                         style={"width": "110px", "backgroundColor": "#111",
+                                "fontSize": "0.85rem"}),
+        ], style={"display": "flex", "alignItems": "center",
+                  "marginBottom": "16px"}),
+        dcc.Loading(html.Div(_season_content(default), id="season-content"),
+                    type="default"),
+    ])
+
+
+@callback(Output("season-content", "children"),
+          Input("season-select", "value"),
+          prevent_initial_call=True)
+def _update_season(season):
+    return _season_content(int(season))

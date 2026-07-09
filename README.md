@@ -111,6 +111,7 @@ inside the app — no restart needed.
 - `circuit_characteristics_computed.csv` — telemetry-measured circuit scores (speed, full-throttle %, lateral load, tyre deg); overlays the manual CSV at startup. Regenerate with `compute_circuit_characteristics.py`.
 - `upgrades.csv` — car-upgrade log sourced from FIA Car Presentation PDFs.
 - `tyre_allocations.csv` — Pirelli C-compound nomination per event (soft/medium/hard → C1–C5), hand-maintained from Pirelli press releases. Feeds the "SOFT C5" chips on the strategy cards.
+- `team_pace_by_event.csv` — per (season, round, team): qualifying gap to pole, corrected race-pace gap, points. Built by `compute_team_pace.py`; powers the SEASON tab and the Upgrade Impact analysis.
 
 ---
 
@@ -133,6 +134,10 @@ python fetch_previous_races.py            # add --dry-run to preview
 
 # Recompute the telemetry-measured circuit characteristics after caching new events
 python compute_circuit_characteristics.py
+
+# Rebuild the per-event team pace table (SEASON tab + Upgrade Impact analysis)
+# — run after fetch_historical_results.py and/or caching new races
+python compute_team_pace.py
 ```
 
 Team radio is fetched and transcribed on demand by `radio_loader.py` when you

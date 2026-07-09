@@ -10,13 +10,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
-from dash import html
+import plotly.graph_objects as go
+from dash import html, dcc, callback, Input, Output
 import dash_bootstrap_components as dbc
 
 import state
-from components import kpi, badge
+from components import kpi, badge, card, theme, GFX, abbr
 from config import TEAM_COLORS, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR
+from tabs.pace_data import team_pace_df, event_short
 
 # Curated, human-maintained table of the technical upgrades each team brings
 # to a given Grand Prix — mirrors the FIA "Car Presentation" documents
@@ -197,6 +200,235 @@ def _upgrade_meeting_block(season, meeting, team_rank: dict) -> html.Div:
     ], className="mb-4")
 
 
+# ── Upgrade impact analysis ──────────────────────────────────
+# Crosses upgrades.csv with the per-event team pace table
+# (data/team_pace_by_event.csv, built by compute_team_pace.py) to ask the
+# question the FIA documents never answer: did the upgrade actually work?
+
+_WINDOW = 2   # rounds before / after an upgrade averaged for the effect
+
+
+def _impact_season() -> int | None:
+    """Season to analyse: the latest one present in BOTH tables."""
+    up, pace = upgrades_df(), team_pace_df()
+    if up.empty or pace.empty:
+        return None
+    common = (set(up["season"].dropna().astype(int))
+              & set(pace["season"].astype(int)))
+    return max(common) if common else None
+
+
+def _upgrade_rounds(season: int) -> pd.DataFrame:
+    """One row per (team, round) that brought upgrades: item count,
+    component list, and whether any item was a Performance upgrade."""
+    up = upgrades_df()
+    up = up[up["season"] == season].copy()
+    pace = team_pace_df()
+    ev2rnd = (pace[pace["season"] == season]
+              .drop_duplicates("event").set_index("event")["round"])
+    up["round"] = up["event"].map(ev2rnd)
+    up = up.dropna(subset=["round"])
+    if up.empty:
+        return up
+    up["round"] = up["round"].astype(int)
+    up["is_perf"] = (up["category"].str.strip().str.casefold()
+                     .isin(["performance", "circuit specific"]))
+    return (up.groupby(["team", "round", "event"])
+            .agg(n_items=("component", "count"),
+                 components=("component", lambda s: ", ".join(s)),
+                 any_perf=("is_perf", "any"))
+            .reset_index())
+
+
+def _gap_series(season: int) -> pd.DataFrame:
+    """(round, team) → quali_gap_pct for the season, indexed for lookups."""
+    pace = team_pace_df()
+    s = pace[pace["season"] == season]
+    return s.set_index(["team", "round"])["quali_gap_pct"]
+
+
+def _effect_rows(season: int) -> pd.DataFrame:
+    """Control-adjusted pace effect of every performance-upgrade round.
+
+    raw effect   = mean gap over rounds [r, r+W-1] minus mean gap over
+                   [r-W, r-1] (negative = the car closed on the front).
+    control      = the median of that same delta across teams that brought
+                   NOTHING that round — track/tyre/weather swings hit
+                   everyone, so they cancel out here.
+    adj effect   = raw − control  →  what the upgrade itself was worth.
+    """
+    ups = _upgrade_rounds(season)
+    gaps = _gap_series(season)
+    if ups.empty or gaps.empty:
+        return pd.DataFrame()
+    all_teams = gaps.index.get_level_values(0).unique()
+    max_round = int(gaps.index.get_level_values(1).max())
+
+    def delta(team, r) -> float:
+        before = [gaps.get((team, x), np.nan)
+                  for x in range(max(1, r - _WINDOW), r)]
+        after = [gaps.get((team, x), np.nan)
+                 for x in range(r, min(max_round, r + _WINDOW - 1) + 1)]
+        before = [v for v in before if np.isfinite(v)]
+        after = [v for v in after if np.isfinite(v)]
+        if not before or not after:
+            return np.nan
+        return float(np.mean(after) - np.mean(before))
+
+    rows = []
+    for _, u in ups[ups["any_perf"]].iterrows():
+        r = int(u["round"])
+        if r <= 1:
+            continue                       # no baseline before round 1
+        raw = delta(u["team"], r)
+        if not np.isfinite(raw):
+            continue
+        upgraded_here = set(ups.loc[ups["round"] == r, "team"])
+        ctrl_vals = [delta(t, r) for t in all_teams if t not in upgraded_here]
+        ctrl_vals = [v for v in ctrl_vals if np.isfinite(v)]
+        control = float(np.median(ctrl_vals)) if ctrl_vals else 0.0
+        rows.append({
+            "team": u["team"], "round": r, "event": u["event"],
+            "n_items": int(u["n_items"]), "components": u["components"],
+            "raw": round(raw, 3), "control": round(control, 3),
+            "effect": round(raw - control, 3),
+        })
+    return pd.DataFrame(rows).sort_values("effect")
+
+
+def _effect_board_fig(eff: pd.DataFrame, season: int) -> go.Figure:
+    labels = [f"{abbr(r.team)} · {event_short(r.event)}"
+              for r in eff.itertuples()]
+    fig = go.Figure(go.Bar(
+        y=labels, x=eff["effect"], orientation="h",
+        marker_color=[TEAM_COLORS.get(t, "#808080") for t in eff["team"]],
+        customdata=np.stack([eff["components"], eff["raw"], eff["control"],
+                             eff["n_items"]], axis=-1),
+        hovertemplate=("<b>%{y}</b> (%{customdata[3]} items)<br>"
+                       "%{customdata[0]}<br><br>"
+                       "Effect vs field: %{x:+.2f} pp of quali gap<br>"
+                       "(raw %{customdata[1]:+.2f}, field control "
+                       "%{customdata[2]:+.2f})<extra></extra>"),
+        text=[f"{v:+.2f}" for v in eff["effect"]], textposition="outside",
+        textfont=dict(size=10),
+    ))
+    fig.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
+    theme(fig, max(340, 26 * len(eff) + 110),
+          f"Upgrade effect board – {season} · negative = car got faster")
+    span = float(eff["effect"].abs().max()) if len(eff) else 1.0
+    fig.update_xaxes(title_text="Change in quali gap to pole (pp), "
+                                "field-adjusted", range=[-span*1.35, span*1.35])
+    fig.update_layout(showlegend=False, bargap=0.35)
+    return fig
+
+
+def _team_trend_fig(season: int, team: str) -> go.Figure:
+    pace = team_pace_df()
+    s = pace[pace["season"] == season]
+    g = s[s["team"] == team].sort_values("round")
+    ups = _upgrade_rounds(season)
+    ups = ups[ups["team"] == team]
+    clr = TEAM_COLORS.get(team, "#808080")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=g["round"], y=g["quali_gap_pct"], mode="lines+markers",
+        name="Quali gap", line=dict(color=clr, width=2.5),
+        marker=dict(size=7),
+        hovertemplate="Quali gap: %{y:.2f}%<extra></extra>"))
+    rp = g[g["race_pace_gap_pct"].notna()]
+    if not rp.empty:
+        fig.add_trace(go.Scatter(
+            x=rp["round"], y=rp["race_pace_gap_pct"], mode="lines+markers",
+            name="Race pace gap", line=dict(color=clr, width=1.5, dash="dot"),
+            marker=dict(size=6, symbol="diamond"),
+            hovertemplate="Race gap: %{y:.2f}%<extra></extra>"))
+    ymax = float(np.nanmax([g["quali_gap_pct"].max(),
+                            g["race_pace_gap_pct"].max()]))
+    for u in ups.itertuples():
+        fig.add_vline(x=u.round, line=dict(color="#FFB000", width=1,
+                                           dash="dash"))
+        fig.add_trace(go.Scatter(
+            x=[u.round], y=[ymax * 1.06], mode="markers",
+            marker=dict(symbol="triangle-down", size=11, color="#FFB000"),
+            showlegend=False,
+            hovertemplate=(f"<b>{event_short(u.event)}</b> · "
+                           f"{u.n_items} upgrade item(s)<br>{u.components}"
+                           "<extra>upgrades</extra>"),
+        ))
+    rounds, labels = (s.drop_duplicates("round").sort_values("round")["round"].tolist(),
+                      [event_short(e) for e in
+                       s.drop_duplicates("round").sort_values("round")["event"]])
+    theme(fig, 420, f"{team} – pace gap through {season} (▼ = upgrades)")
+    fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,
+                     tickangle=-40)
+    fig.update_yaxes(title_text="Gap to front (%) · lower = faster")
+    fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                  xanchor="left", x=0))
+    return fig
+
+
+def _impact_section() -> html.Div:
+    season = _impact_season()
+    if season is None:
+        return html.Div()
+    eff = _effect_rows(season)
+    ups = _upgrade_rounds(season)
+    teams = sorted(ups["team"].unique()) if not ups.empty else []
+    if not teams:
+        return html.Div()
+    default_team = (ups.groupby("team")["n_items"].sum().idxmax()
+                    if not ups.empty else teams[0])
+
+    trend_card = card(
+        "Upgrade Impact — team pace trend",
+        html.Div([
+            dcc.Dropdown(id="upg-impact-team",
+                         options=[{"label": t, "value": t} for t in teams],
+                         value=default_team, clearable=False,
+                         style={"width": "260px", "backgroundColor": "#111",
+                                "fontSize": "0.85rem", "marginBottom": "10px"}),
+            dcc.Graph(id="upg-impact-trend",
+                      figure=_team_trend_fig(season, default_team),
+                      config=GFX),
+        ]),
+        info=("Data: the team's qualifying gap to pole (solid) and corrected "
+              "race-pace gap (dotted) at every round, with ▼ marking the "
+              "events where the team brought upgrades (hover for the FIA "
+              "component list). Why: reads the season as a development "
+              "story — a gap that steps down right after a ▼ is an upgrade "
+              "that worked; one that doesn't is money spent for nothing."),
+    )
+    board_card = card(
+        "Upgrade Effect Board — did it work?",
+        dcc.Graph(figure=_effect_board_fig(eff, season), config=GFX)
+        if not eff.empty else
+        html.P("Not enough rounds around each upgrade to measure effects yet.",
+               style={"color": TEXT_DIM}),
+        info=(f"Data: for every performance/circuit upgrade package, the "
+              f"team's average quali gap over the {_WINDOW} rounds from its "
+              f"debut minus the {_WINDOW} rounds before, MINUS the median of "
+              "the same delta for teams that brought nothing that round "
+              "(the field control — track and conditions swings hit "
+              "everyone, so they cancel). Negative = the car genuinely "
+              "closed on the front. Why: the question the FIA Car "
+              "Presentation documents never answer. Caveats: two rounds is "
+              "a small sample and setup/driver form add noise — treat "
+              "±0.1 pp as noise, not signal."),
+    )
+    return html.Div([trend_card, board_card])
+
+
+@callback(Output("upg-impact-trend", "figure"),
+          Input("upg-impact-team", "value"),
+          prevent_initial_call=True)
+def _update_impact_trend(team):
+    season = _impact_season()
+    if season is None or not team:
+        return go.Figure()
+    return _team_trend_fig(season, team)
+
+
 def tab_upgrades(team_rank: dict | None = None) -> html.Div:
     """What technical evolution each team brought to the loaded meeting(s).
 
@@ -239,6 +471,7 @@ def tab_upgrades(team_rank: dict | None = None) -> html.Div:
                "Maintained in data/upgrades.csv.",
                style={"color": TEXT_DIM, "fontSize": "0.8rem",
                       "marginBottom": "10px"}),
+        _impact_section(),
         legend,
         *blocks,
     ])

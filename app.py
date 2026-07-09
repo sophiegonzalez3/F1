@@ -41,6 +41,7 @@ from processing import (
     enrich_weather, enrich_track_limits,
     enrich_blue_flags, enrich_session_results,
     flag_position_changes, clipped_range,
+    detect_wet_crossover, dirty_air_penalty, traffic_exposure_curve,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
@@ -289,6 +290,9 @@ print(f"Constructor standings   : {len(HIST_STANDINGS):,} rows")
 # docs, and the UPGRADES tab live in tabs/upgrades.py (the extraction template
 # for splitting further tabs out of this file — see tabs/__init__.py).
 from tabs.upgrades import tab_upgrades, upgrades_df
+from tabs.season import tab_season
+from tabs.qualifying import tab_quali
+from tabs.fingerprints import fingerprint_section
 print(f"Team upgrades           : {len(upgrades_df()):,} rows")
 
 # Per-round drivers' championship standings (same source, keyed by driver).
@@ -815,8 +819,10 @@ TABS = dbc.Tabs([
     dbc.Tab(label="TELEMETRY", tab_id="tab-laps"),
     dbc.Tab(label="STINTS",         tab_id="tab-stints"),
     dbc.Tab(label="PRACTICE",       tab_id="tab-practice"),
+    dbc.Tab(label="QUALI",          tab_id="tab-quali"),
     dbc.Tab(label="RACE",           tab_id="tab-race"),
     dbc.Tab(label="TEAMMATES",      tab_id="tab-teammates"),
+    dbc.Tab(label="SEASON",         tab_id="tab-season"),
     dbc.Tab(label="UPGRADES",       tab_id="tab-upgrades"),
 ], id="tabs", active_tab="tab-data",
    style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
@@ -876,9 +882,11 @@ def _render_tab(tab, ss, sc, sd, st):
         wl = laps[laps["session_name"].isin(ss) & laps["Driver_Short"].isin(sd)
                   & laps["Team"].isin(st) & laps["Compound"].isin(sc)].copy()
         return tab_practice(wl)
+    if tab=="tab-quali":      return tab_quali()
     if tab=="tab-race":       return tab_race(sd, st)
     if tab=="tab-teammates":  return tab_teammates(fl_d,fs_d)
     if tab=="tab-track":      return tab_track_info()
+    if tab=="tab-season":     return tab_season()
     if tab=="tab-upgrades":   return tab_upgrades(team_rank=_team_champ_rank())
     return html.P("Select a tab.")
 
@@ -2767,15 +2775,21 @@ _LAPTEL_CHANNELS = ["Speed", "Throttle", "Brake", "GearNo"]
 _LAPTEL_DASHES   = ["solid", "dash", "dot", "dashdot", "longdash"]
 
 
-def _lap_telemetry(session, driver_short, lapno):
+def _lap_telemetry(session, driver_short, lapno, tel_pool=None):
     """Telemetry samples belonging to one lap, with a lap-relative time column.
 
     Locates the lap in the global ``laps`` frame (by session / driver / lap
     number), reads its [LapStartTime, LapStartTime+LapTime_s] window, and slices
     the global ``telemetry`` frame to that driver+window. Returns
     ``(tel_sub_sorted_by_t_rel, lap_row)`` or ``(None, lap_row_or_None)``.
+
+    ``tel_pool`` — optional pre-filtered telemetry subframe (same session +
+    driver). Callers that window many laps pass per-driver pools so each call
+    slices a few thousand rows instead of re-scanning the full multi-million-
+    row frame; the masks below are identical either way.
     """
-    if telemetry is None or telemetry.empty:
+    src = tel_pool if tel_pool is not None else telemetry
+    if src is None or src.empty:
         return None, None
     lp = laps[(laps["session_name"] == session)
               & (laps["Driver_Short"] == driver_short)
@@ -2788,11 +2802,11 @@ def _lap_telemetry(session, driver_short, lapno):
     dur   = pd.to_numeric(row.get("LapTime_s"),    errors="coerce")
     if not (np.isfinite(start) and np.isfinite(dur)):
         return None, row
-    tel = telemetry[
-        (telemetry["session_name"] == session)
-        & (telemetry["DriverNo"].astype(str).str.strip() == dno)
-        & (telemetry["timestamp"] >= start)
-        & (telemetry["timestamp"] <= start + dur)
+    tel = src[
+        (src["session_name"] == session)
+        & (src["DriverNo"].astype(str).str.strip() == dno)
+        & (src["timestamp"] >= start)
+        & (src["timestamp"] <= start + dur)
     ].copy()
     if tel.empty:
         return None, row
@@ -2815,15 +2829,32 @@ def _lap_telemetry(session, driver_short, lapno):
 def _best_lap_telemetry_frame(fl):
     """Concatenated telemetry of each driver's single best valid lap across all
     loaded sessions in *fl* (one best lap per driver). Tagged with Driver_Short
-    and Team. Used by the Max-Speed and Gear-usage charts."""
+    and Team. Used by the Max-Speed / Gear-usage charts, the mini-sector
+    heatmap, and the style fingerprints.
+
+    Splits the telemetry into per-(session, driver) pools with ONE pass first;
+    windowing each lap then works on a few thousand rows. The old version
+    re-scanned the full frame per driver, which cost ~18 s per call on a
+    five-session weekend."""
     v = fl[fl["ValidLap"]].copy()
     v = v[pd.to_numeric(v["LapTime_s"], errors="coerce") > 0]
-    if v.empty:
+    if v.empty or telemetry is None or telemetry.empty:
         return pd.DataFrame()
-    idx   = v.groupby("Driver_Short")["LapTime_s"].idxmin()
+    idx  = v.groupby("Driver_Short")["LapTime_s"].idxmin()
+    best = v.loc[idx]
+
+    pool_src = telemetry[telemetry["session_name"].isin(set(best["session_name"]))]
+    pool_src = pool_src.assign(
+        _dno=pool_src["DriverNo"].astype(str).str.strip())
+    pools = {k: g for k, g in pool_src.groupby(["session_name", "_dno"])}
+
     parts = []
-    for _, row in v.loc[idx].iterrows():
-        tel, _ = _lap_telemetry(row["session_name"], row["Driver_Short"], row["LapNo"])
+    for _, row in best.iterrows():
+        pool = pools.get((row["session_name"], str(row["DriverNo"]).strip()))
+        if pool is None:
+            continue
+        tel, _ = _lap_telemetry(row["session_name"], row["Driver_Short"],
+                                row["LapNo"], tel_pool=pool)
         if tel is None or tel.empty:
             continue
         tel = tel.copy()
@@ -3459,7 +3490,10 @@ def _racing_line_fig(specs):
 
 
 def tab_laps(fl, ft):
-    sector_fig = _sector_heatmap(fl)
+    # one heavy best-lap telemetry extraction, shared by the heatmap,
+    # max-speed/gear charts and the style fingerprints
+    blt = _best_lap_telemetry_frame(fl)
+    sector_fig = _sector_heatmap(fl, blt=blt)
 
     bt=best_laps_table(fl)
     bt["Best Lap"]=bt["LapTime_s"].apply(format_lap_time)
@@ -3481,8 +3515,8 @@ def tab_laps(fl, ft):
 
     # ── Telemetry section ────────────────────────────────────────
     # Max-speed and gear use each driver's single best lap across all loaded
-    # sessions; the channel overlay is driven by the leaderboard selection.
-    blt = _best_lap_telemetry_frame(fl)
+    # sessions (blt, computed once above); the channel overlay is driven by
+    # the leaderboard selection.
 
     fig_spd = go.Figure()
     fig_gear = go.Figure()
@@ -3640,6 +3674,7 @@ def tab_laps(fl, ft):
                    "several to overlay their lines team-coloured. Why: shows the line each "
                    "driver actually takes — turn-in point, apex, how much track they use "
                    "on exit — which lap-time and speed traces alone can't reveal.")),
+        fingerprint_section(blt),
     ])
 
 
@@ -5615,18 +5650,52 @@ def _strategy_model(rl: pd.DataFrame, total_laps: int) -> dict | None:
     return model if len(model) >= 2 else None
 
 
+# Safety-car what-if: a stop taken while the SC is out only costs a fraction
+# of the normal pit loss (the field circulates slowly, so the pit-lane detour
+# hurts far less). Window = SC deployment length in laps.
+_SC_FACTOR = 0.45
+_SC_WINDOW = 2      # SC covers laps [sc_lap, sc_lap + _SC_WINDOW]
+
+# Traffic model: a stop drops the car behind every rival that was within
+# pit_loss behind it (traffic_exposure_curve measures how many, weighted by
+# rejoin proximity). Each of those costs roughly LAPS_TO_CLEAR laps in dirty
+# air at the penalty measured from this race (dirty_air_penalty).
+_TRAFFIC_LAPS_TO_CLEAR = 2.0
+_TRAFFIC_MIN_PENALTY = 0.10   # s/lap — below this the term is noise, leave it off
+
+
 def _simulate_strategies(model: dict, total_laps: int, pit_loss: float,
-                         allowed_stops=(1, 2)):
+                         allowed_stops=(1, 2), sc_lap: int | None = None,
+                         traffic_cost: np.ndarray | None = None):
     """Grid-search optimal stop laps for every legal compound plan.
 
     Returns (results DataFrame sorted by Total, sensitivity dict
     {label: (s1_array, delta_vs_best_array)} for the pit-window chart).
     Times are relative — only differences between strategies matter.
+    With `sc_lap`, stops falling inside the SC window are discounted to
+    _SC_FACTOR × pit_loss (the what-if: "who'd have won with an SC there?").
+    With `traffic_cost` (array indexed by stop lap, 0..total_laps), each
+    stop additionally pays the rejoin-traffic cost of its lap — so windows
+    that release the car into a train price worse than clear ones. The SC
+    discount applies to the pit-lane loss only; rejoining an SC queue still
+    carries its (large) traffic term, which is exactly what happens in
+    reality.
     """
     L, minS = total_laps, _SIM_MIN_STINT
     comps = list(model)
     cum = {c: np.concatenate([[0.0], np.cumsum(model[c]["cost"][1:])])
            for c in comps}     # cum[c][n] = cost of an n-lap stint on c
+
+    def _loss(stop_laps):
+        arr = np.asarray(stop_laps, dtype=float)
+        if sc_lap is None:
+            base = np.full(arr.shape, pit_loss)
+        else:
+            in_sc = (arr >= sc_lap) & (arr <= sc_lap + _SC_WINDOW)
+            base = np.where(in_sc, pit_loss * _SC_FACTOR, pit_loss)
+        if traffic_cost is not None:
+            base = base + traffic_cost[np.clip(arr.astype(int), 0, L)]
+        return base
 
     rows, sens = [], {}
 
@@ -5637,7 +5706,7 @@ def _simulate_strategies(model: dict, total_laps: int, pit_loss: float,
                 if c1 == c2:
                     continue                     # two-compound rule
                 totals = (cum[c1][s_range] + cum[c2][L - s_range]
-                          + pit_loss)
+                          + _loss(s_range))
                 k = int(np.argmin(totals))
                 s1 = int(s_range[k])
                 label = f"{c1[0]}({s1}) → {c2[0]}({L - s1})"
@@ -5663,7 +5732,7 @@ def _simulate_strategies(model: dict, total_laps: int, pit_loss: float,
                 if len(s2r) == 0:
                     continue
                 t = (cum[c1][s1] + cum[c2][s2r - s1] + cum[c3][L - s2r]
-                     + 2 * pit_loss)
+                     + float(_loss(s1)) + _loss(s2r))
                 j = int(np.argmin(t))
                 best_curve[i] = t[j]
                 if best is None or t[j] < best[0]:
@@ -5691,7 +5760,8 @@ def _simulate_strategies(model: dict, total_laps: int, pit_loss: float,
     return res, sens
 
 
-def _strategy_sim_content(rl: pd.DataFrame, pit_loss=None, stops=(1, 2)):
+def _strategy_sim_content(rl: pd.DataFrame, pit_loss=None, stops=(1, 2),
+                          sc_lap=None, traffic_on=True):
     """Build the simulator output (ranked board + pit-window chart)."""
     if rl.empty or "LapNo" not in rl.columns:
         return html.P("No race laps available.", style={"color": TEXT_DIM})
@@ -5700,6 +5770,12 @@ def _strategy_sim_content(rl: pd.DataFrame, pit_loss=None, stops=(1, 2)):
     if pit_loss is None:
         pit_loss = est_loss if est_loss is not None else 22.0
     pit_loss = float(pit_loss)
+    try:
+        sc_lap = int(sc_lap) if sc_lap else None
+    except (TypeError, ValueError):
+        sc_lap = None
+    if sc_lap is not None and not (1 < sc_lap < total_laps):
+        sc_lap = None
 
     model = _strategy_model(rl, total_laps)
     if model is None:
@@ -5708,8 +5784,24 @@ def _strategy_sim_content(rl: pd.DataFrame, pit_loss=None, stops=(1, 2)):
             "two compounds — the simulator needs a dry race with mixed "
             "strategies.", style={"color": TEXT_DIM})
 
+    # ── traffic term: measured dirty-air penalty × rejoin exposure ──
+    pen = dirty_air_penalty(rl) if traffic_on else None
+    exposure = (traffic_exposure_curve(rl, pit_loss)
+                if traffic_on and pen is not None else None)
+    traffic_usable = (pen is not None and exposure is not None
+                      and pen["penalty_s"] >= _TRAFFIC_MIN_PENALTY)
+    traffic_cost = None
+    if traffic_usable:
+        traffic_cost = np.zeros(total_laps + 1)
+        idx = exposure.index[(exposure.index >= 1)
+                             & (exposure.index <= total_laps)]
+        traffic_cost[idx] = (exposure.loc[idx].to_numpy()
+                             * _TRAFFIC_LAPS_TO_CLEAR * pen["penalty_s"])
+
     stops = tuple(int(s) for s in (stops or (1, 2)))
-    res, sens = _simulate_strategies(model, total_laps, pit_loss, stops)
+    res, sens = _simulate_strategies(model, total_laps, pit_loss, stops,
+                                     sc_lap=sc_lap,
+                                     traffic_cost=traffic_cost)
     if res.empty:
         return html.P("No legal strategies for the chosen settings.",
                       style={"color": TEXT_DIM})
@@ -5735,7 +5827,10 @@ def _strategy_sim_content(rl: pd.DataFrame, pit_loss=None, stops=(1, 2)):
         textfont=dict(size=10, color=TEXT_MAIN),
     ))
     theme(fig_rank, max(320, 30 * len(top) + 90),
-          f"Strategy Board — {total_laps} laps · pit loss {pit_loss:.1f}s")
+          f"Strategy Board — {total_laps} laps · pit loss {pit_loss:.1f}s"
+          + (" · traffic-aware" if traffic_usable else "")
+          + (f" · what-if SC L{sc_lap}–L{sc_lap + _SC_WINDOW}"
+             if sc_lap else ""))
     fig_rank.update_layout(
         xaxis=dict(title="time lost vs optimal strategy (s)",
                    gridcolor=GRID_CLR, zeroline=False,
@@ -5745,6 +5840,18 @@ def _strategy_sim_content(rl: pd.DataFrame, pit_loss=None, stops=(1, 2)):
     )
 
     fig_sens = go.Figure()
+    if traffic_usable:
+        # faint backdrop first, so the strategy lines draw on top of it
+        exp_idx = exposure.index[(exposure.index >= 1)
+                                 & (exposure.index <= total_laps)]
+        fig_sens.add_trace(go.Scatter(
+            x=exp_idx, y=exposure.loc[exp_idx], mode="lines",
+            name="cars in rejoin window", yaxis="y2",
+            line=dict(width=0), fill="tozeroy",
+            fillcolor="rgba(255,176,0,0.14)",
+            hovertemplate=("stop on lap %{x}: rejoin behind "
+                           "~%{y:.1f} cars<extra></extra>"),
+        ))
     for label in res.head(5)["Label"]:
         if label not in sens:
             continue
@@ -5769,11 +5876,38 @@ def _strategy_sim_content(rl: pd.DataFrame, pit_loss=None, stops=(1, 2)):
         legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR,
                     borderwidth=1, font=dict(size=9)),
     )
+    if traffic_usable:
+        _exp_max = float(exposure.max()) or 1.0
+        fig_sens.update_layout(yaxis2=dict(
+            overlaying="y", side="right", showgrid=False, zeroline=False,
+            range=[0, _exp_max * 2.6],           # keep the backdrop low
+            title=dict(text="cars in rejoin window",
+                       font=dict(size=10, color="#FFB000")),
+            tickfont=dict(size=9, color="#FFB000"),
+        ))
 
     note_bits = [f"Pit loss estimated from this race: "
                  f"{est_loss:.1f} s. " if est_loss is not None else
                  "Pit loss could not be estimated from this race — using the "
                  "value above. "]
+    if traffic_usable:
+        note_bits.append(
+            f"Traffic: dirty air measured at +{pen['penalty_s']:.2f} s/lap "
+            f"({pen['n_stints']} stints); each stop pays "
+            f"~{_TRAFFIC_LAPS_TO_CLEAR:.0f} laps of that per car in its "
+            "rejoin window (amber backdrop below). ")
+    elif traffic_on:
+        note_bits.append(
+            "Traffic term off: dirty air wasn't measurably slow in this race"
+            + (f" ({pen['penalty_s']:+.2f} s/lap — slipstream/DRS likely "
+               "offset it)" if pen is not None else
+               " (not enough mixed clean/dirty stints to measure)") + ". ")
+    if sc_lap:
+        note_bits.append(
+            f"What-if: Safety Car on laps {sc_lap}–{sc_lap + _SC_WINDOW} — "
+            f"stops in that window cost only "
+            f"{pit_loss * _SC_FACTOR:.1f} s ({int(_SC_FACTOR * 100)}%) of "
+            "pit loss (their rejoin-traffic term still applies). ")
     if res["Extrapolated"].any():
         note_bits.append("⚠ marks plans needing stints longer than anything "
                          "observed — their deg is extrapolated.")
@@ -5786,6 +5920,106 @@ def _strategy_sim_content(rl: pd.DataFrame, pit_loss=None, stops=(1, 2)):
         dcc.Graph(figure=fig_rank, config=GFX),
         dcc.Graph(figure=fig_sens, config=GFX),
     ])
+
+
+# ── Wet-race crossover (inter ↔ slick break-even) ─────────────
+def _wet_crossover_fig(res: dict, title: str, height: int = 460) -> go.Figure:
+    """Top: field median lap time on inters vs slicks per lap. Bottom: their
+    delta with the crossover lap(s) marked — where the fastest tyre changed."""
+    per = res["per_lap"]
+    fig = make_subplots(
+        rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+        row_heights=[0.62, 0.38],
+        subplot_titles=("Field median lap time by tyre group",
+                        "Inter − slick delta  ·  0 = break-even"),
+    )
+    fig.add_trace(go.Scatter(
+        x=per["LapNo"], y=per["inter_med"], mode="lines", name="Intermediate",
+        line=dict(color=COMPOUND_COLORS["INTER"], width=2.5),
+        connectgaps=False,
+        hovertemplate="L%{x} inter: %{y:.1f}s<extra></extra>"), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=per["LapNo"], y=per["slick_med"], mode="lines", name="Slick",
+        line=dict(color="#E8E8E8", width=2.5), connectgaps=False,
+        hovertemplate="L%{x} slick: %{y:.1f}s<extra></extra>"), row=1, col=1)
+
+    dpos = per["delta"].clip(lower=0)
+    dneg = per["delta"].clip(upper=0)
+    fig.add_trace(go.Scatter(
+        x=per["LapNo"], y=dpos, mode="lines", name="slicks faster",
+        line=dict(width=0), fill="tozeroy",
+        fillcolor="rgba(232,232,232,0.35)", connectgaps=False,
+        hoverinfo="skip", showlegend=False), row=2, col=1)
+    fig.add_trace(go.Scatter(
+        x=per["LapNo"], y=dneg, mode="lines", name="inters faster",
+        line=dict(width=0), fill="tozeroy",
+        fillcolor="rgba(57,181,74,0.35)", connectgaps=False,
+        hoverinfo="skip", showlegend=False), row=2, col=1)
+    fig.add_trace(go.Scatter(
+        x=per["LapNo"], y=per["delta"], mode="lines", name="delta",
+        line=dict(color=TEXT_MAIN, width=1.5), connectgaps=False,
+        hovertemplate="L%{x} delta: %{y:+.1f}s<extra></extra>",
+        showlegend=False), row=2, col=1)
+    fig.add_hline(y=0, line=dict(color=TEXT_DIM, width=1, dash="dash"),
+                  row=2, col=1)
+
+    for c in res["crossings"]:
+        lab = ("→ slicks" if c["direction"] == "to_slick" else "→ inters")
+        style = "solid" if c.get("interp", True) else "dot"
+        for r in (1, 2):
+            fig.add_vline(x=c["lap"], line=dict(color=ACCENT, width=1.5,
+                                                dash=style), row=r, col=1)
+        fig.add_annotation(x=c["lap"], yref="paper", y=1.0,
+                           text=f"L{c['lap']} {lab}", showarrow=False,
+                           font=dict(size=9, color=ACCENT),
+                           xanchor="left", xshift=3)
+
+    theme(fig, height, title)
+    fig.update_yaxes(title_text="Lap time (s)", row=1, col=1)
+    fig.update_yaxes(title_text="Δ (s)", row=2, col=1)
+    fig.update_xaxes(title_text="Lap", row=2, col=1)
+    fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.04,
+                                  xanchor="left", x=0))
+    return fig
+
+
+def _wet_switch_fig(res: dict, title: str, height: int = 420) -> go.Figure:
+    """Per-driver: how many laps late (vs the field crossover) each driver
+    switched tyres, and the field-median time that timing cost."""
+    sw = res["switches"].dropna(subset=["delta_laps"]).copy()
+    fig = go.Figure()
+    if sw.empty:
+        theme(fig, height, title)
+        fig.add_annotation(text="No driver switches matched a crossover.",
+                           xref="paper", yref="paper", x=0.5, y=0.5,
+                           showarrow=False, font=dict(color=TEXT_DIM))
+        return fig
+    # one row per driver: prefer the switch with the largest time impact
+    sw["_abs"] = sw["time_lost_s"].abs().fillna(0)
+    sw = (sw.sort_values("_abs", ascending=False)
+          .drop_duplicates("Driver_Short"))
+    sw = sw.sort_values("delta_laps")
+    fig.add_trace(go.Bar(
+        x=sw["delta_laps"], y=sw["Driver_Short"], orientation="h",
+        marker_color=[TEAM_COLORS.get(t, "#808080") for t in sw["Team"]],
+        customdata=np.stack([sw["direction"].map(
+            {"to_slick": "→ slicks", "to_inter": "→ inters"}),
+            sw["lap"], sw["crossover_lap"], sw["time_lost_s"]], axis=-1),
+        hovertemplate=("<b>%{y}</b> %{customdata[0]}<br>"
+                       "switched lap %{customdata[1]:.0f} "
+                       "(crossover lap %{customdata[2]:.0f})<br>"
+                       "%{x:+.0f} laps vs field · ~%{customdata[3]:.0f}s"
+                       "<extra></extra>"),
+        text=[f"{v:+.0f}" for v in sw["delta_laps"]], textposition="outside",
+        textfont=dict(size=10)))
+    fig.add_vline(x=0, line=dict(color="#fff", width=1, dash="dash"))
+    theme(fig, max(340, 22 * len(sw) + 110), title)
+    span = float(sw["delta_laps"].abs().max()) or 1.0
+    fig.update_xaxes(title_text="Laps late (+) / early (−) vs field crossover",
+                     range=[-span * 1.3, span * 1.3])
+    fig.update_yaxes(autorange="reversed")
+    fig.update_layout(showlegend=False, bargap=0.3)
+    return fig
 
 
 def _weather_race_fig(rl: pd.DataFrame, title: str, height: int = 480) -> go.Figure:
@@ -6030,6 +6264,82 @@ def _pitstops_card(rl: pd.DataFrame, meeting, shown_year) -> object:
                 info=info)
 
 
+# ── Lap-1 & restart analysis ──────────────────────────────────
+_SC_FLAGS = {"SafetyCar", "VSC", "VSCEnding"}
+
+
+def _start_restart_stats(rl: pd.DataFrame) -> tuple[pd.DataFrame, list[int]]:
+    """Per driver: positions gained on lap 1 (grid → end of L1) and summed
+    across SC/VSC restarts. Restart lap = first green lap after a lap where
+    at least half the field ran under SC/VSC."""
+    need = {"Driver_Short", "LapNo", "Position"}
+    if rl.empty or not need.issubset(rl.columns):
+        return pd.DataFrame(), []
+    pos = (rl.dropna(subset=["Position"])
+           .set_index(["Driver_Short", "LapNo"])["Position"]
+           .groupby(level=[0, 1]).first())
+
+    # field-level SC laps
+    restarts: list[int] = []
+    if "TrackStatus_Flag" in rl.columns:
+        under = (rl.groupby("LapNo")["TrackStatus_Flag"]
+                 .agg(lambda s: (s.isin(_SC_FLAGS)).mean() >= 0.5))
+        sc_laps = set(under[under].index.astype(int))
+        restarts = sorted(int(l) + 1 for l in sc_laps
+                          if (l + 1) not in sc_laps
+                          and (l + 1) <= int(rl["LapNo"].max()))
+
+    rows = []
+    for drv, g in rl.groupby("Driver_Short"):
+        grid = pd.to_numeric(g.get("Grid_Position"), errors="coerce").dropna()
+        grid = float(grid.iloc[0]) if len(grid) else np.nan
+        p1 = pos.get((drv, 1), np.nan)
+        start_gain = (grid - p1) if np.isfinite(grid) and pd.notna(p1) else np.nan
+        r_gain, r_n = 0.0, 0
+        for r in restarts:
+            a, b = pos.get((drv, r - 1), np.nan), pos.get((drv, r), np.nan)
+            if pd.notna(a) and pd.notna(b):
+                r_gain += float(a - b)
+                r_n += 1
+        rows.append({"driver": drv, "team": g["Team"].iloc[0],
+                     "grid": grid, "p1": p1,
+                     "start_gain": start_gain,
+                     "restart_gain": r_gain if r_n else np.nan,
+                     "n_restarts": r_n})
+    df = pd.DataFrame(rows).dropna(subset=["start_gain"])
+    return df.sort_values("start_gain", ascending=False), restarts
+
+
+def _start_restart_fig(st: pd.DataFrame, restarts: list[int],
+                       title: str) -> go.Figure:
+    fig = go.Figure()
+    has_restarts = bool(restarts) and st["restart_gain"].notna().any()
+    fig.add_trace(go.Bar(
+        x=st["driver"], y=st["start_gain"], name="Lap 1",
+        marker_color=[TEAM_COLORS.get(t, "#808080") for t in st["team"]],
+        customdata=np.stack([st["grid"], st["p1"]], axis=-1),
+        hovertemplate=("<b>%{x}</b> · lap 1: %{y:+.0f}<br>"
+                       "P%{customdata[0]:.0f} on the grid → "
+                       "P%{customdata[1]:.0f} after lap 1<extra></extra>"),
+    ))
+    if has_restarts:
+        fig.add_trace(go.Bar(
+            x=st["driver"], y=st["restart_gain"], name="SC/VSC restarts",
+            marker_color=[_hex_to_rgba(TEAM_COLORS.get(t, "#808080"), 0.45)
+                          for t in st["team"]],
+            hovertemplate=("<b>%{x}</b> · restarts combined: %{y:+.0f}"
+                           "<extra></extra>"),
+        ))
+    fig.add_hline(y=0, line=dict(color="white", width=1, dash="dash"))
+    theme(fig, 420, title + (f" · restarts on lap {', '.join(map(str, restarts))}"
+                             if restarts else " · no SC restarts"))
+    fig.update_yaxes(title_text="Positions gained (+) / lost (−)")
+    fig.update_layout(barmode="group",
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                                  xanchor="left", x=0))
+    return fig
+
+
 # ── Race-control "radio" message timeline ─────────────────────
 # F1 publishes no transcribed team-radio text (only audio clips), so the
 # closest exploitable per-driver message stream is the FIA race-control
@@ -6230,6 +6540,77 @@ def _radio_text_col(mode: str) -> str:
     return "Transcript_raw" if str(mode) == "raw" else "Transcript"
 
 
+def _attach_radio_laps(rdf: pd.DataFrame, rl: pd.DataFrame) -> pd.DataFrame:
+    """Map each clip's UTC timestamp to the driver's race lap (RadioLap
+    column). Laps carry LapStartDate (UTC wall clock); a clip belongs to the
+    last lap that started before it. Clips before the race or more than 90 s
+    after a driver's final lap ended stay unmapped (formation grid chatter /
+    in-lap congratulations)."""
+    if (rdf is None or rdf.empty or rl is None or rl.empty
+            or "LapStartDate" not in rl.columns):
+        return rdf
+    rdf = rdf.copy()
+    rdf["RadioLap"] = np.nan
+    for drv, g in rl.dropna(subset=["LapStartDate"]).groupby("Driver_Short"):
+        g = g.sort_values("LapStartDate")
+        starts = pd.to_datetime(g["LapStartDate"]).to_numpy()
+        lapnos = g["LapNo"].to_numpy()
+        durs   = pd.to_numeric(g["LapTime_s"], errors="coerce").to_numpy()
+        m = rdf["Driver_Short"] == drv
+        if not m.any():
+            continue
+        utcs = pd.to_datetime(rdf.loc[m, "Utc"]).to_numpy()
+        idx = np.searchsorted(starts, utcs, side="right") - 1
+        laps_out = np.full(len(utcs), np.nan)
+        for i, j in enumerate(idx):
+            if j < 0:
+                continue
+            end = starts[j] + np.timedelta64(
+                int((durs[j] if np.isfinite(durs[j]) else 120) + 90), "s")
+            if utcs[i] <= end:
+                laps_out[i] = lapnos[j]
+        rdf.loc[m, "RadioLap"] = laps_out
+    return rdf
+
+
+def _add_radio_markers(fig: go.Figure, rl: pd.DataFrame,
+                       rdf: pd.DataFrame) -> None:
+    """Overlay transcribed-radio markers on the position chart: one star per
+    clip at (lap, driver's position that lap), transcript + topics on hover.
+    Toggleable via the legend."""
+    if rdf is None or rdf.empty or "RadioLap" not in rdf.columns:
+        return
+    d = rdf.dropna(subset=["RadioLap"])
+    if d.empty:
+        return
+    pos = (rl.dropna(subset=["Position"])
+           .set_index(["Driver_Short", "LapNo"])["Position"])
+    xs, ys, hover, colors = [], [], [], []
+    for r in d.itertuples():
+        lap = int(r.RadioLap)
+        p = pos.get((r.Driver_Short, lap))
+        if p is None or (isinstance(p, pd.Series) and p.empty):
+            continue
+        p = float(p.iloc[0]) if isinstance(p, pd.Series) else float(p)
+        xs.append(lap); ys.append(p)
+        topics = getattr(r, "Topics", "") or ""
+        txt = re.sub(r"(.{60}\S*)\s", r"\1<br>", str(r.Transcript or ""))
+        hover.append(f"<b>{r.Driver_Short}</b> · L{lap} · {r.Clock}"
+                     + (f"<br><i>{topics}</i>" if topics else "")
+                     + f"<br>{txt or '(no speech detected)'}")
+        first_topic = topics.split(", ")[0] if topics else ""
+        colors.append(_TOPIC_COLORS.get(first_topic, "#DDDDDD"))
+    if not xs:
+        return
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys, mode="markers", name="📻 radio",
+        marker=dict(symbol="star", size=10, color=colors,
+                    line=dict(width=1, color="#0B0B18")),
+        customdata=hover,
+        hovertemplate="%{customdata}<extra>radio</extra>",
+    ))
+
+
 # Topic tags come from radio_loader.tag_topics (keyword rules on the
 # transcript). One colour per topic, used for the table badges.
 _TOPIC_COLORS = {
@@ -6343,7 +6724,7 @@ def _team_radio_table(rdf: pd.DataFrame, selected_codes: list[str],
     hdr = html.Tr([html.Th(h, style={"padding": "6px 10px", "color": ACCENT,
                                       "textAlign": "left", "position": "sticky",
                                       "top": 0, "background": "#09091A"})
-                   for h in ("", "Time", "Driver", "Audio", "Topics", "Transcript")])
+                   for h in ("", "Time", "Lap", "Driver", "Audio", "Topics", "Transcript")])
     rows = []
     for _, r in df.iterrows():
         clr = TEAM_COLORS.get(_code_team(r["Driver_Short"]), ACCENT)
@@ -6358,6 +6739,10 @@ def _team_radio_table(rdf: pd.DataFrame, selected_codes: list[str],
             html.Td(badge, style={"padding": "6px 4px 6px 10px", "textAlign": "center"}),
             html.Td(r["Clock"], style={"padding": "6px 10px", "color": TEXT_DIM,
                                        "whiteSpace": "nowrap", "fontVariantNumeric": "tabular-nums"}),
+            html.Td(f"L{int(r['RadioLap'])}" if pd.notna(r.get("RadioLap")) else "—",
+                    style={"padding": "6px 10px", "color": TEXT_DIM,
+                           "whiteSpace": "nowrap",
+                           "fontVariantNumeric": "tabular-nums"}),
             html.Td(r["Driver_Short"], style={"padding": "6px 10px",
                     "color": clr, "fontWeight": "700"}),
             html.Td(html.Audio(src=f"/radio/{r['Mp3']}", controls=True,
@@ -6505,6 +6890,7 @@ def tab_race(sel_drivers=None, sel_teams=None):
     pos_fig = _position_changes_fig(
         rl, f"Race Position by Lap – {meeting} {shown_year}"
     )
+    start_stats, restart_laps = _start_restart_stats(rl)
     trace_fig = _race_trace_fig(
         rl, f"Race Trace – {meeting} {shown_year}"
     )
@@ -6542,7 +6928,30 @@ def tab_race(sel_drivers=None, sel_teams=None):
                 labelStyle={"marginRight": "16px", "color": TEXT_MAIN,
                             "fontSize": "0.8rem"},
             ),
-        ], md=4),
+        ], md=3),
+        dbc.Col([
+            html.Label("WHAT-IF: SC ON LAP",
+                       style={"color": TEXT_DIM, "fontSize": "0.72rem",
+                              "letterSpacing": "1px"}),
+            dcc.Input(id="strat-sim-sclap", type="number",
+                      value=None, min=2, step=1, debounce=True,
+                      placeholder="none",
+                      style={"width": "100%", "background": "#111",
+                             "color": TEXT_MAIN, "border": f"1px solid {GRID_CLR}",
+                             "borderRadius": "4px", "padding": "4px 8px"}),
+        ], md=2),
+        dbc.Col([
+            html.Label("TRAFFIC",
+                       style={"color": TEXT_DIM, "fontSize": "0.72rem",
+                              "letterSpacing": "1px"}),
+            dcc.Checklist(
+                id="strat-sim-traffic",
+                options=[{"label": " price rejoin traffic", "value": "on"}],
+                value=["on"], inline=True,
+                inputStyle={"marginRight": "4px", "accentColor": ACCENT},
+                labelStyle={"color": TEXT_MAIN, "fontSize": "0.8rem"},
+            ),
+        ], md=3),
     ], className="mb-2")
     sim_card = card(
         "Strategy What-If Simulator",
@@ -6560,13 +6969,50 @@ def tab_race(sel_drivers=None, sel_teams=None):
               "plan and its stop laps. Top chart: every plan ranked by time "
               "lost vs the optimum. Bottom chart: how much mistiming the "
               "first stop costs — a flat valley means a wide, forgiving pit "
-              "window. Why: answers 'was the winning strategy actually "
-              "optimal, and what would X have gained with the alternative?' "
-              "using only what the tyres really did that day."),
+              "window; the amber backdrop is how many cars a stop on that lap "
+              "would drop you behind (from the race's real gap structure). "
+              "The traffic toggle prices that in: each stop pays ~2 laps of "
+              "the dirty-air penalty measured from this race per car in its "
+              "rejoin window — automatically left off when following cost "
+              "nothing here (slipstream tracks). The SC what-if control "
+              "re-prices stops taken during a hypothetical Safety Car window "
+              "(lap N to N+2) at 45% of the normal pit loss — watch the "
+              "optimal plan flip when a cheap stop appears mid-race. Why: "
+              "answers 'was the winning strategy actually optimal, and who "
+              "was one Safety Car away from a different result?' using only "
+              "what the tyres, and the traffic, really did that day."),
     )
     wx_fig = _weather_race_fig(
         rl, f"Weather & Race Pace – {meeting} {shown_year}"
     )
+
+    # ── Wet-race crossover (only shown for wet/transition races) ──
+    wet = detect_wet_crossover(rl)
+    wet_card = None
+    if wet is not None and not wet["per_lap"]["delta"].dropna().empty:
+        wet_card = card(
+            "Wet-Race Crossover — Inters vs Slicks",
+            html.Div([
+                dcc.Graph(figure=_wet_crossover_fig(
+                    wet, f"Tyre Crossover – {meeting} {shown_year}"),
+                    config=GFX),
+                dcc.Graph(figure=_wet_switch_fig(
+                    wet, "Switch timing vs the field crossover"),
+                    config=GFX),
+            ]),
+            info=("Data: on every lap where cars ran BOTH intermediates and "
+                  "slicks, the field's median lap time on each is compared — "
+                  "their delta (top→bottom) crosses zero at the break-even "
+                  "lap, marked in red (dotted = estimated when the overlap "
+                  "window was one-sided). The lower chart shows how many laps "
+                  "late or early each driver switched relative to that "
+                  "crossover, and the field-median time that timing cost. "
+                  "Why: in a drying or rain-hit race the whole result turns "
+                  "on when you change tyres — this pins the optimal moment "
+                  "from the cars themselves and grades every driver's call. "
+                  "Caveats: medians include Safety-Car laps; only crossovers "
+                  "where the field delta clears ~1s are flagged confident."),
+        )
 
     # ── Race-control message timeline ("radio") ──────────────
     # Default: every driver with messages, ordered by championship points, and
@@ -6622,6 +7068,11 @@ def tab_race(sel_drivers=None, sel_teams=None):
     if radio_cached(season, meeting) or (is_fallback and radio_cached(shown_year, meeting)):
         ry  = shown_year if (is_fallback and radio_cached(shown_year, meeting)) else season
         rdf = load_race_radio(ry, meeting)        # instant (cached)
+        # map clips to race laps only when the radio belongs to the shown
+        # race (a fallback season's laps don't match this year's clips)
+        if ry == shown_year:
+            rdf = _attach_radio_laps(rdf, rl)
+            _add_radio_markers(pos_fig, rl, rdf)
         tr_body = (_team_radio_block(rdf, meeting, ry,
                                      default_codes=visible, season=ry)
                    if not rdf.empty else
@@ -6659,8 +7110,30 @@ def tab_race(sel_drivers=None, sel_teams=None):
             info=("Data: each driver's on-track position at every lap (grid slot shown "
                   "at lap 0), team-coloured with teammates split solid/dashed, driver "
                   "code labelled at the line end. The shaded band marks the points-paying "
-                  "top 10; flag periods are banded behind. Why: shows overtakes, pit-stop "
-                  "shuffles and Safety-Car bunching at a glance."),
+                  "top 10; flag periods are banded behind. ★ stars are transcribed "
+                  "team-radio clips placed at the lap they surfaced on the F1 feed, "
+                  "coloured by topic — hover to read the call, toggle them via the "
+                  "legend. (The feed publishes clips up to a lap or two after they "
+                  "were actually spoken, so treat placement as approximate.) Why: "
+                  "shows overtakes, pit-stop shuffles and Safety-Car bunching at a "
+                  "glance, now with the pit-wall conversation on top."),
+        ),
+        card(
+            "Lap 1 & Restarts",
+            dcc.Graph(figure=_start_restart_fig(
+                start_stats, restart_laps,
+                f"Positions gained at the start – {meeting} {shown_year}"),
+                config=GFX)
+            if not start_stats.empty else
+            html.P("No grid/position data for this race.",
+                   style={"color": TEXT_DIM}),
+            info=("Data: grid slot vs position at the end of lap 1 (solid "
+                  "bars), plus positions gained across every SC/VSC restart "
+                  "combined (faded bars — a restart is the first green lap "
+                  "after the field ran under Safety Car). Why: launches and "
+                  "restarts are a distinct driver skill the lap-time charts "
+                  "never show — some drivers make their season in the first "
+                  "500 metres, and a good restart is free overtaking."),
         ),
         card(
             "Race Trace",
@@ -6719,6 +7192,7 @@ def tab_race(sel_drivers=None, sel_teams=None):
                   "onto pace shows how the weather shaped the race — a cooling track, "
                   "a rain shower or the grip swing that triggered the pit cascade."),
         ),
+        *([wet_card] if wet_card is not None else []),
         radio_card,
         team_radio_card,
     ])
@@ -6772,6 +7246,9 @@ def filter_team_radio(selected_codes, mode, topics):
     if not meeting or not radio_cached(season, meeting):
         return no_update, no_update
     rdf = load_race_radio(season, meeting)        # cached → instant
+    data = _resolve_race_data(season, meeting)
+    if data is not None and data.get("season") == season:
+        rdf = _attach_radio_laps(rdf, data["laps"])
     ordered = _order_by_champ(selected_codes or [], season)
     mode = mode or "reviewed"
     fig = _team_radio_fig(rdf, ordered, f"Team Radio – {meeting} {season}",
@@ -6784,9 +7261,11 @@ def filter_team_radio(selected_codes, mode, topics):
     Output("strat-sim-output", "children"),
     Input("strat-sim-pitloss", "value"),
     Input("strat-sim-stops", "value"),
+    Input("strat-sim-sclap", "value"),
+    Input("strat-sim-traffic", "value"),
     prevent_initial_call=True,
 )
-def update_strategy_sim(pit_loss, stops):
+def update_strategy_sim(pit_loss, stops, sc_lap, traffic):
     cur = LOADED_SESSION_INFO[0] if LOADED_SESSION_INFO else None
     if not cur:
         return html.P("No meeting loaded.", style={"color": TEXT_DIM})
@@ -6797,6 +7276,8 @@ def update_strategy_sim(pit_loss, stops):
         data["laps"],
         pit_loss=pit_loss,
         stops=tuple(stops) if stops else (1, 2),
+        sc_lap=sc_lap,
+        traffic_on="on" in (traffic or []),
     )
 
 
@@ -8172,14 +8653,18 @@ def _hist_table(df_res: pd.DataFrame, session_type: str, year: int) -> dash_tabl
 
 
 # ── Sector heatmap from laps data (current loaded meeting) ────
-def _sector_heatmap(laps_df: pd.DataFrame) -> go.Figure:
+def _sector_heatmap(laps_df: pd.DataFrame, blt: pd.DataFrame | None = None) -> go.Figure:
     """Mini-sector dominance map: each driver's best lap split into MINI_SECTORS
     equal-distance segments, coloured by % gap to the fastest driver in that
     mini-sector (green = quickest there). Far finer than the three timing
-    sectors — it shows exactly which stretches of track each driver owns."""
+    sectors — it shows exactly which stretches of track each driver owns.
+
+    Pass `blt` (the best-lap telemetry frame) when the caller already built
+    it — tab_laps does — so the heavy extraction runs once per render."""
     if telemetry is None or telemetry.empty or laps_df.empty:
         return go.Figure()
-    blt = _best_lap_telemetry_frame(laps_df)
+    if blt is None:
+        blt = _best_lap_telemetry_frame(laps_df)
     if blt.empty or not {"Distance", "t_rel", "Driver_Short"}.issubset(blt.columns):
         return go.Figure()
 

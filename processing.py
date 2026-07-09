@@ -1102,6 +1102,89 @@ def flag_dirty_air(laps: pd.DataFrame, threshold_s: float = 2.0) -> pd.DataFrame
     return laps
 
 
+def dirty_air_penalty(laps: pd.DataFrame, min_laps_each: int = 3) -> dict | None:
+    """Measure what following another car cost at THIS race (s/lap).
+
+    Pairing is done within each (driver, stint): the median corrected lap
+    time of that stint's Dirty_Air laps minus its clean laps. Same driver,
+    same car, same compound, broadly similar tyre age — so the delta isolates
+    the traffic effect rather than car pace or degradation. The result is the
+    field median of those per-stint deltas.
+
+    Returns None when unmeasurable (no Dirty_Air column, or fewer than 5
+    stints with ≥ `min_laps_each` laps on both sides), else::
+
+        {"penalty_s": float,   # median extra s/lap in dirty air (may be <0
+                               # in freak samples — caller decides usability)
+         "n_stints": int,      # stints contributing a paired delta
+         "q25": float, "q75": float}
+    """
+    need = {"Dirty_Air", "ValidLap", "Driver_Short", "Stint", "LapTime_s"}
+    if laps is None or laps.empty or not need.issubset(laps.columns):
+        return None
+    y = ("LapTime_TrackCorrected" if "LapTime_TrackCorrected" in laps.columns
+         else "LapTime_FuelCorrected" if "LapTime_FuelCorrected" in laps.columns
+         else "LapTime_s")
+    d = laps[laps["ValidLap"] & pd.to_numeric(laps[y], errors="coerce").notna()]
+    deltas = []
+    for _, g in d.groupby(["Driver_Short", "Stint"]):
+        dirty = g.loc[g["Dirty_Air"], y]
+        clean = g.loc[~g["Dirty_Air"], y]
+        if len(dirty) >= min_laps_each and len(clean) >= min_laps_each:
+            deltas.append(float(dirty.median() - clean.median()))
+    if len(deltas) < 5:
+        return None
+    s = pd.Series(deltas)
+    return {"penalty_s": round(float(s.median()), 3),
+            "n_stints": len(deltas),
+            "q25": round(float(s.quantile(0.25)), 3),
+            "q75": round(float(s.quantile(0.75)), 3)}
+
+
+def traffic_exposure_curve(laps: pd.DataFrame, pit_loss: float) -> pd.Series | None:
+    """How much traffic a stop on each lap would drop a car into.
+
+    For every lap `s`, take the field's cumulative race times: a car that
+    pits at the end of lap `s` falls back by ~`pit_loss` seconds, so every
+    rival that was behind it by 0…pit_loss now sits ahead of it. Each such
+    rival is weighted by how close behind the rejoin point it lands
+    (gap/pit_loss → a car it rejoins right behind counts ~1, a car that ends
+    up far up the road counts ~0). The value returned per lap is the MEDIAN
+    weighted count across all cars still running that lap — a field-typical
+    "cars in the rejoin window" measure.
+
+    Returns a Series indexed by LapNo (1..max), interpolated across laps
+    where the field's timing is incomplete; None when it can't be built.
+    """
+    need = {"Driver_Short", "LapNo", "LapTime_s"}
+    if (laps is None or laps.empty or not need.issubset(laps.columns)
+            or not np.isfinite(pit_loss) or pit_loss <= 0):
+        return None
+    t = laps.pivot_table(index="LapNo", columns="Driver_Short",
+                         values="LapTime_s", aggfunc="first").sort_index()
+    if t.empty or len(t.columns) < 4:
+        return None
+    cum = t.cumsum()
+    # a driver's cumulative time is only trustworthy while they have no gap
+    # in the lap record — blank them from the first missing lap onward
+    cum = cum.where(t.notna().cumprod().astype(bool))
+
+    out = {}
+    for lap, row in cum.iterrows():
+        r = row.dropna().to_numpy(float)
+        if len(r) < 4:
+            continue
+        r.sort()
+        # for each car: weighted count of rivals 0..pit_loss behind it
+        gaps = r[None, :] - r[:, None]        # gaps[i, j] = t_j - t_i
+        w = np.where((gaps > 0) & (gaps < pit_loss), gaps / pit_loss, 0.0)
+        out[int(lap)] = float(np.median(w.sum(axis=1)))
+    if not out:
+        return None
+    ser = pd.Series(out).reindex(range(1, int(t.index.max()) + 1))
+    return ser.interpolate(limit_direction="both").fillna(0.0)
+
+
 # ─────────────────────────────────────────────────────────────
 # Quali-sim identification
 # ─────────────────────────────────────────────────────────────
@@ -1157,6 +1240,169 @@ def format_lap_time(seconds: float) -> str:
     m = int(seconds // 60)
     s = seconds % 60
     return f"{m}:{s:06.3f}"
+
+
+# ─────────────────────────────────────────────────────────────
+# Wet-race crossover detection
+# ─────────────────────────────────────────────────────────────
+
+_WET_GROUP = {"INTER", "INTERMEDIATE", "WET"}
+_DRY_GROUP = {"SOFT", "MEDIUM", "HARD"}
+
+
+def detect_wet_crossover(
+    laps: pd.DataFrame,
+    min_cars: int = 2,
+    smooth: int = 3,
+    min_wet_laps: int = 30,
+) -> dict | None:
+    """Find the inter↔slick break-even in a wet/transition race.
+
+    The idea: on any lap where cars are running on both tyre groups, the
+    field itself measures the delta between them, delta = inter median −
+    slick median. delta > 0 means slicks are faster (track dry enough),
+    delta < 0 means inters rule. A crossover is a zero-crossing of that
+    smoothed delta curve — the lap the field's fastest tyre changed.
+
+    Parameters
+    ----------
+    laps         : one race's (enriched or raw+LapTime_s) laps frame
+    min_cars     : cars needed on a tyre group for that lap's median to count
+    smooth       : centred rolling window (laps) on the group medians
+    min_wet_laps : fewer wet-group laps than this → not meaningfully wet,
+                   returns None (a 5-minute shower has no crossover to find)
+
+    Returns None for dry races, else a dict:
+      per_lap    : DataFrame[LapNo, inter_med, slick_med, n_inter, n_slick,
+                   delta]  (delta = inter − slick, smoothed, NaN when either
+                   group is missing on that lap)
+      crossings  : list of {"lap": int, "direction": "to_slick"|"to_inter",
+                   "interp": bool}. Zero-crossings of the delta curve between
+                   adjacent mixed laps (lap = the linearly-interpolated round
+                   lap). When the delta never changes sign — a race already
+                   past its crossover when both tyres first overlap — a single
+                   estimated crossing at the parity lap (min |delta|) is
+                   returned with interp=False as a best-effort marker.
+      switches   : DataFrame[Driver_Short, Team, lap, direction,
+                   crossover_lap, delta_laps, time_lost_s] — one row per
+                   driver tyre-group change, matched to the nearest crossing
+                   of the same direction. delta_laps > 0 = switched late;
+                   time_lost_s = Σ|delta| over the laps spent on the wrong
+                   group relative to that crossing (NaN when unmatched).
+
+    Caveats: medians include SC/VSC laps (both groups slow together, and the
+    transition often happens under the SC — excluding them would blind the
+    detector exactly when it matters); the estimate assumes the field median
+    delta applies to the individual driver.
+    """
+    need = {"LapNo", "LapTime_s", "Compound", "Driver_Short"}
+    if laps is None or laps.empty or not need.issubset(laps.columns):
+        return None
+    d = laps.copy()
+    d["Compound"] = d["Compound"].astype(str).str.upper()
+    d["_wet"] = d["Compound"].isin(_WET_GROUP)
+    d["_dry"] = d["Compound"].isin(_DRY_GROUP)
+    if int(d["_wet"].sum()) < min_wet_laps or not d["_dry"].any():
+        return None
+
+    # clean racing laps only: timed, not entering/leaving the pits
+    t = pd.to_numeric(d["LapTime_s"], errors="coerce")
+    clean = d[t.notna()
+              & d.get("PitIn", pd.Series(index=d.index)).isna()
+              & d.get("PitOut", pd.Series(index=d.index)).isna()]
+
+    def _group_median(mask_col: str, name: str) -> pd.DataFrame:
+        g = clean[clean[mask_col]].groupby("LapNo")["LapTime_s"]
+        out = g.agg(["median", "count"])
+        out.columns = [f"{name}_med", f"n_{name}"]
+        return out
+
+    per = (_group_median("_wet", "inter")
+           .join(_group_median("_dry", "slick"), how="outer")
+           .sort_index())
+    per = per.reindex(range(1, int(d["LapNo"].max()) + 1))
+    # a lap's group median only counts with >= min_cars on that group; keep an
+    # unsmoothed "mixed" flag (both groups genuinely present) so smoothing
+    # can't invent a delta on a lap where one tyre wasn't actually running
+    both_present = pd.Series(False, index=per.index)
+    for name in ("inter", "slick"):
+        thin = per[f"n_{name}"].fillna(0) < min_cars
+        per.loc[thin, f"{name}_med"] = np.nan
+    both_present = per["inter_med"].notna() & per["slick_med"].notna()
+    for name in ("inter", "slick"):
+        per[f"{name}_med"] = (per[f"{name}_med"]
+                              .rolling(smooth, center=True, min_periods=1)
+                              .median())
+    per["delta"] = (per["inter_med"] - per["slick_med"]).where(both_present)
+    per = per.rename_axis("LapNo").reset_index()
+
+    # ── zero-crossings of the delta curve on mixed laps ───────
+    mixed = per[per["delta"].notna()].reset_index(drop=True)
+    crossings: list[dict] = []
+    _NOISE = 1.0   # s: each side of a crossing must clear parity by this much
+    _CONF = 3      # mixed laps averaged either side to confirm a crossing
+    if len(mixed) >= 2:
+        laps_arr = mixed["LapNo"].to_numpy(float)
+        dv = mixed["delta"].to_numpy(float)
+        for i in range(1, len(dv)):
+            a, b = dv[i - 1], dv[i]
+            if a == 0 or b == 0 or np.sign(a) == np.sign(b):
+                continue
+            # confirm with the surrounding trend, not just the two straddling
+            # laps — averages of up to _CONF laps either side must both clear
+            # parity in opposite directions (kills early low-sample seesaws)
+            before = dv[max(0, i - _CONF):i].mean()
+            after = dv[i:i + _CONF].mean()
+            if (np.sign(before) == np.sign(after)
+                    or min(abs(before), abs(after)) < _NOISE):
+                continue
+            frac = abs(a) / (abs(a) + abs(b))
+            lap = int(round(laps_arr[i - 1] + frac * (laps_arr[i] - laps_arr[i - 1])))
+            direction = "to_slick" if b > 0 else "to_inter"
+            if crossings and crossings[-1]["direction"] == direction:
+                continue
+            crossings.append({"lap": lap, "direction": direction, "interp": True})
+        # drying race whose overlap window is entirely one-sided: no sign flip,
+        # but there is still a crossover — mark the parity lap (min |delta|) so
+        # driver switch timing has something to anchor to.
+        if not crossings:
+            k = int(np.argmin(np.abs(dv)))
+            direction = "to_slick" if dv[-1] > 0 else "to_inter"
+            crossings.append({"lap": int(laps_arr[k]),
+                              "direction": direction, "interp": False})
+
+    # ── per-driver tyre-group switches ────────────────────────
+    delta_by_lap = per.set_index("LapNo")["delta"]
+    sw_rows = []
+    grouped = d[(d["_wet"] | d["_dry"])].sort_values("LapNo")
+    for drv, g in grouped.groupby("Driver_Short"):
+        groups = g["_dry"].astype(int).to_numpy()
+        lapnos = g["LapNo"].to_numpy()
+        change = np.flatnonzero(np.diff(groups) != 0) + 1
+        for i in change:
+            direction = "to_slick" if groups[i] == 1 else "to_inter"
+            lap = int(lapnos[i])
+            same = [c for c in crossings if c["direction"] == direction]
+            best = (min(same, key=lambda c: abs(c["lap"] - lap))
+                    if same else None)
+            lost = np.nan
+            dl = np.nan
+            if best is not None:
+                dl = lap - best["lap"]
+                lo, hi = sorted((lap, best["lap"]))
+                seg = delta_by_lap.loc[lo:hi - 1] if hi > lo else pd.Series(dtype=float)
+                lost = float(seg.abs().sum()) if seg.notna().any() else np.nan
+            sw_rows.append({
+                "Driver_Short": drv,
+                "Team": g["Team"].iloc[0] if "Team" in g.columns else "",
+                "lap": lap, "direction": direction,
+                "crossover_lap": best["lap"] if best else np.nan,
+                "delta_laps": dl,
+                "time_lost_s": round(lost, 1) if np.isfinite(lost) else np.nan,
+            })
+
+    return {"per_lap": per, "crossings": crossings,
+            "switches": pd.DataFrame(sw_rows)}
 
 
 # ─────────────────────────────────────────────────────────────

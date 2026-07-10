@@ -169,34 +169,68 @@ def _season_content(season: int) -> html.Div:
     ])
 
 
-def tab_season() -> html.Div:
+def _section_header(title: str, subtitle: str) -> html.Div:
+    """Big centred divider between the tab's major sections."""
+    return html.Div([
+        html.H3(title, style={
+            "color": TEXT_MAIN, "fontWeight": "900", "letterSpacing": "3px",
+            "textAlign": "center", "fontSize": "1.4rem",
+            "borderBottom": f"2px solid {ACCENT}",
+            "paddingBottom": "8px", "marginBottom": "4px"}),
+        html.P(subtitle, style={"color": TEXT_DIM, "fontSize": "0.78rem",
+                                "textAlign": "center",
+                                "marginBottom": "18px"}),
+    ], style={"marginTop": "26px"})
+
+
+def tab_season(standings=None, upgrades=None) -> html.Div:
+    """SEASON tab: championship standings up top (passed in by the router),
+    then the season-long form charts, then the car-upgrades section."""
     yrs = seasons()
-    if not yrs:
-        return html.Div(dbc.Alert(
+    form_block = (
+        html.Div(dbc.Alert(
             ["No season pace table found. Generate it with ",
              html.Code("python compute_team_pace.py"), "."],
             color="warning"))
-    default = max(yrs)
-    return html.Div([
+        if not yrs else
         html.Div([
-            html.Span("SEASON", style={
-                "background": ACCENT, "color": "#fff", "borderRadius": "4px",
-                "padding": "3px 10px", "fontWeight": "800",
-                "letterSpacing": "2px", "fontSize": "0.8rem",
-                "marginRight": "12px"}),
-            html.Span("Championship-long form view", style={
-                "color": TEXT_MAIN, "fontWeight": "800", "fontSize": "1.05rem",
-                "marginRight": "16px"}),
-            dcc.Dropdown(id="season-select",
-                         options=[{"label": str(y), "value": y} for y in yrs],
-                         value=default, clearable=False,
-                         style={"width": "110px", "backgroundColor": "#111",
-                                "fontSize": "0.85rem"}),
-        ], style={"display": "flex", "alignItems": "center",
-                  "marginBottom": "16px"}),
-        dcc.Loading(html.Div(_season_content(default), id="season-content"),
-                    type="default"),
-    ])
+            html.Div([
+                html.Span("Form view", style={
+                    "color": TEXT_MAIN, "fontWeight": "800",
+                    "fontSize": "1.0rem", "marginRight": "16px"}),
+                dcc.Dropdown(id="season-select",
+                             options=[{"label": str(y), "value": y} for y in yrs],
+                             value=max(yrs), clearable=False,
+                             style={"width": "110px", "backgroundColor": "#111",
+                                    "fontSize": "0.85rem"}),
+            ], style={"display": "flex", "alignItems": "center",
+                      "marginBottom": "16px"}),
+            dcc.Loading(html.Div(_season_content(max(yrs)), id="season-content"),
+                        type="default"),
+        ])
+    )
+    parts = []
+    if standings is not None:
+        parts += [
+            _section_header("CHAMPIONSHIP STANDINGS",
+                            "drivers' and constructors' tables for the loaded "
+                            "season · rank arrows show this event's effect"),
+            standings,
+        ]
+    parts += [
+        _section_header("SEASON FORM",
+                        "pace gaps, points race and race-day character, "
+                        "round by round"),
+        form_block,
+    ]
+    if upgrades is not None:
+        parts += [
+            _section_header("CAR UPGRADES",
+                            "what each team brought and whether it worked "
+                            "(FIA car-presentation log × measured pace)"),
+            upgrades,
+        ]
+    return html.Div(parts)
 
 
 @callback(Output("season-content", "children"),

@@ -91,7 +91,9 @@ inside the app — no restart needed.
 | [app.py](app.py) | The Dash app — UI, tabs, and callbacks. Entry point. |
 | [state.py](state.py) | Owns the loaded-session data + enrichment pipeline (`rebuild_state`). Tab modules read `state.laps` etc. |
 | [components.py](components.py) | Shared UI building blocks: Plotly theme, `card`, `kpi`, table styles. |
-| `tabs/` | Tab modules split out of app.py — `tabs/upgrades.py` is the template; see `tabs/__init__.py` for the migration recipe. New tabs start here. |
+| [standings.py](standings.py) | Historical-results archive + championship standings helpers and widgets. |
+| [figures.py](figures.py) | Shared chart builders (lap evolution, flag/rain bands) and team aggregations. |
+| `tabs/` | Tab modules split out of app.py (overview, teams, practice, teammates, season, qualifying, upgrades, fingerprints); see `tabs/__init__.py` for the migration recipe. New tabs start here. |
 | `tests/` | Pytest suite for the enrichment pipeline and loaders (`pytest`; FutureWarnings are errors — the pandas-3 tripwire). |
 | [config.py](config.py) | Team/compound colours, analysis parameters, and data/cache paths. |
 | [data_loader.py](data_loader.py) | Loads sessions via FastF1, maps columns, and caches to Parquet. |

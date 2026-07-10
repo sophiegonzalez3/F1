@@ -75,15 +75,31 @@ def _http_get(url: str, timeout: int = 30) -> bytes:
         return r.read()
 
 
-def _race_api_path(season, meeting) -> str | None:
-    """Resolve the race session's live-timing static path via FastF1
-    (race session only)."""
+def _race_session(season, meeting):
+    """Load the race session via FastF1 (metadata only, no laps/telemetry)."""
     import fastf1
     fastf1.Cache.enable_cache(str(Path(FASTF1_CACHE_DIR)))
     sess = fastf1.get_session(int(season), meeting, "R")   # RACE only
     sess.load(laps=False, telemetry=False, weather=False, messages=False)
+    return sess
+
+
+def _race_api_path(season, meeting) -> str | None:
+    """Resolve the race session's live-timing static path via FastF1
+    (race session only)."""
+    sess = _race_session(season, meeting)
     path = sess.api_path                       # e.g. /static/2026/..._Race/
     return path.lstrip("/").replace("static/", "", 1)
+
+
+def _driver_last_names(sess) -> list[str]:
+    """Last names of the session's entry list — used to bias whisper toward
+    the right proper nouns. Empty list if driver info is unavailable."""
+    try:
+        names = sess.results["LastName"].dropna().unique().tolist()
+        return [n for n in names if n]
+    except Exception:
+        return []
 
 
 def _fetch_captures(rel_path: str) -> list[dict]:
@@ -185,10 +201,40 @@ def _get_model():
     return _WHISPER_MODEL
 
 
-def _transcribe(mp3: Path) -> str:
+# Static F1 vocabulary fed to whisper as `initial_prompt` — biases decoding
+# toward radio jargon it otherwise mishears (per-event driver names are
+# prepended at transcription time). Whisper caps the prompt at 224 tokens.
+_F1_PROMPT = (
+    "Formula 1 team radio between driver and race engineer. Phrases: "
+    "box box, box this lap, stay out, undercut, overcut, deg, degradation, "
+    "DRS enabled, safety car, VSC, blue flags, track limits, five-second "
+    "penalty, strat mode, mode push, brake bias, front wing, gap to car "
+    "behind, plan B, softs, mediums, hards, inters, copy that."
+)
+
+
+def _build_prompt(driver_names: list[str]) -> str:
+    if not driver_names:
+        return _F1_PROMPT
+    return _F1_PROMPT[:_F1_PROMPT.index("Phrases:")] + \
+        "Drivers: " + ", ".join(driver_names) + ". " + \
+        _F1_PROMPT[_F1_PROMPT.index("Phrases:"):]
+
+
+def _transcribe(mp3: Path, prompt: str = _F1_PROMPT) -> str:
+    """Transcribe one clip. VAD strips the squelch/static that makes whisper
+    hallucinate on near-silent clips; segments whisper itself scores as
+    probable non-speech are dropped for the same reason."""
     try:
-        segs, _ = _get_model().transcribe(str(mp3), language="en", beam_size=5)
-        return " ".join(s.text.strip() for s in segs).strip()
+        segs, _ = _get_model().transcribe(
+            str(mp3), language="en", beam_size=5,
+            vad_filter=True,
+            condition_on_previous_text=False,
+            initial_prompt=prompt,
+        )
+        kept = [s.text.strip() for s in segs
+                if not (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0)]
+        return " ".join(kept).strip()
     except Exception as exc:
         logger.warning("Transcription failed for %s: %s", mp3.name, exc)
         return ""
@@ -244,9 +290,21 @@ def load_race_radio(season, meeting, force: bool = False,
         logger.info("[radio cache HIT] %s (%d clips)", _key(season, meeting), len(df))
         return df
 
-    rel = _race_api_path(season, meeting)
+    # Hand-corrected transcripts survive a force re-transcription: remember
+    # the reviewed rows (keyed by mp3 filename) before rebuilding.
+    reviewed_keep: dict[str, str] = {}
+    if pq.exists() and force:
+        old = pd.read_parquet(pq)
+        if "reviewed" in old.columns:
+            kept = old[old["reviewed"].fillna(False).astype(bool)]
+            reviewed_keep = dict(zip(kept["Mp3"], kept["Transcript"]))
+
+    sess = _race_session(season, meeting)
+    path = sess.api_path
+    rel = path.lstrip("/").replace("static/", "", 1) if path else None
     if not rel:
         return pd.DataFrame()
+    prompt = _build_prompt(_driver_last_names(sess))
     caps = _fetch_captures(rel)
     if not caps:
         logger.info("[radio] no captures for %s", _key(season, meeting))
@@ -273,16 +331,18 @@ def load_race_radio(season, meeting, force: bool = False,
                 logger.warning("Download failed %s: %s", fname, exc)
                 continue
         print(f"  [radio] transcribing {i}/{n}  {fname}", flush=True)
-        text = _transcribe(local)
+        text = _transcribe(local, prompt)
+        mp3_key = f"{_key(season, meeting)}/{fname}"   # relative to RADIO_DIR
         rows.append({
             "Utc":           c.get("Utc"),
             "RacingNumber":  str(c.get("RacingNumber", "")),
             "Driver_Short":  _driver_from_path(path),
             "Url":           url,
-            "Mp3":           f"{_key(season, meeting)}/{fname}",   # relative to RADIO_DIR
+            "Mp3":           mp3_key,
             "Transcript_raw": text,   # verbatim whisper output, never edited
-            "Transcript":    text,    # working copy — may be hand-corrected on review
-            "reviewed":      False,   # set True once the transcript has been checked
+            # working copy — hand corrections from a previous review win
+            "Transcript":    reviewed_keep.get(mp3_key, text),
+            "reviewed":      mp3_key in reviewed_keep,
         })
 
     df = pd.DataFrame(rows)

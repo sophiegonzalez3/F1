@@ -74,7 +74,10 @@ RADIO_DIR        = "data/radio"                # team-radio mp3s + transcripts (
 PITSTOPS_DIR     = "data/pitstops"             # real per-stop pit data (pitstops_loader.py)
 
 # Team-radio transcription (radio_loader.py). faster-whisper model size:
-# tiny.en / base.en (fast) · small.en (balanced, default) · medium.en (accurate, slow).
+# tiny.en / base.en (fast) · small.en (balanced) · medium.en (accurate).
+# Benchmarked Jul 2026 on real race clips: large-v3 / large-v3-turbo do NOT
+# beat medium.en on F1's heavily compressed radio audio (turbo is worse) —
+# the audio quality is the ceiling, so medium.en + VAD + vocab prompt it is.
 RADIO_WHISPER_MODEL = "medium.en"
 
 # ─────────────────────────────────────────────

@@ -44,6 +44,7 @@ from figures import _add_flag_bands, _rain_lap_groups, _add_rain_bands, _lap_evo
 from tyre_allocations import _allocation_chips, _laps_event
 from data_loader import load_session, load_sessions, is_cached
 from radio_loader import load_race_radio, race_radio_available, radio_cached
+from tabs.replay import replay_card
 from pitstops_loader import load_pitstops
 from standings import _order_by_champ, _order_teams_by_champ
 
@@ -2041,6 +2042,8 @@ def tab_race(sel_drivers=None, sel_teams=None):
 
     return html.Div([
         banner,
+        replay_card(shown_year, meeting,
+                    codes=sorted(rl["Driver_Short"].dropna().unique())),
         card(
             "Lap Time Evolution – All Laps (Race)",
             dcc.Graph(figure=evo_fig, config=GFX),

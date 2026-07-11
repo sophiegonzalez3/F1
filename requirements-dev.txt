@@ -1,3 +1,6 @@
 # Development-only dependencies (the app itself needs only requirements.txt)
 -r requirements.txt
 pytest>=8.0
+# track_scene.py lidar DTM providers (GeoTIFF reading + CRS transforms);
+# only needed when BUILDING a 3D track scene, cached scenes load without it
+rasterio>=1.5

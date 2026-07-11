@@ -23,6 +23,7 @@ import state
 from components import theme, card, kpi, GFX
 from config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
 from processing import format_lap_time
+from tabs.quali_replay import quali3d_card
 
 _SECTORS = ["Sector1Time", "Sector2Time", "Sector3Time"]
 
@@ -272,6 +273,7 @@ def tab_quali() -> html.Div:
                        "letterSpacing": "1px", "fontSize": "1.1rem",
                        "marginBottom": "12px"}),
         kpis,
+        quali3d_card(int(season), meeting),
         card(
             "Q1 → Q2 → Q3 Progression",
             dcc.Graph(figure=_progression_fig(ql), config=GFX),

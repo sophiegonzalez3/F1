@@ -38,7 +38,7 @@ from data_loader import load_session
 logger = logging.getLogger(__name__)
 
 REPLAYS_DIR = Path("data/replays")
-_PAYLOAD_VERSION = 1          # bump when the payload schema changes
+_PAYLOAD_VERSION = 2          # bump when the payload schema changes
 _DT = 0.5                     # replay grid step (s) → 2 Hz
 _Z_EXAGGERATION = 5.0         # vertical exaggeration of the 3D view
 
@@ -81,6 +81,10 @@ def _filtered_payload(payload: dict, codes: list[str] | None) -> dict:
         return payload
     out = dict(payload)
     out["drivers"] = drivers
+    # radio pips follow the driver filter too; L / flags / lap stay global so
+    # gaps are still measured against the actual race leader.
+    out["radio"] = [r for r in payload.get("radio", [])
+                    if r["code"] in keep]
     return out
 
 
@@ -96,6 +100,87 @@ def _masked_int_list(values: np.ndarray, hidden: np.ndarray) -> list:
     for j in np.flatnonzero(hidden):
         out[j] = None
     return out
+
+
+def _progress_series(lapno: np.ndarray, lap_dist: np.ndarray,
+                     didx: np.ndarray, lap_len: float) -> np.ndarray:
+    """Monotone race progress (metres) per frame from timing laps + track
+    position. `lapno` is laps *started* (searchsorted of the driver's lap-start
+    times), `lap_dist` the metres-along-lap of the snapped outline point.
+
+    Near the start/finish line the two sources briefly disagree (timing
+    increments the lap a frame or two before/after the snapped point wraps to
+    0), which naively produces ±lap_len spikes — so per frame we pick the
+    ±1-lap candidate closest to the extrapolated previous progress and clamp
+    to non-decreasing."""
+    n = len(lapno)
+    prog = np.full(n, np.nan)
+    prev, step = None, 30.0            # ~60 m/s default advance per 0.5 s
+    for i in range(n):
+        if didx[i] < 0:
+            continue
+        base = (max(int(lapno[i]), 1) - 1) * lap_len + lap_dist[i]
+        if prev is None:
+            p = base
+        else:
+            exp = prev + step
+            p = min((base - lap_len, base, base + lap_len),
+                    key=lambda c: abs(c - exp))
+            p = max(p, prev)           # progress never decreases
+            step = min(max(p - prev, 0.0) or step, 250.0)
+        prog[i] = p
+        prev = p
+    return prog
+
+
+# Track-status → replay flag code (0 green, 1 yellow, 2 SC, 3 VSC, 4 red).
+_FLAG_CODE = {"1": 0, "2": 1, "4": 2, "5": 4, "6": 3, "7": 3}
+
+
+def _flag_codes(track_status: pd.DataFrame, grid: np.ndarray) -> list[int]:
+    """Per-frame track-status code (step function over the status events)."""
+    if track_status is None or track_status.empty or \
+            not {"Time", "Status"}.issubset(track_status.columns):
+        return [0] * len(grid)
+    ts = track_status.dropna(subset=["Time"]).sort_values("Time")
+    times = ts["Time"].to_numpy(float)
+    codes = np.array([_FLAG_CODE.get(str(s).strip(), 0) for s in ts["Status"]])
+    idx = np.searchsorted(times, grid, side="right") - 1
+    return np.where(idx >= 0, codes[np.clip(idx, 0, None)], 0).astype(int).tolist()
+
+
+def _radio_entries(season: int, meeting: str, laps: pd.DataFrame,
+                   t0: float, dt: float, n: int) -> list[dict]:
+    """Transcribed team-radio clips mapped to replay frames (empty when no
+    radio is cached for this race). Wall-clock → session seconds via the
+    LapStartDate/LapStartTime offset."""
+    try:
+        from radio_loader import load_race_radio, radio_cached
+        if not radio_cached(season, meeting):
+            return []
+        rdf = load_race_radio(season, meeting)
+        if rdf is None or rdf.empty or "Utc" not in rdf.columns:
+            return []
+        anchor = laps.dropna(subset=["LapStartDate", "LapStartTime"]).iloc[0]
+        session_zero = (pd.Timestamp(anchor["LapStartDate"])
+                        - pd.to_timedelta(float(anchor["LapStartTime"]), unit="s"))
+        out = []
+        for _, r in rdf.iterrows():
+            text = str(r.get("Transcript", "") or "").strip()
+            if not text or pd.isna(r["Utc"]):
+                continue
+            f = int(round(((pd.Timestamp(r["Utc"]) - session_zero)
+                           .total_seconds() - t0) / dt))
+            if 0 <= f < n:
+                out.append({"f": f,
+                            "code": str(r.get("Driver_Short", "?")).upper(),
+                            "text": text[:220]})
+        out.sort(key=lambda e: e["f"])
+        return out
+    except Exception as exc:
+        logger.warning("replay: radio mapping failed for %s %s: %s",
+                       season, meeting, exc)
+        return []
 
 
 def _outline_from_track_map(season: int, meeting: str) -> tuple[pd.DataFrame, float] | None:
@@ -235,6 +320,14 @@ def build_replay_payload(season: int, meeting: str) -> dict | None:
         for j in np.flatnonzero(hidden):
             didx_list[j] = None
 
+        # Race progress (m): laps completed from timing + metres along the lap.
+        drv_lap_starts = np.sort(
+            laps.loc[laps["DriverNo"].astype(str).str.strip() == drv,
+                     "LapStartTime"].dropna().to_numpy(float))
+        lapno = np.searchsorted(drv_lap_starts, grid, side="right")
+        lap_len = float(dist[-1]) or 1.0
+        prog = _progress_series(lapno, dist[np.clip(didx, 0, None)], didx, lap_len)
+
         drivers.append({
             "code":  ident[drv]["code"],
             "team":  ident[drv]["team"],
@@ -242,9 +335,26 @@ def build_replay_payload(season: int, meeting: str) -> dict | None:
             "x":     _masked_int_list(xi, hidden),
             "y":     _masked_int_list(yi, hidden),
             "didx":  didx_list,
+            "_prog": prog,                       # numpy; JSON-ified below
         })
     if not drivers:
         return None
+
+    # ── Per-frame overall leader progress + per-driver position ──
+    prog_mat = np.vstack([d["_prog"] for d in drivers])       # k × n
+    leader = np.nanmax(prog_mat, axis=0)
+    leader_list = np.where(np.isfinite(leader), leader, 0.0)
+    # rank of each driver per frame (1 = leader); NaN progress sinks to the end
+    order = np.argsort(-np.nan_to_num(prog_mat, nan=-1e12), axis=0, kind="stable")
+    pos_mat = np.empty_like(order)
+    np.put_along_axis(pos_mat, order, np.arange(1, len(drivers) + 1)[:, None]
+                      .repeat(n, axis=1), axis=0)
+    for di, d in enumerate(drivers):
+        p = d.pop("_prog")
+        bad = ~np.isfinite(p)
+        d["prog"] = _masked_int_list(np.nan_to_num(p), bad)
+        d["pos"] = [None if b else int(v)
+                    for b, v in zip(bad.tolist(), pos_mat[di].tolist())]
 
     # ── Leader's current lap per frame (for the clock + slider marks) ──
     starts = laps.groupby("LapNo")["LapStartTime"].min().dropna().sort_index()
@@ -258,6 +368,9 @@ def build_replay_payload(season: int, meeting: str) -> dict | None:
         "nLaps": n_laps, "lap": lap_per_frame,
         "event": meeting, "season": int(season), "has_z": has_z,
         "outline": outline, "drivers": drivers,
+        "L": np.rint(leader_list).astype(int).tolist(),
+        "flags": _flag_codes(data.get("track_status"), grid),
+        "radio": _radio_entries(season, meeting, laps, t_start, _DT, n),
     }
 
     REPLAYS_DIR.mkdir(parents=True, exist_ok=True)
@@ -446,11 +559,66 @@ def _fig_strip(payload: dict) -> go.Figure:
     return fig
 
 
+def _fig_gap(payload: dict) -> go.Figure:
+    """Animated gap-to-leader chart skeleton: one WebGL line per driver (the
+    series is computed clientside from the progress arrays and filled in on
+    first display), plus the same car dots riding the lines at the playhead.
+    layout.meta.view='gap' tells assets/replay.js which update path to use."""
+    fig = go.Figure()
+    for d in payload["drivers"]:
+        fig.add_trace(go.Scattergl(
+            x=[], y=[], mode="lines", name=d["code"],
+            line=dict(color=d["color"], width=1.5), opacity=0.85,
+            hoverinfo="skip", showlegend=False,
+        ))
+    kw = _cars_kwargs(payload)
+    kw["marker"]["size"] = 7
+    kw["textfont"]["size"] = 8
+    fig.add_trace(go.Scattergl(x=[], y=[], **kw))
+    fig.update_layout(
+        height=560, paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
+        font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=11),
+        margin=dict(l=55, r=15, t=15, b=40), showlegend=False,
+        meta={"view": "gap"},
+        xaxis=dict(title="race time (min)", gridcolor=GRID_CLR, zeroline=False,
+                   range=[0, payload["n"] * payload["dt"] / 60.0]),
+        yaxis=dict(title="gap to leader (s)", gridcolor=GRID_CLR,
+                   zeroline=False, autorange="reversed"),
+    )
+    return fig
+
+
 # ─────────────────────────────────────────────────────────────
 # Card layout
 # ─────────────────────────────────────────────────────────────
 
 _BTN_STYLE = {"fontSize": "0.75rem", "padding": "3px 12px"}
+
+
+def _fig_for_view(payload: dict, view: str) -> go.Figure:
+    if view == "gap":
+        return _fig_gap(payload)
+    if view == "3d" and payload["has_z"]:
+        return _fig_replay_3d(payload)
+    return _fig_replay_2d(payload)
+
+
+def _radio_pip_children(payload: dict) -> list:
+    """Clickable pips on the timeline, one per transcribed radio clip
+    (assets/replay.js seeks to the clip's frame on click)."""
+    n = max(payload["n"] - 1, 1)
+    return [
+        html.Span(
+            title=f"{r['code']}: {r['text'][:90]}",
+            style={"position": "absolute", "left": f"{r['f'] / n * 100:.2f}%",
+                   "top": "2px", "width": "8px", "height": "8px",
+                   "marginLeft": "-4px", "borderRadius": "50%",
+                   "background": "#00D2BE", "opacity": "0.85",
+                   "cursor": "pointer"},
+            **{"data-frame": str(r["f"])},
+        )
+        for r in payload.get("radio", [])
+    ]
 
 
 def _slider_marks(payload: dict) -> dict:
@@ -474,7 +642,8 @@ def _status_line(payload: dict) -> str:
 
 def _view_options(has_z: bool) -> list[dict]:
     return [{"label": " 2D ", "value": "2d"},
-            {"label": " 3D ", "value": "3d", "disabled": not has_z}]
+            {"label": " 3D ", "value": "3d", "disabled": not has_z},
+            {"label": " GAP ", "value": "gap"}]
 
 
 def replay_card(season: int, meeting: str, codes: list[str] | None = None) -> html.Div:
@@ -559,13 +728,27 @@ def replay_card(season: int, meeting: str, codes: list[str] | None = None) -> ht
                       style={"color": TEXT_DIM, "fontSize": "0.75rem",
                              "marginLeft": "10px"}),
         ], style={"marginBottom": "8px"}),
-        dcc.Loading(
-            dcc.Graph(id="replay-graph",
-                      figure=(_fig_replay_2d(fp) if loaded else
-                              _empty_fig("Press “Load replay” to start")),
-                      config=GFX),
-            type="default",
-        ),
+        html.Div(id="replay-flag", children="", style={
+            "display": "none", "textAlign": "center", "fontWeight": "800",
+            "letterSpacing": "3px", "fontSize": "0.85rem", "padding": "4px 0",
+            "borderRadius": "5px", "marginBottom": "6px",
+        }),
+        html.Div([
+            html.Div(
+                dcc.Loading(
+                    dcc.Graph(id="replay-graph",
+                              figure=(_fig_replay_2d(fp) if loaded else
+                                      _empty_fig("Press “Load replay” to start")),
+                              config=GFX),
+                    type="default",
+                ),
+                style={"flex": "1", "minWidth": "0"},
+            ),
+            html.Div(id="replay-board", children=[],
+                     style={"width": "168px", "flexShrink": "0",
+                            "display": "block" if loaded else "none",
+                            "paddingTop": "6px"}),
+        ], style={"display": "flex", "gap": "10px"}),
         html.Div(
             dcc.Graph(id="replay-strip",
                       figure=(_fig_strip(fp) if loaded and has_z else
@@ -574,7 +757,16 @@ def replay_card(season: int, meeting: str, codes: list[str] | None = None) -> ht
             id="replay-strip-wrap",
             style={"display": "block" if (loaded and has_z) else "none"},
         ),
+        html.Div(id="replay-radio-live", children="", style={
+            "color": "#00D2BE", "fontSize": "0.78rem", "fontStyle": "italic",
+            "minHeight": "20px", "margin": "4px 2px 0",
+        }),
         controls,
+        html.Div(id="replay-radio-pips",
+                 children=_radio_pip_children(fp) if loaded else [],
+                 title="team-radio clips — click to jump there",
+                 style={"position": "relative", "height": "12px",
+                        "margin": "6px 2px 0"}),
         dcc.Slider(id="replay-slider", min=0,
                    max=(fp["n"] - 1) if loaded else 1, step=1, value=0,
                    marks=_slider_marks(fp) if loaded else None,
@@ -589,18 +781,25 @@ def replay_card(season: int, meeting: str, codes: list[str] | None = None) -> ht
         info=("Data: every car's X/Y/Z position stream (100% coverage via "
               "FastF1's merge_channels), interpolated onto a shared 2 Hz time "
               "grid from lights-out to the last lap, snapped to the reference "
-              "track line for elevation — built once per race and cached to "
-              "data/replays/. Animation runs entirely in the browser (no "
-              "server round-trips): play/pause, scrub the slider, change "
-              "playback speed, or switch to the 3D view (elevation exaggerated "
-              "5× — use the Top/Side/Iso camera presets or drag to orbit; "
+              "track line for elevation and race distance — built once per "
+              "race and cached to data/replays/. Animation runs entirely in "
+              "the browser (no server round-trips): play/pause, scrub the "
+              "slider, change playback speed, or switch views — 3D (elevation "
+              "exaggerated 5×, Top/Side/Iso camera presets or drag to orbit; "
               "while you orbit/zoom during playback the cars hold still and "
               "catch up on release — redrawing them mid-drag would cancel the "
-              "camera gesture, a WebGL rendering limitation). "
-              "The strip below the map is the lap's elevation profile with the "
-              "same cars sliding along it. Why: the race as it actually "
-              "unfolded in space — undercuts, safety-car bunching, backmarker "
-              "traffic and gap evolution, visible as motion instead of charts."),
+              "camera gesture, a WebGL rendering limitation) and GAP (each "
+              "driver's time behind the leader, measured at the same point on "
+              "the road, with the dots riding their own gap lines). The live "
+              "order panel shows positions and gaps at the playhead; the "
+              "banner above the map mirrors the FIA track status (yellow / "
+              "SC / VSC / red); teal pips on the timeline are transcribed "
+              "team-radio clips — click one to jump there, and the transcript "
+              "shows as the replay passes each call. The strip below the map "
+              "is the lap's elevation profile with the same cars sliding "
+              "along it. Why: the race as it actually unfolded in space — "
+              "undercuts, safety-car bunching, backmarker traffic and gap "
+              "evolution, visible as motion instead of charts."),
     )
 
 
@@ -617,6 +816,8 @@ def replay_card(season: int, meeting: str, codes: list[str] | None = None) -> ht
     Output("replay-slider", "marks"),
     Output("replay-status", "children"),
     Output("replay-view", "options"),
+    Output("replay-radio-pips", "children"),
+    Output("replay-board", "style"),
     Input("replay-load-btn", "n_clicks"),
     State("replay-meta", "data"),
     State("replay-view", "value"),
@@ -624,26 +825,27 @@ def replay_card(season: int, meeting: str, codes: list[str] | None = None) -> ht
 )
 def _build_replay(n_clicks, meta, view):
     if not n_clicks or not meta:
-        return (no_update,) * 8
+        return (no_update,) * 10
     try:
         payload = build_replay_payload(meta["season"], meta["meeting"])
     except Exception as exc:
         logger.exception("replay build failed")
-        return (no_update, no_update, no_update, no_update, no_update, no_update,
-                f"  replay build failed: {exc}", no_update)
+        return ((no_update,) * 6
+                + (f"  replay build failed: {exc}",) + (no_update,) * 3)
     if payload is None:
-        return (no_update, no_update, no_update, no_update, no_update, no_update,
-                "  no position telemetry available for this race.", no_update)
+        return ((no_update,) * 6
+                + ("  no position telemetry available for this race.",)
+                + (no_update,) * 3)
 
     fp = _filtered_payload(payload, meta.get("codes"))
     has_z = fp["has_z"]
-    fig = (_fig_replay_3d(fp) if (view == "3d" and has_z)
-           else _fig_replay_2d(fp))
     strip_fig = _fig_strip(fp) if has_z else no_update
     strip_style = {"display": "block"} if has_z else {"display": "none"}
-    return (fp, fig, strip_fig, strip_style,
+    return (fp, _fig_for_view(fp, view), strip_fig, strip_style,
             fp["n"] - 1, _slider_marks(fp), _status_line(fp),
-            _view_options(has_z))
+            _view_options(has_z), _radio_pip_children(fp),
+            {"width": "168px", "flexShrink": "0", "display": "block",
+             "paddingTop": "6px"})
 
 
 @callback(
@@ -658,9 +860,7 @@ def _switch_view(view, payload):
                  if view == "3d" else {"display": "none"})
     if not payload:
         return no_update, cam_style
-    fig = (_fig_replay_3d(payload) if (view == "3d" and payload["has_z"])
-           else _fig_replay_2d(payload))
-    return fig, cam_style
+    return _fig_for_view(payload, view), cam_style
 
 
 # ─────────────────────────────────────────────────────────────

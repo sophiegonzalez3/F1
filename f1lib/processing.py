@@ -35,7 +35,7 @@ import logging
 import pandas as pd
 import numpy as np
 
-from config import (
+from f1lib.config import (
     TEAM_COLORS,
     OUTLIER_THRESHOLD,
     FUEL_CORRECTION,

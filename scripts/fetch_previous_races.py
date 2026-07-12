@@ -15,17 +15,20 @@ usually resolves it); failures are reported at the end, not fatal.
 
 Usage
 -----
-    python fetch_previous_races.py             # backfill season-1 races
-    python fetch_previous_races.py --dry-run   # only list what would be fetched
-    python fetch_previous_races.py --sessions "Race,Qualifying"
+    python scripts/fetch_previous_races.py             # backfill season-1 races
+    python scripts/fetch_previous_races.py --dry-run   # only list what would be fetched
+    python scripts/fetch_previous_races.py --sessions "Race,Qualifying"
                                                # also backfill other sessions
 """
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 import sys
 import warnings
 
 warnings.filterwarnings("ignore")
 
-import data_loader as dl
+import f1lib.data_loader as dl
 
 dry_run = "--dry-run" in sys.argv
 sessions_to_fetch = ["Race"]

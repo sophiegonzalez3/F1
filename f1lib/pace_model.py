@@ -44,7 +44,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from pace_features import event_measurements, canon
+from f1lib.pace_features import event_measurements, canon
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +368,7 @@ class PaceModel:
         driver_pace table hasn't been built."""
         if self._driver_ratings is None:
             try:
-                from driver_ratings import DriverRatings
+                from f1lib.driver_ratings import DriverRatings
                 self._driver_ratings = DriverRatings()
             except Exception as exc:
                 logger.warning("driver ratings unavailable: %s", exc)

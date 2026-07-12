@@ -37,7 +37,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import RADIO_DIR, FASTF1_CACHE_DIR, RADIO_WHISPER_MODEL
+from f1lib.config import RADIO_DIR, FASTF1_CACHE_DIR, RADIO_WHISPER_MODEL
 
 logger = logging.getLogger(__name__)
 

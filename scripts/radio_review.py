@@ -6,13 +6,13 @@ Companion CLI to radio_loader.py for the transcript review workflow
 
 Commands
 --------
-python radio_review.py dump  <season> <meeting>
+python scripts/radio_review.py dump  <season> <meeting>
     Print every clip (filename | clock | driver | transcript) followed by a
     race-context brief built from the local session data (results, pit stops,
     filtered race-control messages). One output = everything a reviewer needs
     to cross-check transcripts against what actually happened.
 
-python radio_review.py apply <season> <meeting> <corrections.json>
+python scripts/radio_review.py apply <season> <meeting> <corrections.json>
     Apply hand-review corrections and mark ALL clips of the meeting reviewed.
     The JSON maps mp3 filename -> corrected transcript, e.g.
         {"ANT_12_20260705_161020.mp3": "No Bono, the suspension is broken."}
@@ -23,14 +23,17 @@ python radio_review.py apply <season> <meeting> <corrections.json>
 
 from __future__ import annotations
 
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 import json
 import sys
 from pathlib import Path
 
 import pandas as pd
 
-from config import SESSIONS_DIR, PITSTOPS_DIR
-from radio_loader import _key, _parquet_path
+from f1lib.config import SESSIONS_DIR, PITSTOPS_DIR
+from f1lib.radio_loader import _key, _parquet_path
 
 # race-control noise filter: keep only messages a reviewer can anchor on
 _RC_KEEP = ("PENALTY|INVESTIGAT|SAFETY|VIRTUAL|RED FLAG|DELETED|INCIDENT|"
@@ -41,7 +44,7 @@ def _radio_df(season, meeting) -> pd.DataFrame:
     pq = _parquet_path(season, meeting)
     if not pq.exists():
         sys.exit(f"No radio cache for {meeting} {season} — run "
-                 f"`python radio_loader.py {season} \"{meeting}\"` first.")
+                 f"`python -m f1lib.radio_loader {season} \"{meeting}\"` first.")
     return pd.read_parquet(pq)
 
 

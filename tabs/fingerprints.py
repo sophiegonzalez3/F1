@@ -30,8 +30,8 @@ import plotly.graph_objects as go
 from dash import html, dcc, callback, Input, Output, State
 import dash_bootstrap_components as dbc
 
-from components import theme, card, GFX
-from config import TEAM_COLORS, CARD_BG, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
+from f1lib.components import theme, card, GFX
+from f1lib.config import TEAM_COLORS, CARD_BG, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
 
 _RAMP_HORIZON = 4.0      # seconds after brake release
 _RAMP_GRID = np.arange(0.0, _RAMP_HORIZON + 0.001, 0.1)

@@ -16,9 +16,9 @@ import plotly.graph_objects as go
 from dash import html, dcc, callback, Input, Output
 import dash_bootstrap_components as dbc
 
-import state
-from components import kpi, badge, card, theme, GFX, abbr
-from config import TEAM_COLORS, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR
+import f1lib.state as state
+from f1lib.components import kpi, badge, card, theme, GFX, abbr
+from f1lib.config import TEAM_COLORS, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR
 from tabs.pace_data import team_pace_df, event_short
 
 # Curated, human-maintained table of the technical upgrades each team brings

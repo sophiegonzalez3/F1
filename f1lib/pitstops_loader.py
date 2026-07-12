@@ -35,11 +35,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from config import PITSTOPS_DIR
+from f1lib.config import PITSTOPS_DIR
 # Reuse the live-timing helpers from the radio loader (same archive, same
 # api_path resolution via FastF1). faster-whisper is lazy-loaded there, so
 # this import stays lightweight.
-from radio_loader import _http_get, _race_api_path, _sanitize, _BASE
+from f1lib.radio_loader import _http_get, _race_api_path, _sanitize, _BASE
 
 logger = logging.getLogger(__name__)
 

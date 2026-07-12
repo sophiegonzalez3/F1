@@ -21,11 +21,11 @@ import plotly.graph_objects as go
 from dash import html, dcc
 import dash_bootstrap_components as dbc
 
-import state
-from components import theme, card, kpi, GFX, abbr as _abbr
-from config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
-from pace_model import PaceModel, canon
-from race_forecast import RaceForecaster
+import f1lib.state as state
+from f1lib.components import theme, card, kpi, GFX, abbr as _abbr
+from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
+from f1lib.pace_model import PaceModel, canon
+from f1lib.race_forecast import RaceForecaster
 
 _KIND_LABEL = {"onelap": "Qualifying (one-lap)", "longrun": "Race (long-run)"}
 _STAGE_SHORT = {"prior": "Prior", "after FP1": "FP1", "after FP2": "FP2",
@@ -396,7 +396,7 @@ def tab_brief(sel_drivers=None, sel_teams=None):
                      "P(top 3)": f"{r['p_top3']*100:.0f}%"}
                     for _, r in probs.iterrows()]
         from dash import dash_table
-        from components import TABLE_STYLE
+        from f1lib.components import TABLE_STYLE
         body.append(card("QUALIFYING PACE PROBABILITIES",
             dash_table.DataTable(data=rows,
                 columns=[{"name": c, "id": c} for c in rows[0]], **TABLE_STYLE),
@@ -424,7 +424,7 @@ def tab_brief(sel_drivers=None, sel_teams=None):
                   "P(top 3)": f"{r['p_top3']*100:.0f}%"}
                  for _, r in dprobs_show.iterrows()]
         from dash import dash_table
-        from components import TABLE_STYLE
+        from f1lib.components import TABLE_STYLE
         body.append(html.Div([
             html.H4("DRIVER RACE-PACE OUTLOOK", style={
                 "color": TEXT_MAIN, "fontWeight": "800", "letterSpacing": "2px",
@@ -512,7 +512,7 @@ def tab_brief(sel_drivers=None, sel_teams=None):
                       "P(DNF)": f"{r['p_dnf']*100:.0f}%"}
                      for _, r in fc_show.iterrows()]
             from dash import dash_table
-            from components import TABLE_STYLE
+            from f1lib.components import TABLE_STYLE
             body.append(html.Div([
                 html.H4("RACE RESULT FORECAST", style={
                     "color": TEXT_MAIN, "fontWeight": "800",

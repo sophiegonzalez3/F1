@@ -48,7 +48,7 @@ pip install -r requirements.txt
 ```
 
 > **Always run the app from the virtual environment.** `pandas` is pinned to the
-> 2.x line on purpose — the enrichment pipeline in `processing.py` relies on
+> 2.x line on purpose — the enrichment pipeline in `f1lib/processing.py` relies on
 > pandas 2.x groupby behaviour and breaks on pandas 3.0.
 
 ---
@@ -75,7 +75,7 @@ pytest
 
 On first launch the app preloads the **most recent event** of the current season
 (every available session for it, even mid-weekend), discovered from the FastF1
-schedule — see `_default_session_info()` in [state.py](state.py). If those
+schedule — see `_default_session_info()` in [f1lib/state.py](f1lib/state.py). If those
 sessions are already cached under `data/sessions/` (most are bundled in the repo),
 startup is near-instant. If a session isn't cached, FastF1 fetches it from the
 network the first time — this can take a minute or two — and stores it as Parquet
@@ -87,24 +87,83 @@ sessions — no restart needed.
 
 ---
 
+## Updating for a new race weekend
+
+When a new Grand Prix rolls out, this is the end-to-end checklist to fold it into
+the dashboard. Steps 1–3 are all you need for the core tabs to work; 4–6 refresh
+the derived analytics and the hand-maintained datasets. Run every command from
+the repo root inside the venv.
+
+**During the weekend (optional, progressive):** after each practice session you
+can re-load the event in the **Data** tab — the BRIEF tab's pace prediction
+sharpens as FP1 → FP2 → FP3 data comes in.
+
+1. **Cache the sessions.** Launch the app (`python app.py`), open the **Data**
+   tab, pick the season + the new event, and load it. This fetches and caches
+   every available session (practice / qualifying / sprint / race) to
+   `data/sessions/`. Pit stops (`data/pitstops/`) and team radio load on demand
+   the first time you open the **Race** tab.
+
+2. **Review the team radio.** Run the `radio-review` skill for the meeting (fetch
+   → transcribe → hand-review). It writes reviewed transcripts and marks the
+   meeting `reviewed=True`. See `.claude/skills/radio-review/SKILL.md`.
+
+3. **Add the hand-maintained data** (from external sources):
+   - `data/tyre_allocations.csv` — the event's Pirelli C-compound nomination
+     (soft/medium/hard → C1–C5), from the Pirelli press release. Feeds the
+     "SOFT C5" chips on the strategy cards.
+   - `data/upgrades.csv` — the event's car-development packages from the FIA
+     "Car Presentation Submissions" PDF (download + `pdftotext -layout`, then
+     map team names to `TEAM_COLORS` keys). The UPGRADES tab hot-reloads on
+     file mtime, so no restart is needed.
+
+4. **Rebuild the derived tables** (after the race is cached):
+   ```bash
+   python scripts/compute_team_pace.py                 # data/team_pace_by_event.csv (SEASON tab + Upgrade Impact)
+   python scripts/compute_circuit_characteristics.py   # measured circuit scores (new circuit / fresh telemetry)
+   python -m f1lib.fetch_historical_results            # refresh results + championship standings archive
+   ```
+
+5. **Pre-bake the Quali 3D replay** (optional — makes the QUALI 3D view load
+   instantly for the new circuit):
+   ```bash
+   python scripts/build_quali_scenes.py <season> "<Meeting Name>"
+   ```
+
+6. **Older-cache upkeep** (only if you notice the symptom):
+   - Racing-line / replay view blank for the event → `python scripts/refetch_positions.py`
+   - RACE-tab season-1 fallback or year-on-year comparison missing →
+     `python scripts/fetch_previous_races.py`
+
+See [`scripts/README.md`](scripts/README.md) for the full per-script reference.
+
+---
+
 ## Project layout
 
 | Path | What it is |
 |------|------------|
-| [app.py](app.py) | The Dash app — UI, tabs, and callbacks. Entry point. |
-| [state.py](state.py) | Owns the loaded-session data + enrichment pipeline (`rebuild_state`). Tab modules read `state.laps` etc. |
-| [components.py](components.py) | Shared UI building blocks: Plotly theme, `card`, `kpi`, table styles. |
-| [standings.py](standings.py) | Historical-results archive + championship standings helpers and widgets. |
-| [figures.py](figures.py) | Shared chart builders (lap evolution, flag/rain bands) and team aggregations. |
+| [app.py](app.py) | The Dash app — UI, tabs, and callbacks. Entry point. The only `.py` at the repo root. |
+| `f1lib/` | The library the app imports (see key modules below). |
 | `tabs/` | Tab modules split out of app.py (overview, teams, practice, teammates, season, qualifying, upgrades, fingerprints); see `tabs/__init__.py` for the migration recipe. New tabs start here. |
+| `scripts/` | Standalone maintenance / data-update jobs you run by hand — see [`scripts/README.md`](scripts/README.md). |
 | `tests/` | Pytest suite for the enrichment pipeline and loaders (`pytest`; FutureWarnings are errors — the pandas-3 tripwire). |
-| [config.py](config.py) | Team/compound colours, analysis parameters, and data/cache paths. |
-| [data_loader.py](data_loader.py) | Loads sessions via FastF1, maps columns, and caches to Parquet. |
-| [processing.py](processing.py) | Lap cleaning, stint analysis, telemetry enrichment, etc. |
-| [radio_loader.py](radio_loader.py) | Fetches + transcribes team radio (faster-whisper), tags topics. |
-| [pitstops_loader.py](pitstops_loader.py) | Fetches real per-stop pit data (stationary + pit-lane times). |
 | `data/` | Bundled, version-controlled datasets (Parquet/CSV) — see below. |
 | `cache/` | FastF1's raw API cache. **Not** version-controlled; regenerated on demand. |
+
+Key modules inside `f1lib/`:
+
+| Module | What it is |
+|--------|------------|
+| [f1lib/state.py](f1lib/state.py) | Owns the loaded-session data + enrichment pipeline (`rebuild_state`). Tab modules read `state.laps` etc. |
+| [f1lib/components.py](f1lib/components.py) | Shared UI building blocks: Plotly theme, `card`, `kpi`, table styles. |
+| [f1lib/standings.py](f1lib/standings.py) | Historical-results archive + championship standings helpers and widgets. |
+| [f1lib/figures.py](f1lib/figures.py) | Shared chart builders (lap evolution, flag/rain bands) and team aggregations. |
+| [f1lib/config.py](f1lib/config.py) | Team/compound colours, analysis parameters, and data/cache paths. |
+| [f1lib/data_loader.py](f1lib/data_loader.py) | Loads sessions via FastF1, maps columns, and caches to Parquet. |
+| [f1lib/processing.py](f1lib/processing.py) | Lap cleaning, stint analysis, telemetry enrichment, etc. |
+| [f1lib/radio_loader.py](f1lib/radio_loader.py) | Fetches + transcribes team radio (faster-whisper), tags topics. |
+| [f1lib/pitstops_loader.py](f1lib/pitstops_loader.py) | Fetches real per-stop pit data (stationary + pit-lane times). |
 
 ### `data/` contents
 
@@ -113,39 +172,41 @@ sessions — no restart needed.
 - `radio/` — downloaded team-radio mp3s plus their transcripts.
 - `pitstops/` — real per-stop pit data (live-timing PitStopSeries → true stationary times; Jolpica fallback → pit-lane durations).
 - `track_maps/`, `circuit_characteristics.csv` — circuit reference data.
-- `circuit_characteristics_computed.csv` — telemetry-measured circuit scores (speed, full-throttle %, lateral load, tyre deg); overlays the manual CSV at startup. Regenerate with `compute_circuit_characteristics.py`.
+- `circuit_characteristics_computed.csv` — telemetry-measured circuit scores (speed, full-throttle %, lateral load, tyre deg); overlays the manual CSV at startup. Regenerate with `scripts/compute_circuit_characteristics.py`.
 - `upgrades.csv` — car-upgrade log sourced from FIA Car Presentation PDFs.
 - `tyre_allocations.csv` — Pirelli C-compound nomination per event (soft/medium/hard → C1–C5), hand-maintained from Pirelli press releases. Feeds the "SOFT C5" chips on the strategy cards.
-- `team_pace_by_event.csv` — per (season, round, team): qualifying gap to pole, corrected race-pace gap, points. Built by `compute_team_pace.py`; powers the SEASON tab and the Upgrade Impact analysis.
+- `team_pace_by_event.csv` — per (season, round, team): qualifying gap to pole, corrected race-pace gap, points. Built by `scripts/compute_team_pace.py`; powers the SEASON tab and the Upgrade Impact analysis.
 
 ---
 
 ## Helper scripts (optional)
 
 These refresh or extend the bundled data. You don't need them to run the app —
-only when you want new events.
+only when you want new events. The standalone ones live in `scripts/` (full
+reference in [`scripts/README.md`](scripts/README.md)); `fetch_historical_results`
+lives in `f1lib/` because the app imports it too, so it runs as a module.
 
 ```bash
 # Pull historical race/quali/sprint results + standings for the configured seasons
-python fetch_historical_results.py
+python -m f1lib.fetch_historical_results
 
 # Rebuild older session caches so telemetry includes X/Y track position
 # (needed for the racing-line view on sessions cached before that feature)
-python refetch_positions.py
+python scripts/refetch_positions.py
 
 # Backfill the previous season's Race for every cached meeting (so the RACE
 # tab's season fallback and year-on-year comparisons work offline)
-python fetch_previous_races.py            # add --dry-run to preview
+python scripts/fetch_previous_races.py            # add --dry-run to preview
 
 # Recompute the telemetry-measured circuit characteristics after caching new events
-python compute_circuit_characteristics.py
+python scripts/compute_circuit_characteristics.py
 
 # Rebuild the per-event team pace table (SEASON tab + Upgrade Impact analysis)
-# — run after fetch_historical_results.py and/or caching new races
-python compute_team_pace.py
+# — run after fetch_historical_results and/or caching new races
+python scripts/compute_team_pace.py
 ```
 
-Team radio is fetched and transcribed on demand by `radio_loader.py` when you
+Team radio is fetched and transcribed on demand by `f1lib/radio_loader.py` when you
 open the **Race** tab for a race that has audio. The first time is slow (it
 downloads clips and runs local Whisper transcription), then it's cached. Only
 recent races expose audio — older events return 403 from the archive.
@@ -156,8 +217,8 @@ recent races expose audio — older events return 403 from the archive.
 
 - **`ModuleNotFoundError` on startup** — the virtual environment isn't activated, or `pip install -r requirements.txt` hasn't been run inside it.
 - **App starts but a session is empty / slow** — that session wasn't cached and FastF1 is fetching it. Give it a minute; check the console logs (the app logs at INFO level).
-- **Racing-line view is blank for an event** — that session was cached before X/Y position data was added. Run `python refetch_positions.py`.
-- **Team radio missing for a race** — only recent races have downloadable audio; older ones are unavailable (403). Transcription quality/speed is controlled by `RADIO_WHISPER_MODEL` in [config.py](config.py).
+- **Racing-line view is blank for an event** — that session was cached before X/Y position data was added. Run `python scripts/refetch_positions.py`.
+- **Team radio missing for a race** — only recent races have downloadable audio; older ones are unavailable (403). Transcription quality/speed is controlled by `RADIO_WHISPER_MODEL` in [f1lib/config.py](f1lib/config.py).
 
 ---
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 from dash import html, dash_table
 import dash_bootstrap_components as dbc
 
-from config import (
+from f1lib.config import (
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )
 

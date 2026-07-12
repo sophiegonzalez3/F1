@@ -24,9 +24,9 @@ from __future__ import annotations
 
 import logging
 
-from config import CURRENT_SEASON
-from data_loader import load_sessions, most_recent_event
-from processing import (
+from f1lib.config import CURRENT_SEASON
+from f1lib.data_loader import load_sessions, most_recent_event
+from f1lib.processing import (
     clean_and_enrich_laps, analyze_stints,
     identify_quali_sim_laps,
     enrich_telemetry, flag_perturbed_laps,

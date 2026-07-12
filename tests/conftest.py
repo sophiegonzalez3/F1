@@ -24,5 +24,5 @@ def race_laps() -> pd.DataFrame:
 
 @pytest.fixture(scope="session")
 def enriched_race(race_laps) -> pd.DataFrame:
-    from processing import clean_and_enrich_laps
+    from f1lib.processing import clean_and_enrich_laps
     return clean_and_enrich_laps(race_laps.copy())

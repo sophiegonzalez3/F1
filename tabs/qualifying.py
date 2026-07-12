@@ -19,10 +19,10 @@ import plotly.graph_objects as go
 from dash import html, dcc
 import dash_bootstrap_components as dbc
 
-import state
-from components import theme, card, kpi, GFX
-from config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
-from processing import format_lap_time
+import f1lib.state as state
+from f1lib.components import theme, card, kpi, GFX
+from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
+from f1lib.processing import format_lap_time
 from tabs.quali_replay import quali3d_card
 
 _SECTORS = ["Sector1Time", "Sector2Time", "Sector3Time"]

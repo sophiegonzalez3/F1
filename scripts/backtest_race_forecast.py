@@ -11,9 +11,12 @@ Two questions, kept separate:
      rank the actual finishers respectably?
 
 Run once the model + tables exist:
-    python backtest_race_forecast.py
+    python scripts/backtest_race_forecast.py
 """
 from __future__ import annotations
+
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import warnings
 import logging
@@ -25,8 +28,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from race_forecast import RaceForecaster
-from driver_ratings import DriverRatings
+from f1lib.race_forecast import RaceForecaster
+from f1lib.driver_ratings import DriverRatings
 
 
 def combination_test() -> None:
@@ -66,8 +69,8 @@ def combination_test() -> None:
 
 def endtoend_test() -> None:
     """Full forecast with predicted pace + actual grid, leak-free as-of."""
-    from pace_model import PaceModel
-    from pace_features import event_measurements
+    from f1lib.pace_model import PaceModel
+    from f1lib.pace_features import event_measurements
     m = PaceModel()
     rf = RaceForecaster()
     dr = DriverRatings()

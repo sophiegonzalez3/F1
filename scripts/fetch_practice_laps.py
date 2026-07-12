@@ -16,11 +16,14 @@ the full cache when an event is already there).
 
 Usage
 -----
-    python fetch_practice_laps.py                      # 2024 + 2025
-    python fetch_practice_laps.py --seasons 2025       # one season
-    python fetch_practice_laps.py --dry-run            # list what would fetch
+    python scripts/fetch_practice_laps.py                      # 2024 + 2025
+    python scripts/fetch_practice_laps.py --seasons 2025       # one season
+    python scripts/fetch_practice_laps.py --dry-run            # list what would fetch
 """
 from __future__ import annotations
+
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import argparse
 import sys
@@ -35,8 +38,8 @@ import pandas as pd
 
 import fastf1
 
-import data_loader as dl
-from config import SESSIONS_LITE_DIR, SESSIONS_DIR, FASTF1_CACHE_DIR
+import f1lib.data_loader as dl
+from f1lib.config import SESSIONS_LITE_DIR, SESSIONS_DIR, FASTF1_CACHE_DIR
 
 LITE = Path(SESSIONS_LITE_DIR)
 FULL = Path(SESSIONS_DIR)

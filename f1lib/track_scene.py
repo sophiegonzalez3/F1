@@ -908,7 +908,7 @@ def build_track_scene(season: int, meeting: str, force: bool = False) -> dict | 
     corner_names: dict[int, str] = {}
     straight_defs: list[tuple[int, str]] = []
     try:
-        from config import HIST_CIRCUIT_KEY_MAP
+        from f1lib.config import HIST_CIRCUIT_KEY_MAP
         from tabs.track import _corner_name_map, _NAMED_STRAIGHTS
         ck = next((fr for fr, evs in HIST_CIRCUIT_KEY_MAP.items()
                    if _slug(meeting) in evs), None)

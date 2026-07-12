@@ -18,8 +18,8 @@ import logging
 import pandas as pd
 from dash import html
 
-from components import badge  # noqa: F401 — kept for future chip-badge use
-from config import COMPOUND_COLORS, TEXT_DIM
+from f1lib.components import badge  # noqa: F401 — kept for future chip-badge use
+from f1lib.config import COMPOUND_COLORS, TEXT_DIM
 
 _TYRE_ALLOC_CACHE: pd.DataFrame | None = None
 

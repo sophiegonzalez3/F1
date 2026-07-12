@@ -34,7 +34,7 @@ field-average rate. It is a PACE-and-track forecast, honest about that.
 
 Entry point
 -----------
-    from race_forecast import RaceForecaster
+    from f1lib.race_forecast import RaceForecaster
     rf = RaceForecaster()
     out = rf.forecast(race_pred, quali_pred=quali_pred, event="Monaco Grand Prix")
     # out: driver, team, p_win, p_podium, p_points, e_finish, p_dnf
@@ -48,7 +48,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-from pace_features import canon
+from f1lib.pace_features import canon
 
 logger = logging.getLogger(__name__)
 

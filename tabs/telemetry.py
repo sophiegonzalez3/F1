@@ -19,17 +19,17 @@ from dash import (
 )
 import dash_bootstrap_components as dbc
 
-import state
-from components import (
+import f1lib.state as state
+from f1lib.components import (
     theme, card, kpi, GFX, TABLE_STYLE, styled_table,
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
 )
-from config import (
+from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS, get_driver_color,
     ACCENT, CARD_BG, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     SPEED_PERCENTILE, MINI_SECTORS,
 )
-from processing import (
+from f1lib.processing import (
     best_laps_table, format_lap_time,
 )
 from tabs.fingerprints import fingerprint_section

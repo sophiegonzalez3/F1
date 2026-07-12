@@ -20,10 +20,13 @@ one identity across seasons.
 
 Usage
 -----
-    python compute_team_pace.py                # all seasons in the archive
-    python compute_team_pace.py --season 2026  # one season
+    python scripts/compute_team_pace.py                # all seasons in the archive
+    python scripts/compute_team_pace.py --season 2026  # one season
 """
 from __future__ import annotations
+
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import sys
 import warnings
@@ -34,8 +37,8 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
-import data_loader as dl
-from processing import clean_and_enrich_laps, flag_dirty_air, enrich_track_evolution
+import f1lib.data_loader as dl
+from f1lib.processing import clean_and_enrich_laps, flag_dirty_air, enrich_track_evolution
 
 OUT_PATH = Path("data/team_pace_by_event.csv")
 HIST = Path("data/historical_results")

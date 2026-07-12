@@ -22,17 +22,17 @@ import dash
 from dash import dcc, html, Input, Output, State, dash_table, ctx, no_update, ALL
 import dash_bootstrap_components as dbc
 
-from config import (
+from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS,
     DARK_BG, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     SPEED_PERCENTILE, MINI_SECTORS, get_min_laps_for_compound,
     MIN_LAPS_SOFT, MIN_LAPS_MEDIUM, MIN_LAPS_HARD,
     HISTORICAL_DIR, FASTF1_CACHE_DIR,
 )
-from data_loader import load_sessions, cache_summary, is_cached, list_cached_sessions
-from radio_loader import load_race_radio, race_radio_available, radio_cached
-from pitstops_loader import load_pitstops
-from processing import (
+from f1lib.data_loader import load_sessions, cache_summary, is_cached, list_cached_sessions
+from f1lib.radio_loader import load_race_radio, race_radio_available, radio_cached
+from f1lib.pitstops_loader import load_pitstops
+from f1lib.processing import (
     clean_and_enrich_laps, analyze_stints,
     identify_quali_sim_laps, best_laps_table,
     format_lap_time, enrich_telemetry, flag_perturbed_laps,
@@ -51,8 +51,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 # register(globals()) mirrors the state names (laps, stints, SESSIONS, …)
 # into this module on every rebuild, so the existing bare-name references
 # below keep working. New code should read state.laps etc. directly.
-import state
-from state import rebuild_state, SESSION_INFO_LIST
+import f1lib.state as state
+from f1lib.state import rebuild_state, SESSION_INFO_LIST
 state.register(globals())
 
 # ── Initial load (default sessions) ──────────────────────────
@@ -110,7 +110,7 @@ if not CIRCUIT_CHARS.empty and _CIRCUIT_COMPUTED_PATH.exists():
 from tabs.data import tab_data_selection, tab_data_quality
 
 # ── Historical archive & championship standings (standings.py) ──
-from standings import (
+from f1lib.standings import (
     HIST_RACE, HIST_QUALI, HIST_SPRINT, HIST_STANDINGS, HIST_DRIVER_STANDINGS,
     _loaded_meeting_season_round, _standings_after_round, _round_points_for,
     _prev_round, _team_champ_rank, _order_teams_by_champ, _dense_rank_by_pts,
@@ -134,8 +134,8 @@ print(f"Team upgrades           : {len(upgrades_df()):,} rows")
 # while fetch_historical_results.py slugifies the official English event name
 # (e.g. "monaco_grand_prix", "united_states_grand_prix"). The bridge map lives
 # in config.py so compute_circuit_characteristics.py can share it.
-from config import HIST_CIRCUIT_KEY_MAP
-from standings import (
+from f1lib.config import HIST_CIRCUIT_KEY_MAP
+from f1lib.standings import (
     _slugify_event, _loaded_event, _loaded_circuit_key,
     _track_avail_years, _circuit_race_years, _circuit_display_season,
 )
@@ -144,7 +144,7 @@ from standings import (
 # ── Theme & shared UI building blocks (components.py) ────────
 # Pure presentation helpers live in components.py so tab modules can import
 # them without touching app.py. The aliases keep existing call sites working.
-from components import (
+from f1lib.components import (
     BASE, theme, card, kpi, GFX, TABLE_STYLE, styled_table,
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
     TEAM_ABBR as _TEAM_ABBR,
@@ -152,7 +152,7 @@ from components import (
 
 # ── Shared chart builders & aggregations (figures.py) ────────
 # (team_metrics / tmgaps are imported directly by the tab modules)
-from figures import (
+from f1lib.figures import (
     _add_flag_bands, _rain_lap_groups, _add_rain_bands, _lap_evolution_fig,
 )
 
@@ -162,7 +162,7 @@ app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG],
 
 # ── Serve cached team-radio mp3s (so html.Audio can play them) ──
 from flask import send_from_directory, abort
-from config import RADIO_DIR as _RADIO_DIR
+from f1lib.config import RADIO_DIR as _RADIO_DIR
 _RADIO_ABS = Path(_RADIO_DIR).resolve()
 
 @app.server.route("/radio/<path:clip>")

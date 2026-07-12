@@ -8,16 +8,19 @@ pulling position data from FastF1's raw cache (or the network if not cached).
 
 Usage
 -----
-    python refetch_positions.py            # only sessions missing X/Y (default)
-    python refetch_positions.py --all      # force-rebuild every cached session
+    python scripts/refetch_positions.py            # only sessions missing X/Y (default)
+    python scripts/refetch_positions.py --all      # force-rebuild every cached session
 """
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 import sys
 import warnings
 
 warnings.filterwarnings("ignore")
 
 import pyarrow.parquet as pq
-import data_loader as dl
+import f1lib.data_loader as dl
 
 force_all = "--all" in sys.argv
 

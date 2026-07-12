@@ -65,7 +65,7 @@ except ImportError:
     logging.warning("fastf1 not installed — only cached data will be available.  "
                     "Run: pip install fastf1")
 
-from config import SESSIONS_DIR, FASTF1_CACHE_DIR
+from f1lib.config import SESSIONS_DIR, FASTF1_CACHE_DIR
 
 logger = logging.getLogger(__name__)
 

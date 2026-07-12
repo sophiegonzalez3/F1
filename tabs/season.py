@@ -14,8 +14,8 @@ import plotly.graph_objects as go
 from dash import html, dcc, callback, Input, Output
 import dash_bootstrap_components as dbc
 
-from components import theme, card, GFX, abbr
-from config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
+from f1lib.components import theme, card, GFX, abbr
+from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
 from tabs.pace_data import team_pace_df, seasons, event_short
 
 

@@ -27,11 +27,11 @@ from dash import (
 )
 import dash_bootstrap_components as dbc
 
-from components import card
-from config import TEAM_COLORS, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM
-from data_loader import load_session
-from processing import format_lap_time
-from track_scene import build_track_scene, cached_scene
+from f1lib.components import card
+from f1lib.config import TEAM_COLORS, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM
+from f1lib.data_loader import load_session
+from f1lib.processing import format_lap_time
+from f1lib.track_scene import build_track_scene, cached_scene
 
 logger = logging.getLogger(__name__)
 

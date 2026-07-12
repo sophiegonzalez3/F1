@@ -29,12 +29,15 @@ Baselines the model must beat
 
 Usage
 -----
-    python backtest_pace_model.py                 # all cached events
-    python backtest_pace_model.py --seasons 2024 2025
-    python backtest_pace_model.py --tune          # grid-search base noise on
+    python scripts/backtest_pace_model.py                 # all cached events
+    python scripts/backtest_pace_model.py --seasons 2024 2025
+    python scripts/backtest_pace_model.py --tune          # grid-search base noise on
                                                   # 2024, validate on 2025
 """
 from __future__ import annotations
+
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import argparse
 import itertools
@@ -49,10 +52,10 @@ import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
 
-import data_loader as dl
-from config import SESSIONS_DIR, SESSIONS_LITE_DIR
-from pace_features import event_measurements, PRACTICE_SESSIONS
-from pace_model import PaceModel, era_of
+import f1lib.data_loader as dl
+from f1lib.config import SESSIONS_DIR, SESSIONS_LITE_DIR
+from f1lib.pace_features import event_measurements, PRACTICE_SESSIONS
+from f1lib.pace_model import PaceModel, era_of
 
 OUT = Path("data/backtest_pace_model.csv")
 TARGET = {"onelap": "quali_gap_pct", "longrun": "race_pace_gap_pct"}

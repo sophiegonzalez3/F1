@@ -70,7 +70,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from config import HISTORICAL_DIR, FASTF1_CACHE_DIR
+from f1lib.config import HISTORICAL_DIR, FASTF1_CACHE_DIR
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Logging

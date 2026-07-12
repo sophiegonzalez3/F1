@@ -8,11 +8,14 @@ Safe to re-run: everything is cached, failures on one circuit don't stop
 the rest.
 
 Usage:
-    python build_quali_scenes.py            # build the standard list below
-    python build_quali_scenes.py --force    # re-bake scenes + payloads
-    python build_quali_scenes.py 2025 "Qatar Grand Prix"   # just one
+    python scripts/build_quali_scenes.py            # build the standard list below
+    python scripts/build_quali_scenes.py --force    # re-bake scenes + payloads
+    python scripts/build_quali_scenes.py 2025 "Qatar Grand Prix"   # just one
 """
 from __future__ import annotations
+
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import logging
 import sys
@@ -56,7 +59,7 @@ def build_one(season: int, meeting: str, force: bool = False) -> str:
     from tabs.quali_replay import (build_quali3d_payload,
                                    cached_quali3d_payload,
                                    _payload_cache_path, _PAYLOAD_MEM)
-    from track_scene import build_track_scene
+    from f1lib.track_scene import build_track_scene
 
     if force:
         build_track_scene(season, meeting, force=True)

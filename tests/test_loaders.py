@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from radio_loader import tag_topics
-from pitstops_loader import _parse_duration
-from data_loader import _sanitize, _session_key
+from f1lib.radio_loader import tag_topics
+from f1lib.pitstops_loader import _parse_duration
+from f1lib.data_loader import _sanitize, _session_key
 
 ROOT = Path(__file__).resolve().parents[1]
 

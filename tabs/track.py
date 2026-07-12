@@ -26,20 +26,20 @@ from dash import (
 )
 import dash_bootstrap_components as dbc
 
-import state
-from components import (
+import f1lib.state as state
+from f1lib.components import (
     theme, card, kpi, GFX, TABLE_STYLE, styled_table,
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
 )
-from config import (
+from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS,
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     MINI_SECTORS, FASTF1_CACHE_DIR,
     HIST_CIRCUIT_KEY_MAP,
 )
-from processing import format_lap_time
-from figures import _tyre_history_chart
-from standings import (
+from f1lib.processing import format_lap_time
+from f1lib.figures import _tyre_history_chart
+from f1lib.standings import (
     HIST_RACE, HIST_QUALI, HIST_STANDINGS,
     _loaded_event, _loaded_circuit_key, _slugify_event,
     _track_avail_years, _circuit_race_years, _circuit_display_season,
@@ -553,7 +553,7 @@ def _hist_all_years(df_h: pd.DataFrame, sess_type: str) -> html.Div:
 
 
 # _tyre_history_chart now lives in figures.py (shared by STINTS + TRACK)
-from figures import _tyre_history_chart
+from f1lib.figures import _tyre_history_chart
 
 
 def _rotate(x, y, angle):

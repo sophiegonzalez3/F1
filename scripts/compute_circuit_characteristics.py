@@ -18,10 +18,13 @@ manual CSV at startup (tyre difficulty stays manual — it isn't measurable).
 
 Usage
 -----
-    python compute_circuit_characteristics.py            # all cached circuits
-    python compute_circuit_characteristics.py --verbose  # per-lap details
+    python scripts/compute_circuit_characteristics.py            # all cached circuits
+    python scripts/compute_circuit_characteristics.py --verbose  # per-lap details
 """
 from __future__ import annotations
+
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import sys
 import re
@@ -33,9 +36,9 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
-import data_loader as dl
-from config import HIST_CIRCUIT_KEY_MAP, THROTTLE_THRESHOLD
-from processing import (
+import f1lib.data_loader as dl
+from f1lib.config import HIST_CIRCUIT_KEY_MAP, THROTTLE_THRESHOLD
+from f1lib.processing import (
     clean_and_enrich_laps, flag_dirty_air, enrich_track_evolution,
     analyze_stints,
 )

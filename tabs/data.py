@@ -17,20 +17,20 @@ from dash import (
 )
 import dash_bootstrap_components as dbc
 
-import state
-from state import rebuild_state
-from components import (
+import f1lib.state as state
+from f1lib.state import rebuild_state
+from f1lib.components import (
     theme, card, kpi, GFX, TABLE_STYLE, styled_table,
     badge as _badge, abbr as _abbr,
 )
-from config import (
+from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS, get_min_laps_for_compound,
     ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     CURRENT_SEASON,
     MIN_LAPS_SOFT, MIN_LAPS_MEDIUM, MIN_LAPS_HARD,
 )
-from data_loader import is_cached, season_meetings, sessions_for_meeting
-from processing import format_lap_time
+from f1lib.data_loader import is_cached, season_meetings, sessions_for_meeting
+from f1lib.processing import format_lap_time
 
 # mirror the mutable data state so bare `laps`, `laps_raw`, `stints`,
 # SESSIONS, DRIVERS, TEAMS reads inside the moved bodies keep working

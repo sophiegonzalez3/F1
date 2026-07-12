@@ -42,7 +42,7 @@ input); `DriverRatings` fits and serves the effects.
 Usage
 -----
     python driver_ratings.py            # (re)build the per-event table
-    from driver_ratings import DriverRatings
+    from f1lib.driver_ratings import DriverRatings
     dr = DriverRatings()
     eff = dr.effects("race", as_of=(2026, 8))   # driver, effect, se, n_events
 """
@@ -58,9 +58,9 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
-import data_loader as dl
-from pace_features import canon
-from processing import clean_and_enrich_laps, flag_dirty_air, enrich_track_evolution
+import f1lib.data_loader as dl
+from f1lib.pace_features import canon
+from f1lib.processing import clean_and_enrich_laps, flag_dirty_air, enrich_track_evolution
 
 logger = logging.getLogger(__name__)
 

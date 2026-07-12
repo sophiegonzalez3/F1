@@ -10,18 +10,18 @@ from plotly.subplots import make_subplots
 from dash import html, dcc, dash_table
 import dash_bootstrap_components as dbc
 
-import state
-from components import (
+import f1lib.state as state
+from f1lib.components import (
     theme, card, kpi, GFX, TABLE_STYLE, styled_table,
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
     TEAM_ABBR as _TEAM_ABBR,
 )
-from config import (
+from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS, get_driver_color,
     DARK_BG, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     SPEED_PERCENTILE,
 )
-from processing import format_lap_time
+from f1lib.processing import format_lap_time
 
 # mirror the mutable data state (SESSIONS, DRIVERS, telemetry, …) so the
 # moved bodies keep their bare-name reads — repopulated on every reload

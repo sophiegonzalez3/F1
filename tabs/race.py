@@ -21,16 +21,16 @@ from dash import (
 )
 import dash_bootstrap_components as dbc
 
-import state
-from components import (
+import f1lib.state as state
+from f1lib.components import (
     theme, card, kpi, GFX, TABLE_STYLE, styled_table,
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
 )
-from config import (
+from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS,
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )
-from processing import (
+from f1lib.processing import (
     clean_and_enrich_laps, enrich_weather, enrich_track_limits,
     enrich_blue_flags, identify_quali_sim_laps, flag_perturbed_laps,
     flag_dirty_air, enrich_track_evolution, enrich_session_results,
@@ -40,13 +40,13 @@ from processing import (
     detect_wet_crossover, dirty_air_penalty, traffic_exposure_curve,
     clipped_range,
 )
-from figures import _add_flag_bands, _rain_lap_groups, _add_rain_bands, _lap_evolution_fig
-from tyre_allocations import _allocation_chips, _laps_event
-from data_loader import load_session, load_sessions, is_cached
-from radio_loader import load_race_radio, race_radio_available, radio_cached
+from f1lib.figures import _add_flag_bands, _rain_lap_groups, _add_rain_bands, _lap_evolution_fig
+from f1lib.tyre_allocations import _allocation_chips, _laps_event
+from f1lib.data_loader import load_session, load_sessions, is_cached
+from f1lib.radio_loader import load_race_radio, race_radio_available, radio_cached
 from tabs.replay import replay_card
-from pitstops_loader import load_pitstops
-from standings import _order_by_champ, _order_teams_by_champ
+from f1lib.pitstops_loader import load_pitstops
+from f1lib.standings import _order_by_champ, _order_teams_by_champ
 
 # mirror data state (LOADED_SESSION_INFO etc.)
 state.register(globals())
@@ -510,7 +510,7 @@ def _undercut_fig(pairs: pd.DataFrame, title: str) -> go.Figure:
 _SIM_MIN_STINT = 5      # laps — shortest stint the optimizer may schedule
 
 
-from tyre_allocations import _allocation_chips, _allocation_for, _laps_event
+from f1lib.tyre_allocations import _allocation_chips, _allocation_for, _laps_event
 
 
 def _estimate_pit_loss(rl: pd.DataFrame) -> float | None:

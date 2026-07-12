@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from processing import (
+from f1lib.processing import (
     clean_and_enrich_laps, analyze_stints, _degradation_rate,
     _trimmed_median, format_lap_time, compound_offsets,
     detect_wet_crossover, dirty_air_penalty, traffic_exposure_curve,

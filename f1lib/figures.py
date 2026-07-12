@@ -11,8 +11,8 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from components import theme
-from config import (
+from f1lib.components import theme
+from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS, get_driver_color,
     ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )

@@ -16,9 +16,9 @@ import pandas as pd
 from dash import html
 import dash_bootstrap_components as dbc
 
-import state
-from components import card
-from config import (
+import f1lib.state as state
+from f1lib.components import card
+from f1lib.config import (
     HISTORICAL_DIR, HIST_CIRCUIT_KEY_MAP, TEAM_COLORS,
     ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )
@@ -55,7 +55,7 @@ HIST_SPRINT = _load_hist("sprint_results_all.parquet")
 HIST_STANDINGS = _load_hist("constructor_standings_all.parquet")
 if HIST_STANDINGS.empty and not HIST_RACE.empty:
     try:
-        from fetch_historical_results import build_constructor_standings
+        from f1lib.fetch_historical_results import build_constructor_standings
         _pts_src = HIST_RACE
         if not HIST_SPRINT.empty:
             _shared = [c for c in HIST_RACE.columns if c in HIST_SPRINT.columns]
@@ -73,7 +73,7 @@ print(f"Constructor standings   : {len(HIST_STANDINGS):,} rows")
 HIST_DRIVER_STANDINGS = _load_hist("driver_standings_all.parquet")
 if HIST_DRIVER_STANDINGS.empty and not HIST_RACE.empty:
     try:
-        from fetch_historical_results import build_driver_standings
+        from f1lib.fetch_historical_results import build_driver_standings
         _dpts_src = HIST_RACE
         if not HIST_SPRINT.empty:
             _dshared = [c for c in HIST_RACE.columns if c in HIST_SPRINT.columns]

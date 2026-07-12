@@ -11,21 +11,21 @@ import plotly.graph_objects as go
 from dash import html, dcc, dash_table, callback, Input, Output, State
 import dash_bootstrap_components as dbc
 
-import state
-from components import (
+import f1lib.state as state
+from f1lib.components import (
     theme, card, kpi, GFX, TABLE_STYLE, styled_table,
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
 )
-from config import (
+from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS,
     ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     MIN_LAPS_MEDIUM,
 )
-from processing import (
+from f1lib.processing import (
     field_deg_curves, detect_stint_cliffs, compound_offsets, format_lap_time,
 )
-from figures import _add_flag_bands, _add_rain_bands, _lap_evolution_fig, _tyre_history_chart
-from tyre_allocations import _allocation_chips, _laps_event
+from f1lib.figures import _add_flag_bands, _add_rain_bands, _lap_evolution_fig, _tyre_history_chart
+from f1lib.tyre_allocations import _allocation_chips, _laps_event
 
 # mirror the mutable data state so bare `laps`, `stints`, SESSIONS, DRIVERS,
 # TEAMS, COMPOUNDS reads inside the moved bodies keep working across reloads

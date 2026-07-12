@@ -28,12 +28,12 @@ from dash import (
 )
 import dash_bootstrap_components as dbc
 
-from components import card, GFX
-from config import (
+from f1lib.components import card, GFX
+from f1lib.config import (
     TEAM_COLORS,
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )
-from data_loader import load_session
+from f1lib.data_loader import load_session
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +155,7 @@ def _radio_entries(season: int, meeting: str, laps: pd.DataFrame,
     radio is cached for this race). Wall-clock → session seconds via the
     LapStartDate/LapStartTime offset."""
     try:
-        from radio_loader import load_race_radio, radio_cached
+        from f1lib.radio_loader import load_race_radio, radio_cached
         if not radio_cached(season, meeting):
             return []
         rdf = load_race_radio(season, meeting)

@@ -200,16 +200,14 @@ width=2, style={"padding":"0"})
 
 TABS = dbc.Tabs([
     dbc.Tab(label="DATA",           tab_id="tab-data"),
-    dbc.Tab(label="BRIEF",          tab_id="tab-brief"),
     dbc.Tab(label="TRACK",          tab_id="tab-track"),
     dbc.Tab(label="SEASON",         tab_id="tab-season"),
-    dbc.Tab(label="TEAM ANALYSIS",  tab_id="tab-teams"),
+    dbc.Tab(label="WEEK END PRED",  tab_id="tab-weekend"),
     dbc.Tab(label="TELEMETRY",      tab_id="tab-laps"),
     dbc.Tab(label="STINTS",         tab_id="tab-stints"),
-    dbc.Tab(label="PRACTICE",       tab_id="tab-practice"),
     dbc.Tab(label="QUALI",          tab_id="tab-quali"),
     dbc.Tab(label="RACE",           tab_id="tab-race"),
-    dbc.Tab(label="TEAMMATES",      tab_id="tab-teammates"),
+    dbc.Tab(label="TEAM & TEAMATE", tab_id="tab-teams"),
 ], id="tabs", active_tab="tab-data",
    style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
 
@@ -234,6 +232,23 @@ app.layout = dbc.Container(dbc.Row([SIDEBAR,MAIN],className="g-0"),
 from collections import OrderedDict as _OrderedDict
 _TAB_RENDER_MEMO: _OrderedDict = _OrderedDict()
 _TAB_MEMO_MAX = 12
+
+
+def _section_header(title, intro):
+    """A centered section title + intro paragraph, used to separate the two
+    stacked halves of a merged tab (TEAM & TEAMATE, WEEK END PRED)."""
+    return html.Div([
+        html.H3(title,
+                style={"color": TEXT_MAIN, "fontWeight": "900",
+                       "letterSpacing": "3px", "textAlign": "center",
+                       "marginBottom": "10px", "fontSize": "1.5rem",
+                       "borderBottom": f"2px solid {ACCENT}",
+                       "paddingBottom": "10px"}),
+        html.P(intro,
+               style={"color": TEXT_DIM, "fontSize": "0.82rem",
+                      "textAlign": "center", "maxWidth": "780px",
+                      "margin": "0 auto 22px", "lineHeight": "1.5"}),
+    ])
 
 
 def _render_tab(tab, ss, sd, st):
@@ -263,19 +278,62 @@ def _render_tab(tab, ss, sd, st):
                 if not telemetry.empty else telemetry)
         # merged view: the session overview cards first, telemetry below
         return html.Div([tab_overview(fl_d, fs_d, ft), tab_laps(fl_d, ft)])
-    if tab=="tab-teams":      return tab_teams(fl_d, fs_d)
+    if tab=="tab-teams":
+        # Merged TEAM & TEAMATE tab: team-analysis content first, then the
+        # head-to-head teammate content stacked below, each under its own
+        # section header + intro.
+        return html.Div([
+            _section_header(
+                "TEAM COMPARISON AND MOMENTUM",
+                "How the teams stack up against each other across the loaded "
+                "sessions — one-lap and race pace, sector strengths, and which "
+                "way each team's form is trending. Every metric takes the "
+                "stronger of a team's two cars, so this is the "
+                "constructor-vs-constructor view of the field's pecking order "
+                "and who is gaining or losing ground."),
+            tab_teams(fl_d, fs_d),
+            html.Hr(style={"borderColor": GRID_CLR, "margin": "40px 0 28px"}),
+            _section_header(
+                "TEAMMATES COMPARISON AND MOMENTUM",
+                "Now zoom inside each garage: the head-to-head duel between the "
+                "two drivers sharing identical machinery. Because the car is a "
+                "constant, these gaps isolate the driver — qualifying pace, race "
+                "pace, and how momentum swings from one side of the garage to "
+                "the other across the weekend."),
+            tab_teammates(fl_d, fs_d),
+        ])
     if tab=="tab-stints":     return tab_stints(fl_d,fs_d)
-    if tab=="tab-practice":
+    if tab=="tab-weekend":
+        # Merged WEEK END PRED tab: practice content first, then the pre-event
+        # brief stacked below.
         # Practice construction / sandbagging adapts to whichever sessions are
         # selected, so unchecking Qualifying/Race lets you preview the mid-event
         # ("after FP2" / "after FP3") picture even on a fully-cached weekend.
         wl = laps[laps["session_name"].isin(ss) & laps["Driver_Short"].isin(sd)
                   & laps["Team"].isin(st)].copy()
-        return tab_practice(wl)
+        return html.Div([
+            _section_header(
+                "PRACTICE CONSTRUCTION & SANDBAGGING",
+                "What the practice sessions are really telling us. Reads the "
+                "mid-weekend picture — long runs, one-lap potential, and the "
+                "'pace in hand' between them — to expose who is sandbagging and "
+                "who has genuinely shown their hand before qualifying. Works "
+                "after FP1/FP2 alone and gains a confirmation layer once "
+                "qualifying loads."),
+            tab_practice(wl),
+            html.Hr(style={"borderColor": GRID_CLR, "margin": "40px 0 28px"}),
+            _section_header(
+                "WEEKEND PACE PREDICTION",
+                "The model's answer to 'who will be quick?'. Starting from an "
+                "era-aware season-form prior and sharpening after every practice "
+                "session, it projects the qualifying order with uncertainty, "
+                "tracks how that call has moved session to session, and — once "
+                "quali or the race lands — keeps score against what actually "
+                "happened."),
+            tab_brief(sd, st),
+        ])
     if tab=="tab-quali":      return tab_quali()
-    if tab=="tab-brief":      return tab_brief(sd, st)
     if tab=="tab-race":       return tab_race(sd, st)
-    if tab=="tab-teammates":  return tab_teammates(fl_d,fs_d)
     if tab=="tab-track":      return tab_track_info()
     if tab=="tab-season":
         return tab_season(

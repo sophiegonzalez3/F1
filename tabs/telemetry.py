@@ -26,7 +26,7 @@ from components import (
 )
 from config import (
     TEAM_COLORS, COMPOUND_COLORS, get_driver_color,
-    ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
+    ACCENT, CARD_BG, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     SPEED_PERCENTILE, MINI_SECTORS,
 )
 from processing import (
@@ -47,6 +47,14 @@ def _get_track_map():
 
 _LAPTEL_CHANNELS = ["Speed", "Throttle", "Brake", "GearNo"]
 _LAPTEL_DASHES   = ["solid", "dash", "dot", "dashdot", "longdash"]
+
+
+def _rotate(x, y, angle):
+    """Rotate point(s) (x, y) by *angle* radians — matches FastF1's example.
+    Local copy (same as tabs/track.py, tabs/replay.py) so the racing-line
+    overlay can orient laps in the circuit frame without importing that tab."""
+    ca, sa = np.cos(angle), np.sin(angle)
+    return x * ca - y * sa, x * sa + y * ca
 
 
 def _lap_telemetry(session, driver_short, lapno, tel_pool=None):
@@ -757,6 +765,7 @@ def _racing_line_fig(specs):
 
     ttl = ("Racing Line — coloured by speed" if single
            else "Racing Line Comparison — where the lines diverge")
+    from tabs.track import _track_map_layout   # shared equal-aspect track layout
     _track_map_layout(fig, ttl, height=560)
     fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.0, xanchor="left",
                                   x=0, bgcolor="rgba(0,0,0,0)", font=dict(size=10)))

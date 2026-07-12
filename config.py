@@ -63,11 +63,19 @@ THROTTLE_THRESHOLD = 95
 MINI_SECTORS       = 20     # equal-distance segments per lap for mini-sector analysis
 
 # ─────────────────────────────────────────────
+# SEASON
+# ─────────────────────────────────────────────
+# The season the dashboard treats as "current": startup preloads its most
+# recent event, and the DATA tab defaults its event picker to it.
+CURRENT_SEASON = 2026
+
+# ─────────────────────────────────────────────
 # DATA & CACHE PATHS
 # ─────────────────────────────────────────────
 # Persistent, app-readable Parquet datasets live under data/.
 # Only FastF1's opaque raw-API cache lives under cache/.
 SESSIONS_DIR     = "data/sessions"             # per-session Parquet (data_loader.py)
+SESSIONS_LITE_DIR = "data/sessions_lite"       # laps+weather-only Parquet backfill (fetch_practice_laps.py) — model/backtest input, not read by the app loader
 HISTORICAL_DIR   = "data/historical_results"   # historical race/quali results
 FASTF1_CACHE_DIR = "cache/fastf1"              # FastF1's own raw-data cache
 RADIO_DIR        = "data/radio"                # team-radio mp3s + transcripts (radio_loader.py)

@@ -24,7 +24,8 @@ from __future__ import annotations
 
 import logging
 
-from data_loader import load_sessions
+from config import CURRENT_SEASON
+from data_loader import load_sessions, most_recent_event
 from processing import (
     clean_and_enrich_laps, analyze_stints,
     identify_quali_sim_laps,
@@ -37,14 +38,30 @@ from processing import (
 
 logger = logging.getLogger(__name__)
 
-# ── Sessions to load at startup (default) ────────────────────
-SESSION_INFO_LIST = [
-    {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Practice 1"},
-    {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Practice 2"},
-    {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Practice 3"},
-    {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Qualifying"},
-    {"SEASON": "2026", "MEETING": "Australian Grand Prix", "SESSION": "Race"},
+# ── Sessions to load at startup ──────────────────────────────
+# Preload every available session of the most recent event of the current
+# season (even a mid-weekend one where only practice has run), discovered
+# from the schedule rather than hard-coded. If discovery fails (offline with
+# an empty cache), fall back to a known event so the app still boots.
+_FALLBACK_SESSION_INFO = [
+    {"SEASON": str(CURRENT_SEASON), "MEETING": "Australian Grand Prix", "SESSION": s}
+    for s in ("Practice 1", "Practice 2", "Practice 3", "Qualifying", "Race")
 ]
+
+
+def _default_session_info() -> list[dict]:
+    try:
+        season, meeting, info = most_recent_event(
+            CURRENT_SEASON, fallback_seasons=(CURRENT_SEASON - 1, CURRENT_SEASON - 2))
+        print(f"Startup event: {meeting} {season} — {len(info)} session(s)", flush=True)
+        return info
+    except Exception as exc:
+        print(f"Startup event discovery failed ({exc}); using fallback event",
+              flush=True)
+        return list(_FALLBACK_SESSION_INFO)
+
+
+SESSION_INFO_LIST = _default_session_info()
 
 # ── Mutable application state ─────────────────────────────────
 laps_raw = telemetry_raw = weather_raw = race_control_raw = results_raw = None

@@ -200,6 +200,7 @@ width=2, style={"padding":"0"})
 
 TABS = dbc.Tabs([
     dbc.Tab(label="DATA",           tab_id="tab-data"),
+    dbc.Tab(label="BRIEF",          tab_id="tab-brief"),
     dbc.Tab(label="TRACK",          tab_id="tab-track"),
     dbc.Tab(label="SEASON",         tab_id="tab-season"),
     dbc.Tab(label="TEAM ANALYSIS",  tab_id="tab-teams"),
@@ -272,6 +273,7 @@ def _render_tab(tab, ss, sd, st):
                   & laps["Team"].isin(st)].copy()
         return tab_practice(wl)
     if tab=="tab-quali":      return tab_quali()
+    if tab=="tab-brief":      return tab_brief(sd, st)
     if tab=="tab-race":       return tab_race(sd, st)
     if tab=="tab-teammates":  return tab_teammates(fl_d,fs_d)
     if tab=="tab-track":      return tab_track_info()
@@ -316,6 +318,7 @@ from tabs.stints import tab_stints
 from tabs.teammates import tab_teammates
 
 from tabs.race import tab_race
+from tabs.brief import tab_brief
 
 from tabs.track import tab_track_info, get_track_map
 import tabs.track as _track_mod

@@ -3,18 +3,16 @@ DATA tab — session selection (load/unload at runtime) plus the Data-Quality
 inspection page. Extracted from app.py + tabs/stints.py.
 
 Public: tab_data_selection() and tab_data_quality(fl, fs); the two callbacks
-(update_session_controls, load_selected) are @callback-registered on import.
+(update_event_controls, load_selected) are @callback-registered on import.
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash import (
-    html, dcc, dash_table, callback, ctx, no_update, ALL,
+    html, dcc, dash_table, callback, ctx, no_update,
     Input, Output, State,
 )
 import dash_bootstrap_components as dbc
@@ -28,152 +26,50 @@ from components import (
 from config import (
     TEAM_COLORS, COMPOUND_COLORS, get_min_laps_for_compound,
     ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
-    FASTF1_CACHE_DIR,
+    CURRENT_SEASON,
     MIN_LAPS_SOFT, MIN_LAPS_MEDIUM, MIN_LAPS_HARD,
 )
-from data_loader import is_cached, list_cached_sessions
+from data_loader import is_cached, season_meetings, sessions_for_meeting
 from processing import format_lap_time
 
 # mirror the mutable data state so bare `laps`, `laps_raw`, `stints`,
 # SESSIONS, DRIVERS, TEAMS reads inside the moved bodies keep working
 state.register(globals())
 
-# ── Available-session discovery (for the Data Selection tab) ──
-AVAILABLE_SEASON  = 2026
-SELECTABLE_SEASONS = [2026, 2025, 2024, 2023, 2022, 2021]
-_SCHEDULE_CACHE: dict[int, list[dict]] = {}   # season → memoized session list
+# ── Event / session discovery (for the Data Selection tab) ───
+# The heavy lifting (schedule fetch, offline cache fallback, canonical session
+# ordering) lives in data_loader; here we only shape it for the UI.
+AVAILABLE_SEASON   = CURRENT_SEASON
+SELECTABLE_SEASONS = [CURRENT_SEASON - i for i in range(6)]
 
 
-def _sess_value(season, meeting, session) -> str:
-    """Encode a session triple as a single checklist value."""
-    return f"{season}|||{meeting}|||{session}"
+def _event_session_preview(season: int, meeting: str | None):
+    """Read-only list of the sessions 'Load Event' will pull for *meeting*,
+    each tagged cached / to-fetch."""
+    sessions = sessions_for_meeting(season, meeting) if meeting else []
+    if not sessions:
+        return html.P("No sessions available for this event yet.",
+                      style={"color": TEXT_DIM, "fontSize": "0.82rem"})
 
+    flags = [is_cached(s["SEASON"], s["MEETING"], s["SESSION"]) for s in sessions]
+    n_cached = sum(flags)
+    rows = []
+    for s, cached in zip(sessions, flags):
+        tag = "● cached" if cached else "○ fetch (~1–3 min)"
+        rows.append(html.Li([
+            html.Span(s["SESSION"], style={"color": TEXT_MAIN}),
+            html.Span(f"   {tag}", style={
+                "color": "#00D2BE" if cached else "#FF8700",
+                "fontSize": "0.72rem", "marginLeft": "8px"}),
+        ], style={"marginBottom": "4px", "fontSize": "0.82rem"}))
 
-def _parse_sess_value(value: str) -> dict:
-    """Decode a checklist value back into a SESSION_INFO_LIST dict."""
-    season, meeting, session = value.split("|||")
-    return {"SEASON": season, "MEETING": meeting, "SESSION": session}
-
-
-def get_available_sessions(season: int = AVAILABLE_SEASON, refresh: bool = False) -> list[dict]:
-    """
-    Return every session of *season* that has already taken place (date in
-    the past), each annotated with whether it is cached locally.
-
-    Source of truth is FastF1's event schedule. If FastF1 is unavailable or
-    the network fails, fall back to whatever is in the local Parquet cache so
-    the tab still works offline.
-
-    Each item: {round, meeting, session, fmt, season, cached, value}
-    Result is memoized per-season in _SCHEDULE_CACHE (refresh=True rebuilds).
-    """
-    season = int(season)
-    if season in _SCHEDULE_CACHE and not refresh:
-        # Refresh only the cheap 'cached' flags (files may have appeared)
-        for it in _SCHEDULE_CACHE[season]:
-            it["cached"] = is_cached(str(it["season"]), it["meeting"], it["session"])
-        return _SCHEDULE_CACHE[season]
-
-    items: list[dict] = []
-    try:
-        import fastf1
-        from datetime import datetime, timezone
-        fastf1.Cache.enable_cache(str(Path(FASTF1_CACHE_DIR)))
-        sched = fastf1.get_event_schedule(season, include_testing=False)
-        now = pd.Timestamp(datetime.now(timezone.utc).replace(tzinfo=None))
-        for _, e in sched.iterrows():
-            rnd  = int(e.get("RoundNumber", 0))
-            name = str(e.get("EventName", "")).strip()
-            fmt  = str(e.get("EventFormat", "conventional"))
-            if not name:
-                continue
-            for i in range(1, 6):
-                sn = e.get(f"Session{i}")
-                sd = e.get(f"Session{i}DateUtc")
-                if pd.isna(sn) or not str(sn).strip():
-                    continue
-                try:
-                    is_past = pd.to_datetime(sd) <= now
-                except Exception:
-                    is_past = False
-                if not is_past:
-                    continue
-                items.append({
-                    "round": rnd, "meeting": name, "session": str(sn).strip(),
-                    "fmt": fmt, "season": season,
-                    "cached": is_cached(str(season), name, str(sn).strip()),
-                    "value": _sess_value(season, name, str(sn).strip()),
-                })
-    except Exception as exc:
-        print(f"  [schedule] FastF1 unavailable for {season} ({exc}); using local cache", flush=True)
-
-    if not items:
-        # Offline fallback: enumerate this season's sessions from the Parquet cache
-        for s in list_cached_sessions():
-            if str(s.get("season")) != str(season):
-                continue
-            meeting = s.get("meeting", "?"); session = s.get("session", "?")
-            items.append({
-                "round": 0, "meeting": meeting, "session": session,
-                "fmt": "conventional", "season": season, "cached": True,
-                "value": _sess_value(season, meeting, session),
-            })
-
-    items.sort(key=lambda x: (x["round"], x["meeting"], x["session"]))
-    _SCHEDULE_CACHE[season] = items
-    return items
-
-
-# ── Session-type grouping helpers (for shortcut selectors) ────
-def _session_type(session: str) -> str:
-    """Bucket a session name into Practice / Qualifying / Sprint / Race."""
-    s = session.lower()
-    if "sprint" in s:        return "Sprint"      # Sprint + Sprint Qualifying
-    if "practice" in s:      return "Practice"
-    if "qualifying" in s:    return "Qualifying"
-    if "race" in s:          return "Race"
-    return "Other"
-
-
-def _season_meetings(season: int) -> list[str]:
-    """Ordered list of unique circuit/meeting names available for *season*."""
-    seen, out = set(), []
-    for it in get_available_sessions(season):
-        if it["meeting"] not in seen:
-            seen.add(it["meeting"]); out.append(it["meeting"])
-    return out
-
-
-def _session_option_label(it: dict) -> str:
-    tag = "● cached" if it["cached"] else "○ fetch (~1–3 min)"
-    rnd = f"R{it['round']}" if it["round"] else "—"
-    spr = "  ⚡" if it["session"] in ("Sprint", "Sprint Qualifying") else ""
-    return f"{rnd} · {it['meeting']} · {it['session']}{spr}   [{tag}]"
-
-
-def _session_options(season: int) -> list[dict]:
-    return [{"label": _session_option_label(it), "value": it["value"]}
-            for it in get_available_sessions(season)]
-
-
-def _list_summary(season: int) -> str:
-    av = get_available_sessions(season)
-    n_cached = sum(1 for it in av if it["cached"])
-    return f"Season {season} · {len(av)} sessions available · {n_cached} cached · {len(av)-n_cached} to fetch"
-
-
-def _circuit_buttons(season: int) -> list:
-    """One click-to-add button per circuit for *season* (pattern-matching IDs)."""
-    btn_style = {"fontSize": "0.72rem", "marginRight": "6px", "marginBottom": "6px"}
-    out = []
-    for m in _season_meetings(season):
-        short = m.replace(" Grand Prix", "")
-        out.append(dbc.Button(
-            f"+ {short}",
-            id={"type": "data-circuit-btn", "index": m},
-            size="sm", color="info", outline=True, style=btn_style,
-        ))
-    return out
+    return html.Div([
+        html.P(f"{len(sessions)} session(s) · {n_cached} cached · "
+               f"{len(sessions) - n_cached} to fetch",
+               style={"color": TEXT_DIM, "fontSize": "0.72rem", "marginBottom": "6px"}),
+        html.Ul(rows, style={"listStyle": "none", "paddingLeft": "0",
+                             "marginBottom": "0"}),
+    ])
 
 
 def _status_icon(ok: bool):
@@ -550,12 +446,17 @@ def tab_data_selection() -> html.Div:
 
 
 def _tab_data_selection_inner() -> html.Div:
-    season = AVAILABLE_SEASON
-    avail  = get_available_sessions(season)
-    loaded_values = {
-        _sess_value(i["SEASON"], i["MEETING"], i["SESSION"]) for i in LOADED_SESSION_INFO
-    }
-    pre_selected = [it["value"] for it in avail if it["value"] in loaded_values]
+    # Default the pickers to the currently-loaded event.
+    if LOADED_SESSION_INFO:
+        loaded_season  = int(LOADED_SESSION_INFO[0]["SEASON"])
+        loaded_meeting = LOADED_SESSION_INFO[0]["MEETING"]
+    else:
+        loaded_season, loaded_meeting = AVAILABLE_SEASON, None
+
+    season   = loaded_season if loaded_season in SELECTABLE_SEASONS else AVAILABLE_SEASON
+    meetings = season_meetings(season)
+    meeting  = loaded_meeting if loaded_meeting in meetings else (
+        meetings[-1] if meetings else None)
 
     status_banner = (
         dbc.Alert(LAST_LOAD_MSG, color="info",
@@ -563,22 +464,21 @@ def _tab_data_selection_inner() -> html.Div:
         if LAST_LOAD_MSG else html.Div()
     )
 
-    sc_style  = {"fontSize": "0.72rem", "marginRight": "6px", "marginBottom": "6px"}
     lbl_style = {"color": TEXT_DIM, "fontSize": "0.65rem", "letterSpacing": "1px",
                  "fontWeight": "700", "marginBottom": "4px", "display": "block"}
 
     return html.Div([
-        html.H4("Session Data Selection",
+        html.H4("Event Data Selection",
                 style={"color": TEXT_MAIN, "fontWeight": "800", "letterSpacing": "1px",
                        "marginBottom": "6px", "fontSize": "1.05rem"}),
         html.P([
-            "Pick which sessions to load into the dashboard. Pick a season, then "
-            "use the shortcuts or tick individual sessions. Sessions already "
+            "Pick a season and an event — loading pulls every available session "
+            "for that event (practice, qualifying, sprint, race). Sessions already "
             "downloaded are marked ",
             html.Span("● cached", style={"color": "#00D2BE", "fontWeight": "700"}),
-            "; selecting an ",
+            "; anything marked ",
             html.Span("○ fetch", style={"color": "#FF8700", "fontWeight": "700"}),
-            " session downloads it from FastF1 the first time (1–3 min each).",
+            " is downloaded from FastF1 the first time (1–3 min each).",
         ], style={"color": TEXT_DIM, "fontSize": "0.82rem", "marginBottom": "10px"}),
 
         status_banner,
@@ -588,13 +488,13 @@ def _tab_data_selection_inner() -> html.Div:
                 tooltip="Sessions currently active in the dashboard."),
         ]),
 
-        card("Select Sessions", info=(
-            "Data: every session of the chosen season that has already taken "
-            "place, with a cache indicator (green = stored locally, instant "
-            "load). Why: this controls what every other tab analyses — swap "
-            "events or add sessions here without restarting the app."
+        card("Select Event", info=(
+            "Data: every event of the chosen season that has already run, and "
+            "the sessions available for it (green = stored locally, instant "
+            "load). Why: this controls what every other tab analyses — switch "
+            "events here without restarting the app."
         ), children=html.Div([
-            # ── Season selector ───────────────────────────────
+            # ── Season + event selectors ──────────────────────
             dbc.Row([
                 dbc.Col([
                     html.Label("SEASON", style=lbl_style),
@@ -605,49 +505,30 @@ def _tab_data_selection_inner() -> html.Div:
                         style={"backgroundColor": "#111", "fontSize": "0.82rem"},
                     ),
                 ], md=3),
+                dbc.Col([
+                    html.Label("EVENT", style=lbl_style),
+                    dcc.Dropdown(
+                        id="data-event-select",
+                        options=[{"label": m.replace(" Grand Prix", ""), "value": m}
+                                 for m in meetings],
+                        value=meeting, clearable=False,
+                        style={"backgroundColor": "#111", "fontSize": "0.82rem"},
+                    ),
+                ], md=6),
             ], className="mb-3"),
 
-            # ── Add all sessions for one circuit (one click each) ──
-            html.Label("ADD ALL SESSIONS FOR A CIRCUIT", style=lbl_style),
-            html.Div(_circuit_buttons(season), id="data-circuit-btns",
-                     style={"marginBottom": "8px"}),
-
-            # ── Shortcut buttons by session type ──────────────
-            html.Label("QUICK SELECT BY TYPE  (adds to current selection)", style=lbl_style),
-            html.Div([
-                dbc.Button("+ All Practice",   id="data-sel-practice", size="sm", color="secondary", outline=True, style=sc_style),
-                dbc.Button("+ All Qualifying", id="data-sel-quali",    size="sm", color="secondary", outline=True, style=sc_style),
-                dbc.Button("+ All Sprint",     id="data-sel-sprint",   size="sm", color="secondary", outline=True, style=sc_style),
-                dbc.Button("+ All Race",       id="data-sel-race",     size="sm", color="secondary", outline=True, style=sc_style),
-            ], style={"marginBottom": "8px"}),
-
-            html.Label("WHOLE LIST", style=lbl_style),
-            html.Div([
-                dbc.Button("Select all",         id="data-sel-all",    size="sm", color="secondary", outline=True, style=sc_style),
-                dbc.Button("Select cached only", id="data-sel-cached", size="sm", color="secondary", outline=True, style=sc_style),
-                dbc.Button("Clear",              id="data-sel-clear",  size="sm", color="secondary", outline=True, style=sc_style),
-            ], style={"marginBottom": "10px"}),
-
-            html.Div(_list_summary(season), id="data-list-summary",
-                     style={"color": TEXT_DIM, "fontSize": "0.72rem", "marginBottom": "8px"}),
-
-            # ── The scrollable session checklist ──────────────
+            # ── Read-only preview of what "Load Event" will pull ──
+            html.Label("SESSIONS THAT WILL LOAD", style=lbl_style),
             html.Div(
-                dcc.Checklist(
-                    id="data-session-select",
-                    options=_session_options(season),
-                    value=pre_selected,
-                    inputStyle={"marginRight": "8px", "accentColor": ACCENT},
-                    labelStyle={"display": "block", "marginBottom": "6px",
-                                "fontSize": "0.8rem", "color": TEXT_MAIN},
-                ),
-                style={"maxHeight": "360px", "overflowY": "auto",
-                       "border": f"1px solid {GRID_CLR}", "borderRadius": "6px",
-                       "padding": "10px", "background": "#0E0E1C"},
+                _event_session_preview(season, meeting),
+                id="data-event-sessions",
+                style={"border": f"1px solid {GRID_CLR}", "borderRadius": "6px",
+                       "padding": "10px", "background": "#0E0E1C",
+                       "marginBottom": "4px"},
             ),
 
             html.Hr(style={"borderColor": GRID_CLR}),
-            dbc.Button("⟳  Load Selected Sessions", id="data-load-btn",
+            dbc.Button("⟳  Load Event", id="data-load-btn",
                        color="danger", style={"fontWeight": "700"}),
             dcc.Loading(
                 type="circle", color=ACCENT,
@@ -657,69 +538,31 @@ def _tab_data_selection_inner() -> html.Div:
     ])
 
 
-# ── Session selector: season switch + shortcut buttons ───────
+# ── Event picker: season switch rebuilds events, event change re-previews ──
 @callback(
-    Output("data-session-select", "options"),
-    Output("data-session-select", "value"),
-    Output("data-list-summary",   "children"),
-    Output("data-circuit-btns",   "children"),
+    Output("data-event-select",   "options"),
+    Output("data-event-select",   "value"),
+    Output("data-event-sessions", "children"),
     Input("data-season-select",   "value"),
-    Input("data-sel-all",      "n_clicks"),
-    Input("data-sel-cached",   "n_clicks"),
-    Input("data-sel-clear",    "n_clicks"),
-    Input("data-sel-practice", "n_clicks"),
-    Input("data-sel-quali",    "n_clicks"),
-    Input("data-sel-sprint",   "n_clicks"),
-    Input("data-sel-race",     "n_clicks"),
-    Input({"type": "data-circuit-btn", "index": ALL}, "n_clicks"),
-    State("data-session-select", "value"),
+    Input("data-event-select",    "value"),
     prevent_initial_call=True,
 )
-def update_session_controls(season, _a, _c, _z, _p, _q, _s, _r, _circ, cur_value):
+def update_event_controls(season, meeting):
     trig    = ctx.triggered_id
     season  = int(season) if season else AVAILABLE_SEASON
-    avail   = get_available_sessions(season)
-    options = _session_options(season)
-    summary = _list_summary(season)
+    meetings = season_meetings(season)
+    options  = [{"label": m.replace(" Grand Prix", ""), "value": m} for m in meetings]
 
-    # Season switch → rebuild list + per-circuit buttons, preselect loaded sessions
+    # Season switch → rebuild event list, default to that season's most recent event.
     if trig == "data-season-select":
-        loaded_values = {
-            _sess_value(i["SEASON"], i["MEETING"], i["SESSION"]) for i in LOADED_SESSION_INFO
-        }
-        value = [it["value"] for it in avail if it["value"] in loaded_values]
-        return options, value, summary, _circuit_buttons(season)
+        meeting = meetings[-1] if meetings else None
+        return options, meeting, _event_session_preview(season, meeting)
 
-    # All other triggers keep the same season → buttons untouched
-    cur = list(cur_value or [])
-    seen = set(cur)
-
-    def _union(pred):
-        for it in avail:
-            if pred(it) and it["value"] not in seen:
-                cur.append(it["value"]); seen.add(it["value"])
-        return cur
-
-    if isinstance(trig, dict) and trig.get("type") == "data-circuit-btn":
-        # Pattern-matching button can fire on (re)creation with n_clicks=None;
-        # ignore those no-op triggers.
-        if not any((ctx.triggered[0]["value"],)):
-            value = cur
-        else:
-            value = _union(lambda it: it["meeting"] == trig["index"])
-    elif trig == "data-sel-all":      value = [it["value"] for it in avail]
-    elif trig == "data-sel-cached":   value = [it["value"] for it in avail if it["cached"]]
-    elif trig == "data-sel-clear":    value = []
-    elif trig == "data-sel-practice": value = _union(lambda it: _session_type(it["session"]) == "Practice")
-    elif trig == "data-sel-quali":    value = _union(lambda it: it["session"] == "Qualifying")
-    elif trig == "data-sel-sprint":   value = _union(lambda it: _session_type(it["session"]) == "Sprint")
-    elif trig == "data-sel-race":     value = _union(lambda it: it["session"] == "Race")
-    else:                             value = cur
-
-    return options, value, summary, no_update
+    # Event change → refresh the session preview only.
+    return no_update, no_update, _event_session_preview(season, meeting)
 
 
-# ── Load selected sessions (rebuilds app state) ──────────────
+# ── Load the selected event's sessions (rebuilds app state) ──
 @callback(
     Output("data-load-status",  "children"),
     Output("session-filter",    "options"),
@@ -730,16 +573,22 @@ def update_session_controls(season, _a, _c, _z, _p, _q, _s, _r, _circ, cur_value
     Output("driver-filter",     "value"),
     Output("main-subtitle",     "children"),
     Input("data-load-btn",      "n_clicks"),
-    State("data-session-select", "value"),
+    State("data-season-select", "value"),
+    State("data-event-select",  "value"),
     prevent_initial_call=True,
 )
-def load_selected(_n, selected):
-    if not selected:
-        warn = dbc.Alert("Select at least one session before loading.",
+def load_selected(_n, season, meeting):
+    if not meeting:
+        warn = dbc.Alert("Pick an event before loading.",
                          color="warning", style={"fontSize": "0.8rem"})
         return (warn, *([no_update] * 7))
 
-    info = [_parse_sess_value(v) for v in selected]
+    info = sessions_for_meeting(int(season) if season else AVAILABLE_SEASON, meeting)
+    if not info:
+        warn = dbc.Alert("No sessions available for that event yet.",
+                         color="warning", style={"fontSize": "0.8rem"})
+        return (warn, *([no_update] * 7))
+
     try:
         msg = rebuild_state(info)
         ok  = msg.startswith("Loaded")

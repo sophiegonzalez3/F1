@@ -73,14 +73,17 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-On first launch the app loads the default sessions defined in `SESSION_INFO_LIST`
-near the top of [app.py](app.py). If those sessions are already cached under
-`data/sessions/` (most are bundled in the repo), startup is near-instant. If a
-session isn't cached, FastF1 fetches it from the network the first time — this
-can take a minute or two — and stores it as Parquet for next time.
+On first launch the app preloads the **most recent event** of the current season
+(every available session for it, even mid-weekend), discovered from the FastF1
+schedule — see `_default_session_info()` in [state.py](state.py). If those
+sessions are already cached under `data/sessions/` (most are bundled in the repo),
+startup is near-instant. If a session isn't cached, FastF1 fetches it from the
+network the first time — this can take a minute or two — and stores it as Parquet
+for next time.
 
-You can swap which sessions are loaded at runtime from the **Data Selection** tab
-inside the app — no restart needed.
+You can switch which event is loaded at runtime from the **Data** tab inside the
+app: pick a season and an event, and loading pulls all of that event's available
+sessions — no restart needed.
 
 ---
 

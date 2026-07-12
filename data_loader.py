@@ -617,6 +617,130 @@ def clear_cache(season: str = None, meeting: str = None, session: str = None) ->
     return deleted
 
 
+# ─────────────────────────────────────────────────────────────
+# Schedule discovery — what events / sessions exist to load
+# ─────────────────────────────────────────────────────────────
+# Canonical intra-event running order (covers conventional + sprint weekends);
+# used to sort a meeting's sessions FP1 → … → Race.
+_SESSION_ORDER = {
+    "Practice 1": 1, "Practice 2": 2, "Practice 3": 3,
+    "Sprint Qualifying": 4, "Sprint Shootout": 4,
+    "Sprint": 5, "Qualifying": 6, "Race": 7,
+}
+
+_SCHEDULE_CACHE: dict[int, list[dict]] = {}   # season → memoized session list
+
+
+def get_available_sessions(season: int, refresh: bool = False) -> list[dict]:
+    """
+    Every session of *season* that has already taken place (session date in
+    the past), annotated with whether it is cached locally.
+
+    Source of truth is FastF1's event schedule. If FastF1 is unavailable or
+    the network fails, fall back to whatever is in the local Parquet cache so
+    discovery still works offline. Memoized per-season (refresh=True rebuilds).
+
+    Each item: {round, meeting, session, fmt, season, cached}
+    """
+    season = int(season)
+    if season in _SCHEDULE_CACHE and not refresh:
+        # Refresh only the cheap 'cached' flags (files may have appeared).
+        for it in _SCHEDULE_CACHE[season]:
+            it["cached"] = is_cached(str(it["season"]), it["meeting"], it["session"])
+        return _SCHEDULE_CACHE[season]
+
+    items: list[dict] = []
+    if FASTF1_AVAILABLE:
+        try:
+            from datetime import datetime, timezone
+            fastf1.Cache.enable_cache(str(Path(FASTF1_CACHE_DIR)))
+            sched = fastf1.get_event_schedule(season, include_testing=False)
+            now = pd.Timestamp(datetime.now(timezone.utc).replace(tzinfo=None))
+            for _, e in sched.iterrows():
+                rnd  = int(e.get("RoundNumber", 0))
+                name = str(e.get("EventName", "")).strip()
+                fmt  = str(e.get("EventFormat", "conventional"))
+                if not name:
+                    continue
+                for i in range(1, 6):
+                    sn = e.get(f"Session{i}")
+                    sd = e.get(f"Session{i}DateUtc")
+                    if pd.isna(sn) or not str(sn).strip():
+                        continue
+                    try:
+                        is_past = pd.to_datetime(sd) <= now
+                    except Exception:
+                        is_past = False
+                    if not is_past:
+                        continue
+                    items.append({
+                        "round": rnd, "meeting": name, "session": str(sn).strip(),
+                        "fmt": fmt, "season": season,
+                        "cached": is_cached(str(season), name, str(sn).strip()),
+                    })
+        except Exception as exc:
+            print(f"  [schedule] FastF1 unavailable for {season} ({exc}); "
+                  "using local cache", flush=True)
+
+    if not items:
+        # Offline fallback: enumerate this season's sessions from the Parquet cache.
+        for s in list_cached_sessions():
+            if str(s.get("season")) != str(season):
+                continue
+            meeting = s.get("meeting", "?"); session = s.get("session", "?")
+            items.append({
+                "round": 0, "meeting": meeting, "session": session,
+                "fmt": "conventional", "season": season, "cached": True,
+            })
+
+    items.sort(key=lambda x: (x["round"], x["meeting"],
+                              _SESSION_ORDER.get(x["session"], 99)))
+    _SCHEDULE_CACHE[season] = items
+    return items
+
+
+def season_meetings(season: int) -> list[str]:
+    """Ordered unique meeting/event names available for *season* (by round)."""
+    seen, out = set(), []
+    for it in get_available_sessions(season):
+        if it["meeting"] not in seen:
+            seen.add(it["meeting"]); out.append(it["meeting"])
+    return out
+
+
+def sessions_for_meeting(season: int, meeting: str) -> list[dict]:
+    """Every available session for one event, as SESSION_INFO dicts
+    (keys SEASON / MEETING / SESSION) in canonical running order."""
+    return [
+        {"SEASON": str(it["season"]), "MEETING": it["meeting"],
+         "SESSION": it["session"]}
+        for it in get_available_sessions(season)
+        if it["meeting"] == meeting
+    ]
+
+
+def most_recent_event(
+    preferred_season: int,
+    fallback_seasons: tuple[int, ...] = (),
+) -> tuple[int, str, list[dict]]:
+    """
+    Resolve the most recent event that has any session data available: the
+    highest-round meeting of *preferred_season*, else walk back through
+    *fallback_seasons*. Returns (season, meeting, session_info_list) where the
+    list is every available session for that event.
+
+    Raises RuntimeError if nothing is available for any of the seasons tried.
+    """
+    for season in (preferred_season, *fallback_seasons):
+        avail = get_available_sessions(season)
+        if not avail:
+            continue
+        top_round = max(it["round"] for it in avail)   # latest event that ran
+        meeting   = next(it["meeting"] for it in avail if it["round"] == top_round)
+        return int(season), meeting, sessions_for_meeting(season, meeting)
+    raise RuntimeError("No session data available for any season tried.")
+
+
 def cache_summary() -> str:
     sessions = list_cached_sessions()
     if not sessions:

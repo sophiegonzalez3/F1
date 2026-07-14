@@ -17,6 +17,7 @@ import dash_bootstrap_components as dbc
 from f1lib.components import theme, card, GFX, abbr
 from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
 from tabs.pace_data import team_pace_df, seasons, event_short
+from tabs.regulations import regulations_block
 
 
 def _team_order(s: pd.DataFrame) -> list[str]:
@@ -223,11 +224,18 @@ def tab_season(standings=None, upgrades=None) -> html.Div:
                         "round by round"),
         form_block,
     ]
+    parts += [
+        _section_header("REGULATIONS & FINANCE",
+                        "the budget cap, crash costs, wind-tunnel limits and "
+                        "2026 rules that shape every upgrade decision"),
+        regulations_block(),
+    ]
     if upgrades is not None:
         parts += [
             _section_header("CAR UPGRADES",
-                            "what each team brought and whether it worked "
-                            "(FIA car-presentation log × measured pace)"),
+                            "did the development pay off? — each team's pace "
+                            "trend and the measured effect of every upgrade "
+                            "package (per-event detail lives in WEEK END PRED)"),
             upgrades,
         ]
     return html.Div(parts)

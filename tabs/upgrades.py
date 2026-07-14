@@ -429,8 +429,32 @@ def _update_impact_trend(team):
     return _team_trend_fig(season, team)
 
 
-def tab_upgrades(team_rank: dict | None = None) -> html.Div:
-    """What technical evolution each team brought to the loaded meeting(s).
+def upgrade_impact_section() -> html.Div:
+    """Upgrade-effectiveness analysis: the team pace-trend card and the
+    'did it work?' effect board. Rendered in the SEASON tab (CAR UPGRADES).
+
+    This is the season-long "did the development pay off?" view; the
+    per-event "what did each team bring here?" breakdown lives separately in
+    upgrade_event_detail() (WEEK END PRED tab).
+    """
+    if upgrades_df().empty or _impact_season() is None:
+        return html.P(
+            "No upgrade-impact data yet — needs both data/upgrades.csv and a "
+            "season pace table (compute_team_pace.py) for the same year.",
+            style={"color": TEXT_DIM, "fontSize": "0.8rem"})
+    section = _impact_section()
+    # _impact_section() returns an empty Div when there are upgrades but not
+    # enough surrounding rounds to measure anything — keep a note in that case.
+    if not getattr(section, "children", None):
+        return html.P("Not enough rounds around each upgrade to measure "
+                      "effects yet.", style={"color": TEXT_DIM})
+    return section
+
+
+def upgrade_event_detail(team_rank: dict | None = None) -> html.Div:
+    """Per-event FIA-style "Car Presentation" breakdown: what technical
+    evolution each team brought to the loaded meeting(s). Rendered at the top
+    of the WEEK END PRED tab (the event the weekend is about).
 
     `team_rank` (team → championship position) orders the team cards; the
     router in app.py passes it in so this module needs no standings imports.
@@ -471,7 +495,6 @@ def tab_upgrades(team_rank: dict | None = None) -> html.Div:
                "Maintained in data/upgrades.csv.",
                style={"color": TEXT_DIM, "fontSize": "0.8rem",
                       "marginBottom": "10px"}),
-        _impact_section(),
         legend,
         *blocks,
     ])

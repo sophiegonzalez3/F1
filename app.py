@@ -124,7 +124,7 @@ from f1lib.standings import (
 # Curated table mirroring the FIA "Car Presentation" documents. Loader, column
 # docs, and the UPGRADES tab live in tabs/upgrades.py (the extraction template
 # for splitting further tabs out of this file — see tabs/__init__.py).
-from tabs.upgrades import tab_upgrades, upgrades_df
+from tabs.upgrades import upgrade_impact_section, upgrade_event_detail, upgrades_df
 from tabs.season import tab_season
 from tabs.qualifying import tab_quali
 from tabs.fingerprints import fingerprint_section
@@ -174,7 +174,7 @@ def _serve_radio(clip):
     return send_from_directory(target.parent, target.name)
 
 SIDEBAR = dbc.Col([html.Div([
-    html.Img(src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/33/F1.svg/1200px-F1.svg.png",
+    html.Img(src=app.get_asset_url("f1_logo.svg"),
              style={"height":"34px","marginBottom":"18px"}),
     html.Hr(style={"borderColor":GRID_CLR}),
     html.P("SESSIONS", style={"color":TEXT_DIM,"fontSize":"0.68rem","letterSpacing":"2px"}),
@@ -194,14 +194,27 @@ SIDEBAR = dbc.Col([html.Div([
         style={"backgroundColor":"#111","fontSize":"0.78rem"}),
     html.Hr(style={"borderColor":GRID_CLR}),
     html.Small(cache_summary(), style={"color":TEXT_DIM,"fontSize":"0.65rem","whiteSpace":"pre-line"}),
+    html.Hr(style={"borderColor":GRID_CLR}),
+    html.Div([
+        html.A(html.Img(src=app.get_asset_url("github.svg"),
+                        style={"height":"20px","color":TEXT_DIM}),
+               href="https://github.com/sophiegonzalez3/F1", target="_blank",
+               title="Source on GitHub",
+               style={"color":TEXT_DIM,"marginRight":"14px","display":"inline-flex"}),
+        html.A(html.Img(src=app.get_asset_url("kofi.svg"),
+                        style={"height":"20px"}),
+               href="https://ko-fi.com/sophiegonzalez3", target="_blank",
+               title="Support me on Ko-fi",
+               style={"display":"inline-flex"}),
+    ], style={"marginTop":"10px","display":"flex","alignItems":"center"}),
 ], style={"padding":"16px","height":"100vh","overflowY":"auto",
           "background":"#09091A","borderRight":f"1px solid {GRID_CLR}"})],
 width=2, style={"padding":"0"})
 
 TABS = dbc.Tabs([
     dbc.Tab(label="DATA",           tab_id="tab-data"),
-    dbc.Tab(label="TRACK",          tab_id="tab-track"),
     dbc.Tab(label="SEASON",         tab_id="tab-season"),
+    dbc.Tab(label="TRACK",          tab_id="tab-track"),
     dbc.Tab(label="WEEK END PRED",  tab_id="tab-weekend"),
     dbc.Tab(label="TELEMETRY",      tab_id="tab-laps"),
     dbc.Tab(label="STINTS",         tab_id="tab-stints"),
@@ -313,6 +326,14 @@ def _render_tab(tab, ss, sd, st):
                   & laps["Team"].isin(st)].copy()
         return html.Div([
             _section_header(
+                "EVENT UPGRADES",
+                "What each team physically brought to this meeting — the "
+                "FIA Car Presentation breakdown, component by component. The "
+                "season-long 'did it actually work?' analysis lives in the "
+                "SEASON tab."),
+            upgrade_event_detail(team_rank=_team_champ_rank()),
+            html.Hr(style={"borderColor": GRID_CLR, "margin": "40px 0 28px"}),
+            _section_header(
                 "PRACTICE CONSTRUCTION & SANDBAGGING",
                 "What the practice sessions are really telling us. Reads the "
                 "mid-weekend picture — long runs, one-lap potential, and the "
@@ -338,7 +359,7 @@ def _render_tab(tab, ss, sd, st):
     if tab=="tab-season":
         return tab_season(
             standings=_season_standings_row(fl_d),
-            upgrades=tab_upgrades(team_rank=_team_champ_rank()),
+            upgrades=upgrade_impact_section(),
         )
     return html.P("Select a tab.")
 

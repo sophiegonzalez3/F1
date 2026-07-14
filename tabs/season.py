@@ -18,6 +18,7 @@ from f1lib.components import theme, card, GFX, abbr
 from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
 from tabs.pace_data import team_pace_df, seasons, event_short
 from tabs.regulations import regulations_block
+from tabs.hr import hr_section
 
 
 def _team_order(s: pd.DataFrame) -> list[str]:
@@ -238,6 +239,13 @@ def tab_season(standings=None, upgrades=None) -> html.Div:
                             "package (per-event detail lives in WEEK END PRED)"),
             upgrades,
         ]
+    parts += [
+        _section_header("HR & PERSONNEL",
+                        "the technical & management transfer market — who moved "
+                        "where, and the gardening-leave gaps the budget-cap era "
+                        "turned into a long-term form lever"),
+        hr_section(),
+    ]
     return html.Div(parts)
 
 

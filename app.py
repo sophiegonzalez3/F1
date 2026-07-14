@@ -29,7 +29,7 @@ from f1lib.config import (
     MIN_LAPS_SOFT, MIN_LAPS_MEDIUM, MIN_LAPS_HARD,
     HISTORICAL_DIR, FASTF1_CACHE_DIR,
 )
-from f1lib.data_loader import load_sessions, cache_summary, is_cached, list_cached_sessions
+from f1lib.data_loader import load_sessions, is_cached, list_cached_sessions
 from f1lib.radio_loader import load_race_radio, race_radio_available, radio_cached
 from f1lib.pitstops_loader import load_pitstops
 from f1lib.processing import (
@@ -192,8 +192,6 @@ SIDEBAR = dbc.Col([html.Div([
     dcc.Dropdown(id="driver-filter",
         options=[{"label":d,"value":d} for d in DRIVERS], value=DRIVERS, multi=True,
         style={"backgroundColor":"#111","fontSize":"0.78rem"}),
-    html.Hr(style={"borderColor":GRID_CLR}),
-    html.Small(cache_summary(), style={"color":TEXT_DIM,"fontSize":"0.65rem","whiteSpace":"pre-line"}),
     html.Hr(style={"borderColor":GRID_CLR}),
     html.Div([
         html.A(html.Img(src=app.get_asset_url("github.svg"),

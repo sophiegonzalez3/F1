@@ -38,7 +38,7 @@ from f1lib.data_loader import load_session
 logger = logging.getLogger(__name__)
 
 REPLAYS_DIR = Path("data/replays")
-_PAYLOAD_VERSION = 2          # bump when the payload schema changes
+_PAYLOAD_VERSION = 3          # bump when the payload schema changes
 _DT = 0.5                     # replay grid step (s) → 2 Hz
 _Z_EXAGGERATION = 5.0         # vertical exaggeration of the 3D view
 
@@ -121,7 +121,12 @@ def _progress_series(lapno: np.ndarray, lap_dist: np.ndarray,
             continue
         base = (max(int(lapno[i]), 1) - 1) * lap_len + lap_dist[i]
         if prev is None:
-            p = base
+            # Seed near the start/finish line: cars on the grid sit *behind*
+            # the line, so their snapped point is at dist ≈ lap_len even though
+            # they haven't started lap 1. Anchor the first frame to the ±1-lap
+            # candidate nearest 0 so back-of-grid cars don't inherit a phantom
+            # lap (which would rank them as the leader for the whole race).
+            p = min((base - lap_len, base, base + lap_len), key=abs)
         else:
             exp = prev + step
             p = min((base - lap_len, base, base + lap_len),

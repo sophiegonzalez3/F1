@@ -18,7 +18,16 @@ from f1lib.components import theme, card, GFX, abbr
 from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
 from tabs.pace_data import team_pace_df, seasons, event_short
 from tabs.regulations import regulations_block
+from tabs.finance import finance_block, compliance_card
 from tabs.hr import hr_section
+from tabs.infrastructure import infrastructure_section
+from tabs.reliability import reliability_card
+from tabs.pu_pool import pu_pool_card
+from tabs.driver_market import driver_market_card
+from tabs.season_ops import (
+    chaos_timeline_card, pit_league_card, lap1_league_card,
+    pu_points_card, affinity_card, testing_card, penalties_card,
+)
 
 
 def _team_order(s: pd.DataFrame) -> list[str]:
@@ -168,7 +177,12 @@ def _season_content(season: int) -> html.Div:
                   "strong) — expect them to gain on Sundays; above the line "
                   "is a quali car that goes backwards in races."),
         ),
-    ])
+    ] + [c for c in (affinity_card(season), chaos_timeline_card(season),
+                      pit_league_card(season), lap1_league_card(season),
+                      testing_card(season),
+                      reliability_card(season), penalties_card(season),
+                      pu_pool_card(season), pu_points_card(season),
+                      driver_market_card(season)) if c is not None])
 
 
 def _section_header(title: str, subtitle: str) -> html.Div:
@@ -230,7 +244,11 @@ def tab_season(standings=None, upgrades=None) -> html.Div:
                         "the budget cap, crash costs, wind-tunnel limits and "
                         "2026 rules that shape every upgrade decision"),
         regulations_block(),
+        finance_block(),
     ]
+    cap_card = compliance_card()
+    if cap_card is not None:
+        parts.append(cap_card)
     if upgrades is not None:
         parts += [
             _section_header("CAR UPGRADES",
@@ -245,6 +263,13 @@ def tab_season(standings=None, upgrades=None) -> html.Div:
                         "where, and the gardening-leave gaps the budget-cap era "
                         "turned into a long-term form lever"),
         hr_section(),
+    ]
+    parts += [
+        _section_header("INFRASTRUCTURE & GOVERNANCE",
+                        "where each team designs its car — factory and "
+                        "wind-tunnel capability — and the FIA technical "
+                        "directives that reshape the rules mid-season"),
+        infrastructure_section(),
     ]
     return html.Div(parts)
 

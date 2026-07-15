@@ -39,6 +39,10 @@ from f1lib.config import (
 )
 from f1lib.processing import format_lap_time
 from f1lib.figures import _tyre_history_chart
+from tabs.circuit_stats import (
+    measured_weekend_card, pole_evolution_card, tyre_allocation_card,
+    pirelli_card,
+)
 from f1lib.standings import (
     HIST_RACE, HIST_QUALI, HIST_STANDINGS,
     _loaded_event, _loaded_circuit_key, _slugify_event,
@@ -1133,10 +1137,18 @@ def update_track_content(circuit_key: str, hist_year: int):
     ], style={"marginBottom": "16px"})
 
     # ── Section 2: Stats pills row ────────────────────────────
+    alt = row.get("altitude_m")
+    alt_pill = []
+    if pd.notna(alt):
+        # thin air above ~600 m starts costing real downforce and cooling
+        alt_clr = ("#E10600" if alt >= 1500 else
+                   "#FFD700" if alt >= 600 else None)
+        alt_pill = [_stat_pill("ALTITUDE", f"{int(alt):,} m", alt_clr)]
     stats_pills = html.Div([
         _stat_pill("LENGTH",    f"{meta.get('length_km','—')} km"),
         _stat_pill("CORNERS",   str(meta.get("corners", "—"))),
         _stat_pill("DRS ZONES", str(meta.get("drs_zones", "—")), "#00D2BE"),
+        *alt_pill,
         _stat_pill("LAP RECORD",
                    f"{meta.get('lap_record','—')}  ({meta.get('lap_record_driver','—')}, {meta.get('lap_record_year','—')})",
                    "#FFD700"),
@@ -1289,11 +1301,16 @@ def update_track_content(circuit_key: str, hist_year: int):
         ))
 
     # ── Assemble ──────────────────────────────────────────────
+    measured_card = measured_weekend_card(circuit_key)
+    pole_card = pole_evolution_card(circuit_key, HIST_QUALI)
+    alloc_card = tyre_allocation_card(circuit_key)
+    pir_card = pirelli_card(circuit_key)
     return html.Div([
         season_banner,
         header,
         stats_pills,
         _weekend_card(circuit_key),
+        *( [measured_card] if measured_card is not None else [] ),
         _history_card(circuit_key),
         card("Circuit Profile", chars_block,
              info=("Data: the circuit's demand ratings (average speed, full throttle, "
@@ -1302,7 +1319,10 @@ def update_track_content(circuit_key: str, hist_year: int):
                    "fingerprint of what a track demands — useful context for why pace "
                    "and tyre behaviour differ between venues.")),
         corners_section,
+        *( [pir_card] if pir_card is not None else [] ),
+        *( [alloc_card] if alloc_card is not None else [] ),
         track_map_section,
+        *( [pole_card] if pole_card is not None else [] ),
         *hist_blocks,
     ])
 

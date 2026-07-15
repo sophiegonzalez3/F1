@@ -177,12 +177,6 @@ SIDEBAR = dbc.Col([html.Div([
     html.Img(src=app.get_asset_url("f1_logo.svg"),
              style={"height":"34px","marginBottom":"18px"}),
     html.Hr(style={"borderColor":GRID_CLR}),
-    html.P("SESSIONS", style={"color":TEXT_DIM,"fontSize":"0.68rem","letterSpacing":"2px"}),
-    dcc.Checklist(id="session-filter",
-        options=[{"label":s,"value":s} for s in SESSIONS], value=SESSIONS,
-        inputStyle={"marginRight":"8px","accentColor":ACCENT},
-        labelStyle={"display":"block","marginBottom":"8px","fontSize":"0.78rem"}),
-    html.Hr(style={"borderColor":GRID_CLR}),
     html.P("TEAMS", style={"color":TEXT_DIM,"fontSize":"0.68rem","letterSpacing":"2px"}),
     dcc.Dropdown(id="team-filter",
         options=[{"label":t,"value":t} for t in TEAMS], value=TEAMS, multi=True,
@@ -193,18 +187,13 @@ SIDEBAR = dbc.Col([html.Div([
         options=[{"label":d,"value":d} for d in DRIVERS], value=DRIVERS, multi=True,
         style={"backgroundColor":"#111","fontSize":"0.78rem"}),
     html.Hr(style={"borderColor":GRID_CLR}),
-    html.Div([
-        html.A(html.Img(src=app.get_asset_url("github.svg"),
-                        style={"height":"20px","color":TEXT_DIM}),
-               href="https://github.com/sophiegonzalez3/F1", target="_blank",
-               title="Source on GitHub",
-               style={"color":TEXT_DIM,"marginRight":"14px","display":"inline-flex"}),
-        html.A(html.Img(src=app.get_asset_url("kofi.svg"),
-                        style={"height":"20px"}),
-               href="https://ko-fi.com/sophiegonzalez3", target="_blank",
-               title="Support me on Ko-fi",
-               style={"display":"inline-flex"}),
-    ], style={"marginTop":"10px","display":"flex","alignItems":"center"}),
+    # SESSIONS is the least-frequently changed filter, so it sits at the
+    # bottom of the panel below the teams/drivers selectors.
+    html.P("SESSIONS", style={"color":TEXT_DIM,"fontSize":"0.68rem","letterSpacing":"2px"}),
+    dcc.Checklist(id="session-filter",
+        options=[{"label":s,"value":s} for s in SESSIONS], value=SESSIONS,
+        inputStyle={"marginRight":"8px","accentColor":ACCENT},
+        labelStyle={"display":"block","marginBottom":"8px","fontSize":"0.78rem"}),
 ], style={"padding":"16px","height":"100vh","overflowY":"auto",
           "background":"#09091A","borderRight":f"1px solid {GRID_CLR}"})],
 width=2, style={"padding":"0"})
@@ -223,8 +212,24 @@ TABS = dbc.Tabs([
    style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
 
 MAIN = dbc.Col([
-    html.H2("F1 SESSION ANALYSIS",
-            style={"color":ACCENT,"fontWeight":"900","letterSpacing":"3px","marginBottom":"4px","fontSize":"1.3rem"}),
+    html.Div([
+        html.H2("F1 SESSION ANALYSIS",
+                style={"color":ACCENT,"fontWeight":"900","letterSpacing":"3px","marginBottom":"4px","fontSize":"1.3rem"}),
+        # Source / support links, pinned to the top-right of the dashboard.
+        html.Div([
+            html.A(html.Img(src=app.get_asset_url("github.svg"),
+                            style={"height":"22px"}),
+                   href="https://github.com/sophiegonzalez3/F1", target="_blank",
+                   title="Source on GitHub",
+                   style={"color":TEXT_DIM,"marginRight":"16px","display":"inline-flex"}),
+            html.A(html.Img(src=app.get_asset_url("kofi.svg"),
+                            style={"height":"22px"}),
+                   href="https://ko-fi.com/sophiegonzalez3", target="_blank",
+                   title="Support me on Ko-fi",
+                   style={"display":"inline-flex"}),
+        ], style={"display":"flex","alignItems":"center"}),
+    ], style={"display":"flex","justifyContent":"space-between",
+              "alignItems":"flex-start"}),
     html.P(" | ".join(SESSIONS), id="main-subtitle",
            style={"color":TEXT_DIM,"marginBottom":"18px","fontSize":"0.78rem"}),
     TABS,

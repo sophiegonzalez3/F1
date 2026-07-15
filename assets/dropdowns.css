@@ -1,0 +1,23 @@
+/* Dark-theme readability for dcc.Dropdown.
+   react-select defaults the selected single value to a dark grey label, which
+   is grey-on-grey against the app's #111 dropdown backgrounds. Force a light
+   label (and a matching placeholder) so the current selection stays legible. */
+.Select--single .Select-control .Select-value .Select-value-label,
+.Select--single .Select-control .Select-value-label {
+    color: #EDEDED !important;
+}
+
+.Select-placeholder {
+    color: #8A8A8A !important;
+}
+
+/* Single-value control background/border to match the inline #111 fill. */
+.Select--single .Select-control {
+    background-color: #111 !important;
+    border-color: #333 !important;
+}
+
+/* Arrow + clear affordances shouldn't wash out on the dark control. */
+.Select--single .Select-arrow {
+    border-top-color: #BBB;
+}

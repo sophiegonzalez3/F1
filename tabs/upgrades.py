@@ -377,8 +377,16 @@ def _impact_section() -> html.Div:
     teams = sorted(ups["team"].unique()) if not ups.empty else []
     if not teams:
         return html.Div()
-    default_team = (ups.groupby("team")["n_items"].sum().idxmax()
-                    if not ups.empty else teams[0])
+    # Pre-select the constructor-championship runner-up (rank 2) when it's among
+    # the teams that brought upgrades; otherwise fall back to the busiest
+    # developer, then to the first team alphabetically.
+    from f1lib.standings import _team_champ_rank
+    rank = _team_champ_rank()
+    runner_up = next((t for t, r in sorted(rank.items(), key=lambda kv: kv[1])
+                      if r == 2 and t in teams), None)
+    default_team = (runner_up
+                    or (ups.groupby("team")["n_items"].sum().idxmax()
+                        if not ups.empty else teams[0]))
 
     trend_card = card(
         "Upgrade Impact — team pace trend",

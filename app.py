@@ -207,6 +207,7 @@ TABS = dbc.Tabs([
     dbc.Tab(label="STINTS",         tab_id="tab-stints"),
     dbc.Tab(label="QUALI",          tab_id="tab-quali"),
     dbc.Tab(label="RACE",           tab_id="tab-race"),
+    dbc.Tab(label="DUEL",           tab_id="tab-duel"),
     dbc.Tab(label="TEAM & TEAMATE", tab_id="tab-teams"),
 ], id="tabs", active_tab="tab-data",
    style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
@@ -358,6 +359,7 @@ def _render_tab(tab, ss, sd, st):
         ])
     if tab=="tab-quali":      return tab_quali()
     if tab=="tab-race":       return tab_race(sd, st)
+    if tab=="tab-duel":       return tab_duel(sd, st)
     if tab=="tab-track":      return tab_track_info()
     if tab=="tab-season":
         return tab_season(
@@ -401,6 +403,7 @@ from tabs.teammates import tab_teammates
 
 from tabs.race import tab_race
 from tabs.brief import tab_brief
+from tabs.duel import tab_duel
 
 from tabs.track import tab_track_info, get_track_map
 import tabs.track as _track_mod

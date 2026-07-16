@@ -167,22 +167,24 @@ class RaceForecaster:
             out[:, i] = r["mean"] + car[r["team"]] + indep
         return out
 
-    def forecast(self, race_pred: pd.DataFrame, *,
+    def simulate(self, race_pred: pd.DataFrame, *,
                  event: str,
                  grid: dict[str, int] | None = None,
                  quali_pred: pd.DataFrame | None = None,
-                 rng: np.random.Generator | None = None) -> pd.DataFrame:
-        """Finishing-position distribution per driver.
+                 rng: np.random.Generator | None = None,
+                 dnf_rates: dict[str, float] | None = None,
+                 race_noise: float | None = None) -> dict | None:
+        """Run the Monte Carlo and return the raw per-sim arrays.
 
-        race_pred  : PaceModel.driver_predictions(kind='longrun') — needs
-                     mean, car_var, drv_var per driver.
-        grid       : {driver: grid_pos} actual starting order (post-quali).
-        quali_pred : PaceModel.driver_predictions(kind='onelap') — used to
-                     SAMPLE the grid when `grid` is None (pre-quali forecast).
-        Returns driver, team, p_win, p_podium, p_points, e_finish, p_dnf.
+        Same inputs as :meth:`forecast`, plus optional per-driver retirement
+        probabilities (``dnf_rates``, falling back to the flat default) and a
+        ``race_noise`` override. Returns a dict of (n_sims, k) arrays —
+        ``finish``, ``dnf``, ``pace_rank``, ``grid_rank`` — plus the aligned
+        ``drivers`` list, so callers can compute pairwise / conditional
+        statistics that the aggregated forecast table throws away.
         """
         if race_pred is None or race_pred.empty:
-            return pd.DataFrame()
+            return None
         rng = rng or np.random.default_rng(23)
         d = race_pred.reset_index(drop=True)
         k = len(d)
@@ -208,14 +210,45 @@ class RaceForecaster:
             grid_rank = pace_rank.astype(float)             # no grid info
 
         # expected running order, then race-day shuffle
+        noise = self.p["race_noise"] if race_noise is None else race_noise
         score = grid_rank + pull * (pace_rank - grid_rank)
-        score = score + rng.standard_normal((n, k)) * self.p["race_noise"]
+        score = score + rng.standard_normal((n, k)) * noise
 
         # retirements: knock cars far back this sim
-        dnf = rng.random((n, k)) < self.p["dnf_rate"]
+        if dnf_rates is not None:
+            rates = np.array([dnf_rates.get(dr, self.p["dnf_rate"])
+                              for dr in drivers])[None, :]
+        else:
+            rates = self.p["dnf_rate"]
+        dnf = rng.random((n, k)) < rates
         score = np.where(dnf, 1e6 + rng.random((n, k)), score)
 
         finish = score.argsort(axis=1).argsort(axis=1) + 1   # 1=win
+        return {"drivers": drivers, "teams": d["team"].tolist(),
+                "finish": finish, "dnf": dnf,
+                "pace_rank": pace_rank, "grid_rank": grid_rank,
+                "pull": pull}
+
+    def forecast(self, race_pred: pd.DataFrame, *,
+                 event: str,
+                 grid: dict[str, int] | None = None,
+                 quali_pred: pd.DataFrame | None = None,
+                 rng: np.random.Generator | None = None) -> pd.DataFrame:
+        """Finishing-position distribution per driver.
+
+        race_pred  : PaceModel.driver_predictions(kind='longrun') — needs
+                     mean, car_var, drv_var per driver.
+        grid       : {driver: grid_pos} actual starting order (post-quali).
+        quali_pred : PaceModel.driver_predictions(kind='onelap') — used to
+                     SAMPLE the grid when `grid` is None (pre-quali forecast).
+        Returns driver, team, p_win, p_podium, p_points, e_finish, p_dnf.
+        """
+        sim = self.simulate(race_pred, event=event, grid=grid,
+                            quali_pred=quali_pred, rng=rng)
+        if sim is None:
+            return pd.DataFrame()
+        d = race_pred.reset_index(drop=True)
+        drivers, finish, dnf = sim["drivers"], sim["finish"], sim["dnf"]
 
         p_win = (finish == 1).mean(axis=0)
         p_podium = (finish <= 3).mean(axis=0)

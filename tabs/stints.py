@@ -297,8 +297,7 @@ def tab_stints(fl, fs):
                     yshift=10,
                     font=dict(size=11, color=clr),
                 ))
-        theme(fig_v, 650,
-              f"Lap Time Distribution – {compound} (best stint per driver, all sessions)")
+        theme(fig_v, 650)
         fig_v.update_layout(
             violingap=0, violingroupgap=0, violinmode="overlay",
             xaxis=dict(categoryorder="array", categoryarray=team_order,
@@ -717,7 +716,7 @@ def tab_stints(fl, fs):
                     "Stint length: %{customdata[5]} laps<extra></extra>"
                 ),
             ))
-        theme(fig_cliff, 440, "Tyre Cliff Map — every detected cliff")
+        theme(fig_cliff, 440)
         fig_cliff.update_layout(
             xaxis_title="Tyre age at cliff onset (laps)",
             yaxis_title="Extra deg after cliff (s/lap on top of base rate)",
@@ -771,7 +770,7 @@ def tab_stints(fl, fs):
             textfont=dict(size=11, color=TEXT_MAIN),
         ))
         fig_off.add_hline(y=0, line=dict(color="white", width=1, dash="dash"))
-        theme(fig_off, 400, "Compound Pace Offsets — race laps, corrected")
+        theme(fig_off, 400)
         fig_off.update_layout(
             xaxis_title="Compound pair",
             yaxis_title="s/lap  ·  positive = second compound slower",

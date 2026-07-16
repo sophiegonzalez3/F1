@@ -814,7 +814,7 @@ def tab_laps(fl, ft):
                 marker_color=TEAM_COLORS.get(row["Team"],"#808080"),
                 hovertemplate=f"<b>{row['Driver_Short']}</b><br>{SPEED_PERCENTILE}th pct: %{{y:.1f}} km/h<extra></extra>"))
         lo=sp["MaxSpeed"].min(); hi=sp["MaxSpeed"].max(); m=(hi-lo)*0.3 if hi>lo else 1
-        theme(fig_spd,380,f"Maximum Speed by Driver ({SPEED_PERCENTILE}th pct of best lap)")
+        theme(fig_spd,380)
         fig_spd.update_layout(xaxis_title="Driver",yaxis_title="Max Speed (km/h)",xaxis=dict(tickangle=0,gridcolor=GRID_CLR,zeroline=False))
         fig_spd.update_yaxes(range=[lo-m,hi+m/4])
     else:
@@ -835,7 +835,7 @@ def tab_laps(fl, ft):
                 name=f"Gear {int(gear)}",
                 marker_color=drv_colors,
                 hovertemplate="Driver: %{x}<br>Gear "+str(int(gear))+": %{y:.1f}%<extra></extra>"))
-        theme(fig_gear,420,"Gear Usage Distribution by Driver (best lap)")
+        theme(fig_gear,420)
         fig_gear.update_layout(barmode="stack",xaxis_title="Driver",yaxis_title="Time in Gear (%)")
     else:
         fig_gear=_empty_channel_fig("No best-lap telemetry available.")
@@ -1134,10 +1134,10 @@ def _sector_heatmap(laps_df: pd.DataFrame, blt: pd.DataFrame | None = None) -> g
                       tickfont=dict(color=TEXT_MAIN)),
     ))
     h = max(300, len(mat) * 26 + 100)
-    theme(fig, h, "Mini-Sector Dominance — green = fastest through that stretch")
+    theme(fig, h)
     fig.update_layout(
         xaxis_title="Mini-sector  (1 = start/finish → lap end)",
-        margin=dict(l=80, r=80, t=60, b=40),
+        margin=dict(l=80, r=80, t=30, b=40),
         yaxis=dict(autorange="reversed"),
     )
     return fig

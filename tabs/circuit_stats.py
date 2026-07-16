@@ -232,7 +232,7 @@ def pole_evolution_card(circuit_key: str, hist_quali: pd.DataFrame) -> html.Div 
                        "<br>Pole: %{customdata[2]}<extra></extra>"),
         showlegend=False,
     ))
-    theme(fig, 320, "Pole time by season")
+    theme(fig, 320)
     pad = max((d["t"].max() - d["t"].min()) * 0.25, 0.4)
     fig.update_yaxes(title_text="Pole lap (s)",
                      range=[d["t"].min() - pad, d["t"].max() + pad])

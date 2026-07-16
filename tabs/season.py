@@ -41,7 +41,7 @@ def _round_axis(s: pd.DataFrame) -> tuple[list[int], list[str]]:
     return ev["round"].tolist(), [event_short(e) for e in ev["event"]]
 
 
-def _trend_fig(s: pd.DataFrame, ycol: str, ytitle: str, title: str,
+def _trend_fig(s: pd.DataFrame, ycol: str, ytitle: str,
                height: int = 480) -> go.Figure:
     fig = go.Figure()
     rounds, labels = _round_axis(s)
@@ -57,7 +57,7 @@ def _trend_fig(s: pd.DataFrame, ycol: str, ytitle: str, title: str,
             hovertemplate=(f"<b>{abbr(team)}</b> · %{{customdata[0]}}<br>"
                            f"{ytitle}: %{{y:.2f}}<extra></extra>"),
         ))
-    theme(fig, height, title)
+    theme(fig, height)
     fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,
                      tickangle=-40, title_text=None)
     fig.update_yaxes(title_text=ytitle)
@@ -80,7 +80,7 @@ def _points_fig(s: pd.DataFrame, height: int = 480) -> go.Figure:
                            "Total: %{y:.0f} pts (+%{customdata[1]:.0f})"
                            "<extra></extra>"),
         ))
-    theme(fig, height, "Constructors' points race")
+    theme(fig, height)
     fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,
                      tickangle=-40)
     fig.update_yaxes(title_text="Cumulative points")
@@ -116,7 +116,7 @@ def _character_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
         fig.add_annotation(x=lim * 0.97, y=lim * 0.80, text="better on Sunday ↓",
                            showarrow=False, font=dict(size=10, color=TEXT_DIM),
                            xanchor="right")
-    theme(fig, height, "Saturday vs Sunday character — season averages")
+    theme(fig, height)
     fig.update_xaxes(title_text="Avg qualifying gap to pole (%)")
     fig.update_yaxes(title_text="Avg race-pace gap to best (%)")
     return fig
@@ -133,8 +133,7 @@ def _season_content(season: int) -> html.Div:
         card(
             "Qualifying Pace Gap by Round",
             dcc.Graph(figure=_trend_fig(
-                s, "quali_gap_pct", "Gap to pole (%)",
-                f"Qualifying gap to pole – {season}"), config=GFX),
+                s, "quali_gap_pct", "Gap to pole (%)"), config=GFX),
             info=("Data: each team's best single qualifying lap (best of "
                   "Q1/Q2/Q3 across both drivers) as % gap to pole, every "
                   "round of the season, from the results archive. Why: the "
@@ -145,8 +144,7 @@ def _season_content(season: int) -> html.Div:
         card(
             "Race Pace Gap by Round",
             dcc.Graph(figure=_trend_fig(
-                s, "race_pace_gap_pct", "Gap to best (%)",
-                f"Race pace gap – {season}"), config=GFX)
+                s, "race_pace_gap_pct", "Gap to best (%)"), config=GFX)
             if n_race else
             html.P("No cached race laps for this season — run "
                    "fetch_previous_races.py, then compute_team_pace.py.",

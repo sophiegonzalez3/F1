@@ -235,7 +235,7 @@ def tab_practice(wl):
 
     a = _practice_analysis(wl)
     tdf, bp, prog = a["team_df"], a["banked_df"], a["prog_df"]
-    has_quali, event_label = a["has_quali"], a["event_label"]
+    has_quali = a["has_quali"]
     phase = ("Full weekend (quali loaded)" if has_quali
              else f"Practice in progress · {a['n_prac_sessions']} session(s) so far")
 
@@ -268,7 +268,7 @@ def tab_practice(wl):
                         color="#39B54A",
                         tooltip="Largest gap between a driver's best practice lap and the sum of their best sectors — pace available but never assembled."))
     n_flagged = int((tdf["flags"] >= 2).sum())
-    kpis.append(kpi("FLAGGED TEAMS", f"{n_flagged}  ·  {event_label}",
+    kpis.append(kpi("FLAGGED TEAMS", str(n_flagged),
                     color=ACCENT if n_flagged else TEXT_MAIN,
                     tooltip="Teams crossing ≥2 sandbag signals (pace in hand, banked time, no soft-tyre run shown" + (", pace unlocked, trap gain" if has_quali else "") + ")."))
     kpi_row = dbc.Row(kpis, className="mb-2")

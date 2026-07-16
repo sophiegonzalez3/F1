@@ -313,11 +313,11 @@ def _effect_board_fig(eff: pd.DataFrame, season: int) -> go.Figure:
         textfont=dict(size=10),
     ))
     fig.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
-    theme(fig, max(340, 26 * len(eff) + 110),
-          f"Upgrade effect board – {season} · negative = car got faster")
+    theme(fig, max(340, 26 * len(eff) + 110))
     span = float(eff["effect"].abs().max()) if len(eff) else 1.0
     fig.update_xaxes(title_text="Change in quali gap to pole (pp), "
-                                "field-adjusted", range=[-span*1.35, span*1.35])
+                                "field-adjusted · negative = car got faster",
+                     range=[-span*1.35, span*1.35])
     fig.update_layout(showlegend=False, bargap=0.35)
     return fig
 
@@ -359,7 +359,7 @@ def _team_trend_fig(season: int, team: str) -> go.Figure:
     rounds, labels = (s.drop_duplicates("round").sort_values("round")["round"].tolist(),
                       [event_short(e) for e in
                        s.drop_duplicates("round").sort_values("round")["event"]])
-    theme(fig, 420, f"{team} – pace gap through {season} (▼ = upgrades)")
+    theme(fig, 420)
     fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,
                      tickangle=-40)
     fig.update_yaxes(title_text="Gap to front (%) · lower = faster")

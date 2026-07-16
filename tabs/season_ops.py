@@ -78,7 +78,7 @@ def chaos_timeline_card(season: int) -> html.Div | None:
             hovertemplate="<b>%{x}</b><br>Rain fell during the race"
                           "<extra></extra>",
         ))
-    theme(fig, 380, f"Interruptions per round – {season}")
+    theme(fig, 380)
     fig.update_layout(barmode="stack",
                       legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                   xanchor="left", x=0))
@@ -129,8 +129,7 @@ def pit_league_card(season: int) -> html.Div | None:
         hovertemplate=("<b>%{customdata[0]}</b><br>Median stop: %{x:.2f}s"
                        "<br>Stops timed: %{customdata[1]}<extra></extra>"),
     ))
-    theme(fig, max(340, 26 * len(g) + 120),
-          f"Pit-stop league – {season} (stationary time)")
+    theme(fig, max(340, 26 * len(g) + 120))
     fig.update_xaxes(title_text="Median stationary time (s)",
                      range=[0, float(g["median"].max()) * 1.35])
     fig.update_yaxes(title_text=None, tickfont=dict(size=10))
@@ -179,8 +178,7 @@ def lap1_league_card(season: int, min_races: int = 3) -> html.Div | None:
                        "Avg lap-1 gain: %{x:+.2f} places over "
                        "%{customdata[1]} starts<extra></extra>"),
     ))
-    theme(fig, max(380, 18 * len(g) + 120),
-          f"Average positions gained on lap 1 – {season}")
+    theme(fig, max(380, 18 * len(g) + 120))
     lim = float(g["mean"].abs().max()) * 1.35 or 1
     fig.update_xaxes(title_text="Places gained (+) / lost (−) vs grid",
                      range=[-lim, lim])
@@ -241,8 +239,7 @@ def pu_points_card(season: int) -> html.Div | None:
         hovertemplate=("<b>%{y}</b><br>%{x:.0f} pts<br>Teams: %{customdata}"
                        "<extra></extra>"),
     ))
-    theme(fig, max(300, 40 * len(g) + 120),
-          f"Constructor points by PU manufacturer – {season}")
+    theme(fig, max(300, 40 * len(g) + 120))
     fig.update_xaxes(title_text="Combined constructor points",
                      range=[0, float(g["points"].max()) * 1.25])
     fig.update_yaxes(title_text=None, tickfont=dict(size=11))
@@ -304,8 +301,7 @@ def testing_card(season: int) -> html.Div | None:
         hovertemplate=("<b>%{customdata[0]}</b><br>%{x:,} laps"
                        "<br>%{customdata[1]}<extra></extra>"),
     ))
-    theme(fig, max(340, 26 * len(s) + 120),
-          f"Pre-season testing mileage – {season}")
+    theme(fig, max(340, 26 * len(s) + 120))
     fig.update_xaxes(title_text="Laps completed (all pre-season tests)",
                      range=[0, float(s["laps"].max()) * 1.18])
     fig.update_yaxes(title_text=None, tickfont=dict(size=10))
@@ -477,8 +473,7 @@ def affinity_card(season: int, min_events: int = 2) -> html.Div | None:
                        "%{x:+.2f}%<br>(%{customdata[1]} power / "
                        "%{customdata[2]} technical events)<extra></extra>"),
     ))
-    theme(fig, max(340, 24 * len(d) + 130),
-          f"Track-type affinity – {season} (qualifying gap)")
+    theme(fig, max(340, 24 * len(d) + 130))
     lim = float(d["delta"].abs().max()) * 1.4 or 0.5
     fig.update_xaxes(
         title_text="← relatively faster on technical tracks   ·   "

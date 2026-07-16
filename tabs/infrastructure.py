@@ -102,8 +102,7 @@ def _atr_card():
                            "<br>%{x:.0f}% of baseline aero testing"
                            "<br>%{customdata}<extra></extra>"),
         ))
-    theme(fig, max(360, 30 * len(order) + 140),
-          f"Aero-testing allowance – {season} (% of baseline)")
+    theme(fig, max(360, 30 * len(order) + 140))
     fig.add_vline(x=100, line=dict(color=TEXT_DIM, width=1, dash="dot"))
     fig.update_xaxes(title_text="Wind-tunnel runs / CFD allowed (% of baseline)",
                      range=[0, 132])

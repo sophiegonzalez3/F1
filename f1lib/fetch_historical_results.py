@@ -85,7 +85,7 @@ log = logging.getLogger("fetch_historical")
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
-FIXED_SEASONS = [2021, 2022, 2024, 2025]
+FIXED_SEASONS = [2021, 2022, 2023, 2024, 2025]
 FASTF1_CACHE  = Path(FASTF1_CACHE_DIR)        # reuse the project's FF1 cache
 DEFAULT_OUT   = Path(HISTORICAL_DIR)
 

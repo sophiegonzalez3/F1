@@ -174,12 +174,12 @@ def _tab_teammates_inner(fl, fs):
             ),
         ))
         fig.add_vline(x=0, line=dict(color=TEXT_MAIN, width=1.5))
-        theme(fig, max(220, len(rows) * 58 + 130), title)
+        theme(fig, max(220, len(rows) * 58 + 130))
         fig.update_layout(
             xaxis_title=xlabel,
             bargap=0.35,
             showlegend=False,
-            margin=dict(l=160, r=20, t=70, b=55),
+            margin=dict(l=160, r=20, t=45, b=55),
         )
         fig.add_annotation(
             text=(
@@ -623,11 +623,15 @@ def _tab_teammates_inner(fl, fs):
         note="ValidLap=True count across all sessions in current filter.",
         unit="laps",
     )
+    _sub_label = {"color": TEXT_DIM, "fontSize": "0.72rem", "fontWeight": "700",
+                  "letterSpacing": "1px", "marginBottom": "2px"}
     consistency_section = card(
         "Consistency & Volume",
         dbc.Row([
-            dbc.Col(dcc.Graph(figure=cons_fig, config=GFX), md=7),
-            dbc.Col(dcc.Graph(figure=laps_fig, config=GFX), md=5),
+            dbc.Col([html.P("CONSISTENCY · IQR / MEDIAN", style=_sub_label),
+                     dcc.Graph(figure=cons_fig, config=GFX)], md=7),
+            dbc.Col([html.P("TOTAL VALID LAPS", style=_sub_label),
+                     dcc.Graph(figure=laps_fig, config=GFX)], md=5),
         ]),
         info=("Data: left = lap-time consistency (IQR ÷ median × 100 of valid "
               "non-perturbed laps; lower = tighter, more repeatable); right = total "

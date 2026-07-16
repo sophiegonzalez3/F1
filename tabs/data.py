@@ -42,6 +42,56 @@ state.register(globals())
 AVAILABLE_SEASON   = CURRENT_SEASON
 SELECTABLE_SEASONS = [CURRENT_SEASON - i for i in range(6)]
 
+# Circuit/venue name for each event, keyed by the short label (the meeting name
+# with " Grand Prix" stripped). Used to make the EVENT dropdown easier to read,
+# e.g. "British" → "British (Silverstone)".
+_EVENT_CIRCUIT: dict[str, str] = {
+    "Bahrain":         "Sakhir",
+    "Sakhir":          "Sakhir Outer",
+    "Saudi Arabian":   "Jeddah",
+    "Australian":      "Albert Park",
+    "Japanese":        "Suzuka",
+    "Chinese":         "Shanghai",
+    "Miami":           "Miami",
+    "Emilia Romagna":  "Imola",
+    "Monaco":          "Monte Carlo",
+    "Canadian":        "Gilles Villeneuve",
+    "Spanish":         "Barcelona",
+    "Barcelona":       "Catalunya",
+    "Austrian":        "Red Bull Ring",
+    "Styrian":         "Red Bull Ring",
+    "British":         "Silverstone",
+    "70th Anniversary":"Silverstone",
+    "Hungarian":       "Hungaroring",
+    "Belgian":         "Spa",
+    "Dutch":           "Zandvoort",
+    "Italian":         "Monza",
+    "Azerbaijan":      "Baku",
+    "Singapore":       "Marina Bay",
+    "United States":   "COTA",
+    "Mexico City":     "Hermanos Rodríguez",
+    "Mexican":         "Hermanos Rodríguez",
+    "São Paulo":       "Interlagos",
+    "Brazilian":       "Interlagos",
+    "Las Vegas":       "Las Vegas",
+    "Qatar":           "Lusail",
+    "Abu Dhabi":       "Yas Marina",
+    "Portuguese":      "Portimão",
+    "Tuscan":          "Mugello",
+    "Eifel":           "Nürburgring",
+    "Russian":         "Sochi",
+    "Turkish":         "Istanbul Park",
+    "French":          "Paul Ricard",
+}
+
+
+def _event_option_label(meeting: str) -> str:
+    """Dropdown label for an event: the short GP name, plus the circuit name in
+    parentheses when known, e.g. 'British (Silverstone)'."""
+    short = meeting.replace(" Grand Prix", "")
+    circuit = _EVENT_CIRCUIT.get(short)
+    return f"{short} ({circuit})" if circuit else short
+
 
 def _event_session_preview(season: int, meeting: str | None):
     """Read-only list of the sessions 'Load Event' will pull for *meeting*,
@@ -143,7 +193,7 @@ def tab_data_quality(fl, fs):
             x=[sess], y=[row["LapTime_%"]], name="Has LapTime",
             marker_color="#FF8700", showlegend=(_ == 0),
         ))
-    theme(fig_cov, 300, "Coverage per Session (%)")
+    theme(fig_cov, 300)
     fig_cov.update_layout(barmode="group", yaxis=dict(range=[0,105], gridcolor=GRID_CLR, zeroline=False),
                            xaxis_title="Session", yaxis_title="%")
 
@@ -234,7 +284,7 @@ def tab_data_quality(fl, fs):
         mx = max(sample["TyreAge"].max(), sample["PseudoTyreAge"].max())
         fig_tyre.add_trace(go.Scatter(x=[mn,mx], y=[mn,mx], mode="lines",
             line=dict(color="#00D2BE", dash="dash", width=1), name="Perfect match"))
-        theme(fig_tyre, 380, "PseudoTyreAge vs TyreAge (should be on the diagonal)")
+        theme(fig_tyre, 380)
         fig_tyre.update_layout(xaxis_title="TyreAge (raw)", yaxis_title="PseudoTyreAge (computed)")
         delta = (sample["PseudoTyreAge"] - sample["TyreAge"]).abs().mean()
         tyre_note = f"Mean absolute deviation: {delta:.2f} laps"
@@ -292,10 +342,9 @@ def tab_data_quality(fl, fs):
             hovertemplate="Driver: %{y}<br>Session|Compound: %{x}<br>Valid Laps: %{z}<extra></extra>",
             colorbar=dict(title=dict(text="Laps", font=dict(color=TEXT_MAIN)), tickfont=dict(color=TEXT_MAIN)),
         ))
-        theme(fig_comp_heat, max(300, 26 * len(pivot_cc) + 120),
-              "Valid Laps per Driver × Session × Compound")
+        theme(fig_comp_heat, max(300, 26 * len(pivot_cc) + 120))
         fig_comp_heat.update_layout(
-            margin=dict(l=80,r=60,t=60,b=120),
+            margin=dict(l=80,r=60,t=30,b=120),
             xaxis=dict(tickangle=45, gridcolor=GRID_CLR, zeroline=False),
         )
     else:
@@ -458,12 +507,6 @@ def _tab_data_selection_inner() -> html.Div:
     meeting  = loaded_meeting if loaded_meeting in meetings else (
         meetings[-1] if meetings else None)
 
-    status_banner = (
-        dbc.Alert(LAST_LOAD_MSG, color="info",
-                  style={"fontSize": "0.8rem", "borderRadius": "6px", "marginBottom": "12px"})
-        if LAST_LOAD_MSG else html.Div()
-    )
-
     lbl_style = {"color": TEXT_DIM, "fontSize": "0.65rem", "letterSpacing": "1px",
                  "fontWeight": "700", "marginBottom": "4px", "display": "block"}
 
@@ -480,13 +523,6 @@ def _tab_data_selection_inner() -> html.Div:
             html.Span("○ fetch", style={"color": "#FF8700", "fontWeight": "700"}),
             " is downloaded from FastF1 the first time (1–3 min each).",
         ], style={"color": TEXT_DIM, "fontSize": "0.82rem", "marginBottom": "10px"}),
-
-        status_banner,
-
-        dbc.Row([
-            kpi("CURRENTLY LOADED", str(len(SESSIONS)), ACCENT,
-                tooltip="Sessions currently active in the dashboard."),
-        ]),
 
         card("Select Event", info=(
             "Data: every event of the chosen season that has already run, and "
@@ -509,7 +545,7 @@ def _tab_data_selection_inner() -> html.Div:
                     html.Label("EVENT", style=lbl_style),
                     dcc.Dropdown(
                         id="data-event-select",
-                        options=[{"label": m.replace(" Grand Prix", ""), "value": m}
+                        options=[{"label": _event_option_label(m), "value": m}
                                  for m in meetings],
                         value=meeting, clearable=False,
                         style={"backgroundColor": "#111", "fontSize": "0.82rem"},
@@ -551,7 +587,7 @@ def update_event_controls(season, meeting):
     trig    = ctx.triggered_id
     season  = int(season) if season else AVAILABLE_SEASON
     meetings = season_meetings(season)
-    options  = [{"label": m.replace(" Grand Prix", ""), "value": m} for m in meetings]
+    options  = [{"label": _event_option_label(m), "value": m} for m in meetings]
 
     # Season switch → rebuild event list, default to that season's most recent event.
     if trig == "data-season-select":

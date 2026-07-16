@@ -128,12 +128,11 @@ def _reliability_fig(season: int) -> go.Figure:
             hovertemplate=f"<b>%{{y}}</b><br>{b}: %{{x}} car-race(s)<extra></extra>",
         ))
     n = len(teams)
-    theme(fig, max(320, 30 * n + 130),
-          f"Reliability by team – {season} · car-races by outcome")
+    theme(fig, max(320, 30 * n + 130))
     fig.update_layout(barmode="stack",
                       legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                   xanchor="left", x=0, font=dict(size=10)),
-                      margin=dict(l=120, r=20, t=76, b=44))
+                      margin=dict(l=120, r=20, t=44, b=44))
     fig.update_xaxes(title_text="Car-races (2 cars × rounds)")
     fig.update_yaxes(title_text=None)
     return fig

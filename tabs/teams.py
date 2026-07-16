@@ -157,11 +157,11 @@ def _tab_teams_inner2(fl, fs):
             hovertemplate="%{y}: %{text}<extra></extra>",
         ))
         h = max(200, len(items) * 44 + 90)
-        theme(fig, h, title)
+        theme(fig, h)
         fig.update_layout(
             xaxis_title=x_title,
             showlegend=False,
-            margin=dict(l=140, r=140, t=50, b=40),
+            margin=dict(l=140, r=140, t=30, b=40),
         )
         fig.update_xaxes(rangemode="tozero")
         fig.update_yaxes(autorange="reversed")
@@ -212,7 +212,7 @@ def _tab_teams_inner2(fl, fs):
                 hovertemplate=f"<b>{{{{y}}}}</b> – {cmp}: %{{text}}<extra></extra>",
             ))
         h = max(220, len(team_order) * 58 + 130)
-        theme(fig, h, title)
+        theme(fig, h)
         fig.update_layout(
             barmode="group", showlegend=True,
             xaxis_title="% gap to compound leader  (0 = best per compound)",
@@ -249,7 +249,7 @@ def _tab_teams_inner2(fl, fs):
                 hovertemplate=f"<b>{{{{y}}}}</b> – {sess.split('_')[0]}: %{{text}}<extra></extra>",
             ))
         h = max(220, len(teams_all) * 50 + 130)
-        theme(fig, h, title)
+        theme(fig, h)
         fig.update_layout(
             barmode="group", showlegend=True,
             xaxis_title="% gap to session leader  (0 = most laps per session)",

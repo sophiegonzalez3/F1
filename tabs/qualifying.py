@@ -94,7 +94,7 @@ def _progression_fig(ql: pd.DataFrame) -> go.Figure:
             customdata=np.array(hover, dtype=object),
             hovertemplate=f"<b>{drv}</b> · %{{customdata}}<extra></extra>",
         ))
-    theme(fig, 520, "Q1 → Q2 → Q3 · gap to each segment's benchmark")
+    theme(fig, 520)
     fig.update_yaxes(title_text="Gap to segment best (%)")
     fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                   xanchor="left", x=0, font=dict(size=10)))
@@ -131,8 +131,7 @@ def _ideal_fig(t: pd.DataFrame) -> go.Figure:
         text=[f"{v:.3f}s" for v in t["left"]], textposition="outside",
         textfont=dict(size=10),
     ))
-    theme(fig, max(340, 24 * len(t) + 110),
-          "Time left on the table — best lap vs sum of best sectors")
+    theme(fig, max(340, 24 * len(t) + 110))
     fig.update_xaxes(title_text="Best lap − theoretical best (s)",
                      range=[0, float(t["left"].max()) * 1.2 if len(t) else 1])
     fig.update_layout(showlegend=False, bargap=0.3)
@@ -184,7 +183,7 @@ def _evolution_fig(ql: pd.DataFrame) -> go.Figure:
                              bests["lt"].map(format_lap_time)], axis=-1),
         hovertemplate=("<b>%{customdata[0]}</b> best: %{customdata[1]} "
                        "at %{x:.0f} min<extra></extra>")))
-    theme(fig, 500, "Track evolution — when each driver's best lap was set")
+    theme(fig, 500)
     fig.update_xaxes(title_text="Minutes into qualifying")
     fig.update_yaxes(title_text="Lap time (s)")
     fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
@@ -225,8 +224,7 @@ def _tow_fig(ql: pd.DataFrame) -> go.Figure:
         text=[f"{v:+.1f}" for v in t["delta"]], textposition="outside",
         textfont=dict(size=10)))
     fig.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
-    theme(fig, max(340, 24 * len(t) + 110),
-          "Speed-trap anomaly on the best lap — tow / low-drag proxy")
+    theme(fig, max(340, 24 * len(t) + 110))
     span = float(t["delta"].abs().max()) or 1.0
     fig.update_xaxes(title_text="Best-lap speed trap vs own median (km/h)",
                      range=[-span * 1.35, span * 1.35])

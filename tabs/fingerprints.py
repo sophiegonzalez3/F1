@@ -206,7 +206,7 @@ def _ramp_fig(store: dict, drv_a: str, drv_b: str | None) -> go.Figure:
                            f"<extra>{n} braking zones</extra>")))
     fig.add_hline(y=90, line=dict(color=GRID_CLR, width=1, dash="dash"),
                   annotation_text="90%", annotation_font_size=9)
-    theme(fig, 380, "Throttle application after brake release — best lap")
+    theme(fig, 380)
     fig.update_xaxes(title_text="Seconds after brake release")
     fig.update_yaxes(title_text="Mean throttle (%)", range=[0, 105])
     return fig

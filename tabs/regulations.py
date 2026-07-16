@@ -127,7 +127,7 @@ def _atr_fig(height: int = 360) -> go.Figure:
                   annotation_text="baseline (100% = 320 runs)",
                   annotation_font=dict(size=9, color=TEXT_DIM),
                   annotation_position="top left")
-    theme(fig, height, "Wind-tunnel & CFD allowance by prior finish")
+    theme(fig, height)
     fig.update_xaxes(title_text="Previous constructors' championship position",
                      tickmode="array", tickvals=positions)
     fig.update_yaxes(title_text="% of baseline aero-test allowance", range=[0, 130])

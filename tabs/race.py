@@ -1214,9 +1214,7 @@ def _pitstops_card(rl: pd.DataFrame, meeting, shown_year) -> object:
             tooltip="Number of recorded stops in this race (after the "
                     "sidebar Driver/Team filter)."),
     ])
-    fig = _pitstops_fig(
-        ps, f"Pit Stops – {meeting} {shown_year}", use_stationary
-    )
+    fig = _pitstops_fig(ps, "", use_stationary)
     src = ps["source"].iloc[0]
     note = html.P(
         ("Source: F1 live-timing PitStopSeries (true stationary times)."
@@ -1276,8 +1274,7 @@ def _start_restart_stats(rl: pd.DataFrame) -> tuple[pd.DataFrame, list[int]]:
     return df.sort_values("start_gain", ascending=False), restarts
 
 
-def _start_restart_fig(st: pd.DataFrame, restarts: list[int],
-                       title: str) -> go.Figure:
+def _start_restart_fig(st: pd.DataFrame, restarts: list[int]) -> go.Figure:
     fig = go.Figure()
     has_restarts = bool(restarts) and st["restart_gain"].notna().any()
     fig.add_trace(go.Bar(
@@ -1290,15 +1287,15 @@ def _start_restart_fig(st: pd.DataFrame, restarts: list[int],
     ))
     if has_restarts:
         fig.add_trace(go.Bar(
-            x=st["driver"], y=st["restart_gain"], name="SC/VSC restarts",
+            x=st["driver"], y=st["restart_gain"],
+            name=f"SC/VSC restarts (lap {', '.join(map(str, restarts))})",
             marker_color=[_hex_to_rgba(TEAM_COLORS.get(t, "#808080"), 0.45)
                           for t in st["team"]],
             hovertemplate=("<b>%{x}</b> · restarts combined: %{y:+.0f}"
                            "<extra></extra>"),
         ))
     fig.add_hline(y=0, line=dict(color="white", width=1, dash="dash"))
-    theme(fig, 420, title + (f" · restarts on lap {', '.join(map(str, restarts))}"
-                             if restarts else " · no SC restarts"))
+    theme(fig, 420)
     fig.update_yaxes(title_text="Positions gained (+) / lost (−)")
     fig.update_layout(barmode="group",
                       legend=dict(orientation="h", yanchor="bottom", y=1.02,
@@ -1748,8 +1745,7 @@ def _team_radio_block(rdf: pd.DataFrame, meeting: str, year,
                      style={"backgroundColor": "#111", "fontSize": "0.8rem",
                             "marginBottom": "10px"}),
         dcc.Graph(id="radio-tr-graph",
-                  figure=_team_radio_fig(rdf, value,
-                                         f"Team Radio – {meeting} {year}",
+                  figure=_team_radio_fig(rdf, value, "",
                                          mode="reviewed", season=season),
                   config=GFX),
         html.Div(_team_radio_table(rdf, value, mode="reviewed"),
@@ -1830,24 +1826,13 @@ def tab_race(sel_drivers=None, sel_teams=None):
                    style={"color": TEXT_DIM, "fontSize": "0.9rem"}),
         ])
 
-    evo_fig = _lap_evolution_fig(
-        rl, f"Lap Time Evolution – All Laps – Race {shown_year}"
-    )
-    pos_fig = _position_changes_fig(
-        rl, f"Race Position by Lap – {meeting} {shown_year}"
-    )
+    evo_fig = _lap_evolution_fig(rl, "")
+    pos_fig = _position_changes_fig(rl, "")
     start_stats, restart_laps = _start_restart_stats(rl)
-    trace_fig = _race_trace_fig(
-        rl, f"Race Trace – {meeting} {shown_year}"
-    )
-    strat_fig = _tyre_strategy_chart(
-        rl, title=f"Race Tyre Strategy – {meeting} {shown_year}",
-        already_race=True,
-    )
+    trace_fig = _race_trace_fig(rl, "")
+    strat_fig = _tyre_strategy_chart(rl, title="", already_race=True)
     uc_pairs = _undercut_pairs(rl)
-    uc_fig   = _undercut_fig(
-        uc_pairs, f"Undercut / Overcut Duels – {meeting} {shown_year}"
-    )
+    uc_fig   = _undercut_fig(uc_pairs, "")
     _sim_pitloss_default = _estimate_pit_loss(rl) or 22.0
     sim_controls = dbc.Row([
         dbc.Col([
@@ -1928,9 +1913,7 @@ def tab_race(sel_drivers=None, sel_teams=None):
               "was one Safety Car away from a different result?' using only "
               "what the tyres, and the traffic, really did that day."),
     )
-    wx_fig = _weather_race_fig(
-        rl, f"Weather & Race Pace – {meeting} {shown_year}"
-    )
+    wx_fig = _weather_race_fig(rl, "")
 
     # ── Wet-race crossover (only shown for wet/transition races) ──
     wet = detect_wet_crossover(rl)
@@ -1939,9 +1922,7 @@ def tab_race(sel_drivers=None, sel_teams=None):
         wet_card = card(
             "Wet-Race Crossover — Inters vs Slicks",
             html.Div([
-                dcc.Graph(figure=_wet_crossover_fig(
-                    wet, f"Tyre Crossover – {meeting} {shown_year}"),
-                    config=GFX),
+                dcc.Graph(figure=_wet_crossover_fig(wet, ""), config=GFX),
                 dcc.Graph(figure=_wet_switch_fig(
                     wet, "Switch timing vs the field crossover"),
                     config=GFX),
@@ -1968,10 +1949,7 @@ def tab_race(sel_drivers=None, sel_teams=None):
     rc_codes    = _rc_driver_options(rc, season=shown_year)
     visible     = set(rl["Driver_Short"].dropna().unique())
     rc_default  = [c for c in rc_codes if c in visible] or rc_codes
-    radio_fig   = _radio_timeline_fig(
-        rc, rc_default,
-        f"Race-Control Messages – {meeting} {shown_year}",
-    )
+    radio_fig   = _radio_timeline_fig(rc, rc_default, "")
     radio_card = card(
         "Race-Control Message Timeline",
         html.Div([
@@ -2069,9 +2047,7 @@ def tab_race(sel_drivers=None, sel_teams=None):
         card(
             "Lap 1 & Restarts",
             dcc.Graph(figure=_start_restart_fig(
-                start_stats, restart_laps,
-                f"Positions gained at the start – {meeting} {shown_year}"),
-                config=GFX)
+                start_stats, restart_laps), config=GFX)
             if not start_stats.empty else
             html.P("No grid/position data for this race.",
                    style={"color": TEXT_DIM}),
@@ -2199,7 +2175,7 @@ def filter_team_radio(selected_codes, mode, topics):
         rdf = _attach_radio_laps(rdf, data["laps"])
     ordered = _order_by_champ(selected_codes or [], season)
     mode = mode or "reviewed"
-    fig = _team_radio_fig(rdf, ordered, f"Team Radio – {meeting} {season}",
+    fig = _team_radio_fig(rdf, ordered, "",
                           mode=mode, season=season, topics=topics)
     return fig, _team_radio_table(rdf, ordered, mode=mode, topics=topics)
 
@@ -2246,10 +2222,7 @@ def update_radio_timeline(selected_codes):
     rc         = data.get("race_control", pd.DataFrame())
     shown_year = data.get("season", season)
     ordered    = _order_by_champ(selected_codes or [], shown_year)
-    return _radio_timeline_fig(
-        rc, ordered,
-        f"Race-Control Messages – {meeting} {shown_year}",
-    )
+    return _radio_timeline_fig(rc, ordered, "")
 
 
 # Text colour that stays readable on each compound's bar colour.

@@ -45,14 +45,14 @@ def tab_overview(fl, fs, ft=None):
 ), meanline_visible=True,
             orientation="h", points="all", jitter=0.05, pointpos=0,
             marker=dict(size=3,color=clr)))
-    theme(fig_vio,420,"Lap Time Distribution by Driver")
+    theme(fig_vio,420)
     fig_vio.update_layout(violinmode="overlay",showlegend=False,xaxis_title="Lap Time (s)")
 
     cc = fl["Compound"].value_counts().reset_index()
     cc.columns=["Compound","Count"]
     fig_pie = px.pie(cc,names="Compound",values="Count",
                      color="Compound",color_discrete_map=COMPOUND_COLORS,hole=0.55)
-    theme(fig_pie,300,"Compound Distribution")
+    theme(fig_pie,300)
 
     tm = team_metrics(fl)
     tm["Best Lap"] = tm["Best_Lap_s"].apply(format_lap_time)
@@ -86,7 +86,7 @@ def tab_overview(fl, fs, ft=None):
                 "Driver=%{customdata[0]}<br>Std=%{customdata[1]:.3f}<extra></extra>"
             ),
         ))
-    theme(fig_bub, 520, "Driver Performance Matrix – Best Lap vs Race Pace (bubble = lap count)")
+    theme(fig_bub, 520)
     fig_bub.update_layout(xaxis_title="Best Lap Time (s)", yaxis_title="Median Lap Time (s)")
 
     # ── Pace heatmap (Driver × Session) ───────────────────────
@@ -114,11 +114,10 @@ def tab_overview(fl, fs, ft=None):
             colorbar=dict(title=dict(text="Norm", font=dict(color=TEXT_MAIN)),
                           tickfont=dict(color=TEXT_MAIN))), row=2, col=1)
         fp.update_layout(
-            title="Pace Heatmap: Driver × Session (column-normalized, red=slower)",
             height=max(300, 80 + 26 * len(dvs)),
             paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
             font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=11),
-            margin=dict(l=80, r=100, t=60, b=40))
+            margin=dict(l=80, r=100, t=30, b=40))
         heatmap_cards.append(card("Driver × Session Pace Heatmap",
                                   dcc.Graph(figure=fp, config=GFX),
                                   info=("Data: median valid lap time per driver in "
@@ -176,11 +175,10 @@ def tab_overview(fl, fs, ft=None):
                 hovertemplate="Driver: %{y}<br>Region: %{x}<br>Avg Speed: %{customdata:.1f} km/h<extra></extra>"),
                 row=2, col=1)
             fc.update_layout(
-                title="Cornering Speed by Track Region<br><sup>Columns normalized for comparison</sup>",
                 height=max(900, 30 * len(dc) + 200),
                 paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
                 font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=11),
-                margin=dict(l=80, r=40, t=70, b=50))
+                margin=dict(l=80, r=40, t=30, b=50))
             fc.update_yaxes(title_text="Driver", row=2, col=1,
                             gridcolor=GRID_CLR, zeroline=False)
             fc.update_xaxes(title_text="Track Region", row=2, col=1,

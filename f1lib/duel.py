@@ -332,6 +332,45 @@ def sc_profile(circuit_key_fr: str | None) -> dict:
     }
 
 
+def wet_profile(a: str, b: str) -> dict:
+    """How each driver's race-day conversion (grid → finish positions gained)
+    changes in the rain, using the measured per-race rain flag from
+    race_stats.csv joined onto the results archive. Retirements excluded —
+    this reads racecraft in the wet, not survival luck."""
+    out = {}
+    rp = HIST / "race_results_all.parquet"
+    if not RACE_STATS_CSV.exists() or not rp.exists():
+        return out
+    rs = pd.read_csv(RACE_STATS_CSV)[["season", "meeting", "rain"]]
+    rs["rain"] = rs["rain"].astype(str).str.lower() == "true"
+    r = pd.read_parquet(rp)
+    r = r[r["Abbreviation"].isin([a, b])]
+    m = r.merge(rs, left_on=["season", "event_name"],
+                right_on=["season", "meeting"], how="inner")
+    if m.empty:
+        return out
+    s = m["Status"].astype(str)
+    fin = s.str.startswith("Finished") | s.str.match(r"^\+\d") \
+        | s.str.contains("Lap", na=False)
+    m = m[fin]
+    m = m[pd.to_numeric(m["GridPosition"], errors="coerce").notna()
+          & pd.to_numeric(m["Position"], errors="coerce").notna()]
+    m["gained"] = m["GridPosition"].astype(float) - m["Position"].astype(float)
+    for drv, tag in ((a, "a"), (b, "b")):
+        g = m[m["Abbreviation"] == drv]
+        wet, dry = g[g["rain"]], g[~g["rain"]]
+        out[tag] = {
+            "wet_n": len(wet), "dry_n": len(dry),
+            "wet_gain": float(wet["gained"].mean()) if len(wet) else np.nan,
+            "dry_gain": float(dry["gained"].mean()) if len(dry) else np.nan,
+        }
+        d = out[tag]
+        d["rain_delta"] = (d["wet_gain"] - d["dry_gain"]
+                           if np.isfinite(d["wet_gain"])
+                           and np.isfinite(d["dry_gain"]) else np.nan)
+    return out
+
+
 # ─────────────────────────────────────────────────────────────
 # 4. Corner deltas & attack zones
 # ─────────────────────────────────────────────────────────────

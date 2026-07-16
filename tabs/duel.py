@@ -838,7 +838,145 @@ def _pressure_block(press: pd.DataFrame, a, b, ca, cb):
     return html.Div(items)
 
 
-def _strategy_section(ctx, res, a, b, ga=None, gb=None):
+def _adversarial_board(ctx, pred, a, b, sc_prob: float):
+    """Strategy plans scored against the TARGET's optimal plan.
+
+    The target is assumed to run the race-time-optimal compound plan; every
+    alternative plan the attacker could commit to is priced in two worlds —
+    no Safety Car, and an SC falling at a random mid-race lap (both cars
+    re-time their stops within their committed compounds when it comes out).
+    A diverging plan can't beat the optimal one in clean-air expectation by
+    construction; what it buys is SC upside — this board makes that trade
+    explicit and compares it against the pace deficit the attacker must find."""
+    from tabs.race import (_resolve_race_data, _estimate_pit_loss,
+                           _strategy_model, _simulate_strategies)
+    rd = _resolve_race_data(ctx["season"], ctx["event"])
+    if not rd:
+        return None
+    rl = rd["laps"]
+    total_laps = int(pd.to_numeric(rl["LapNo"], errors="coerce").max())
+    if total_laps < 20:
+        return None
+    pit_loss = _estimate_pit_loss(rl)
+    if pit_loss is None:
+        scp = duel.sc_profile(ctx["ck_fr"])
+        pit_loss = scp.get("pit_loss_s")
+        if pit_loss is None or not np.isfinite(pit_loss):
+            return None
+    model = _strategy_model(rl, total_laps)
+    if model is None:
+        return None
+
+    def _per_comp(res_df):
+        """Best total per compound plan (label of its best variant kept)."""
+        g = res_df.sort_values("Total").drop_duplicates("Compounds")
+        return {r.Compounds: (float(r.Total), r.Label)
+                for r in g.itertuples()}
+
+    base, _ = _simulate_strategies(model, total_laps, pit_loss)
+    if base.empty:
+        return None
+    nosc = _per_comp(base)
+    b_comp = base.iloc[0]["Compounds"]
+    b_label = base.iloc[0]["Label"]
+
+    sc_grid = list(range(8, max(total_laps - 8, 9), 6))
+    sc_tot: dict[str, list[float]] = {c: [] for c in nosc}
+    for scl in sc_grid:
+        r_sc, _ = _simulate_strategies(model, total_laps, pit_loss, sc_lap=scl)
+        pc = _per_comp(r_sc)
+        for c in sc_tot:
+            if c in pc:
+                sc_tot[c].append(pc[c][0])
+
+    # pace deficit A vs B over the race distance, from the model prediction
+    pace_deficit = np.nan
+    if pred is not None:
+        dp = pred["dpred"].set_index("driver")["mean"]
+        if a in dp.index and b in dp.index:
+            lt = pd.to_numeric(rl.loc[rl["ValidLap"], "LapTime_s"],
+                               errors="coerce").median()
+            if np.isfinite(lt):
+                pace_deficit = (float(dp[a] - dp[b]) / 100.0) * lt * total_laps
+
+    rows = []
+    for comp, (tot, label) in nosc.items():
+        edge_nosc = nosc[b_comp][0] - tot            # + = A's plan faster
+        scs_b = sc_tot.get(b_comp, [])
+        scs_a = sc_tot.get(comp, [])
+        edge_sc = (float(np.mean(np.array(scs_b) - np.array(scs_a)))
+                   if scs_a and len(scs_a) == len(scs_b) else np.nan)
+        exp_edge = ((1 - sc_prob) * edge_nosc + sc_prob * edge_sc
+                    if np.isfinite(edge_sc) else edge_nosc)
+        rows.append({"comp": comp, "label": label, "is_b": comp == b_comp,
+                     "edge_nosc": edge_nosc, "edge_sc": edge_sc,
+                     "exp_edge": exp_edge})
+    board = pd.DataFrame(rows).sort_values("exp_edge", ascending=False)
+    return {"board": board, "b_label": b_label, "b_comp": b_comp,
+            "pace_deficit": pace_deficit, "total_laps": total_laps,
+            "pit_loss": float(pit_loss), "year": rd["season"],
+            "n_sc_scenarios": len(sc_grid)}
+
+
+def _adversarial_card(adv, a, b, sc_prob):
+    board = adv["board"]
+    need = adv["pace_deficit"]
+    rows = []
+    for _, r in board.iterrows():
+        if r["is_b"]:
+            continue
+        rows.append({
+            "Attacker plan": r["label"],
+            "vs target · no SC (s)": f"{r['edge_nosc']:+.1f}",
+            "vs target · SC race (s)": f"{r['edge_sc']:+.1f}"
+            if np.isfinite(r["edge_sc"]) else "–",
+            "Expected edge (s)": f"{r['exp_edge']:+.1f}",
+        })
+    if not rows:
+        return None
+    deficit_txt = (f"{need:+.1f}s" if np.isfinite(need) else "unknown")
+    verdict = []
+    if np.isfinite(need):
+        best = board[~board["is_b"]].iloc[0] if (~board["is_b"]).any() else None
+        if need <= 0:
+            verdict = [f"{a} is quicker over the distance ({deficit_txt}) — "
+                       f"mirroring the target's plan is enough; divergence "
+                       "only adds risk."]
+        elif best is not None and best["exp_edge"] > 0:
+            verdict = [f"{a} needs to find {deficit_txt} on {b}. "
+                       f"Best divergence: {best['label']} — expected "
+                       f"{best['exp_edge']:+.1f}s vs the target's plan once "
+                       f"the {sc_prob*100:.0f}% SC probability is priced in."]
+        else:
+            verdict = [f"{a} needs to find {deficit_txt} on {b}, and no "
+                       "committed plan buys it on paper — the edge has to "
+                       "come from the start, an error, or reactive calls "
+                       "(SC timing, weather)."]
+    header = html.P([
+        html.B(f"Target's optimal plan: {adv['b_label']}"),
+        f"  ·  {adv['total_laps']} laps · pit loss {adv['pit_loss']:.1f}s · "
+        f"deg/offsets measured from the {adv['year']} race here. ",
+        html.B(f"Pace deficit to overcome: {deficit_txt}."),
+        html.Br(), *verdict,
+    ], style={"color": TEXT_DIM, "fontSize": "0.8rem", "lineHeight": "1.6"})
+    return card("ADVERSARIAL STRATEGY BOARD — BEAT THEIR PLAN",
+        html.Div([header,
+                  dash_table.DataTable(data=rows,
+                      columns=[{"name": c, "id": c} for c in rows[0]],
+                      **TABLE_STYLE)]),
+        info="Every compound plan the attacker could commit to, priced "
+             "against the target running the race-time-optimal plan. "
+             "'No SC' is clean-air expectation (a diverging plan can never "
+             "beat the optimum there — the column shows what the divergence "
+             "costs). 'SC race' re-times both cars' stops with a Safety Car "
+             f"at {adv['n_sc_scenarios']} different mid-race laps and "
+             "averages — offset plans keep a cheap-stop window open and gain "
+             "here. 'Expected edge' weights the two worlds by this circuit's "
+             "measured SC probability. Committed pre-race plans only; "
+             "in-race reactive strategy is not modelled.")
+
+
+def _strategy_section(ctx, res, a, b, ga=None, gb=None, pred=None):
     sc = duel.sc_profile(ctx["ck_fr"])
     # measured undercut power from the most recent archived race here
     uc_med, uc_n, uc_year = np.nan, 0, None
@@ -918,6 +1056,15 @@ def _strategy_section(ctx, res, a, b, ga=None, gb=None):
         "the RACE tab's Strategy What-If board simulates exact stop laps and "
         "compounds (SC- and traffic-aware) once race data is loaded."]))
 
+    adv_card = None
+    try:
+        p_sc = float(sc.get("p_sc", 0.5)) if sc else 0.5
+        adv = _adversarial_board(ctx, pred, a, b, p_sc)
+        if adv is not None:
+            adv_card = _adversarial_card(adv, a, b, p_sc)
+    except Exception as exc:
+        logger.warning("adversarial strategy board failed: %s", exc)
+
     return html.Div([
         dbc.Row(kpis, className="mb-2") if kpis else html.Div(),
         card("THE PLAYBOOK",
@@ -928,6 +1075,7 @@ def _strategy_section(ctx, res, a, b, ga=None, gb=None):
                   "circuit, its Safety-Car history and stop-count pattern. "
                   "Heuristics, not a plan — the RACE tab simulator does the "
                   "exact math."),
+        adv_card or html.Div(),
     ])
 
 
@@ -959,23 +1107,85 @@ def _chaos_section(ctx, a, b, ta, tb, ca, cb):
             style={"color": TEXT_DIM, "fontSize": "0.75rem",
                    "marginTop": "8px", "marginBottom": 0}))
     rel = html.Div(rel_children)
-    return dbc.Row([
-        dbc.Col(card("LAP-1 HABITS",
-                     dcc.Graph(figure=_lap1_fig(l1, a, b, ca, cb), config=GFX),
-                     info="Average positions gained/lost on lap 1 (measured "
-                          "lap-1 league, 2023 →), career-wide and at this "
-                          "circuit. A driver who habitually gains at lights-"
-                          "out can undo Saturday in 300 metres — front-row "
-                          "starters can only lose, so interpret alongside "
-                          "usual grid slots."), md=6),
-        dbc.Col(card("RELIABILITY — LAST 3 SEASONS",
-                     rel,
-                     info="Retirements per start from the results archive, "
-                          "split mechanical vs incident. The shrunk rate "
-                          "(pulled toward the field mean) is what the duel "
-                          "simulation uses as each car's DNF probability."),
-                md=6),
+    return html.Div([
+        dbc.Row([
+            dbc.Col(card("LAP-1 HABITS",
+                         dcc.Graph(figure=_lap1_fig(l1, a, b, ca, cb),
+                                   config=GFX),
+                         info="Average positions gained/lost on lap 1 "
+                              "(measured lap-1 league, 2023 →), career-wide "
+                              "and at this circuit. A driver who habitually "
+                              "gains at lights-out can undo Saturday in 300 "
+                              "metres — front-row starters can only lose, so "
+                              "interpret alongside usual grid slots."), md=6),
+            dbc.Col(card("RELIABILITY — LAST 3 SEASONS",
+                         rel,
+                         info="Retirements per start from the results "
+                              "archive, split mechanical vs incident. The "
+                              "shrunk rate (pulled toward the field mean) is "
+                              "what the duel simulation uses as each car's "
+                              "DNF probability."), md=6),
+        ]),
+        _wet_card(a, b, ca, cb),
     ])
+
+
+def _wet_card(a, b, ca, cb):
+    wp = duel.wet_profile(a, b)
+    if not wp or not (wp.get("a", {}).get("wet_n") or wp.get("b", {}).get("wet_n")):
+        return html.Div()
+    items = []
+    for drv, col, tag in ((a, ca, "a"), (b, cb, "b")):
+        d = wp.get(tag, {})
+        if not d or not np.isfinite(d.get("rain_delta", np.nan)):
+            items.append(html.Div([
+                html.Span(drv, style={"color": col, "fontWeight": "800"}),
+                html.Span("  not enough wet races in the archive.",
+                          style={"color": TEXT_DIM, "fontSize": "0.82rem"}),
+            ], style={"marginBottom": "8px"}))
+            continue
+        lbl = ("thrives in the rain" if d["rain_delta"] > 1.0 else
+               "suffers in the rain" if d["rain_delta"] < -1.0 else
+               "rain-neutral")
+        items.append(html.Div([
+            html.Span(drv, style={"color": col, "fontWeight": "800",
+                                  "fontSize": "0.95rem"}),
+            html.Span(f"  dry {d['dry_gain']:+.1f} → wet {d['wet_gain']:+.1f} "
+                      "positions gained per race  ",
+                      style={"color": TEXT_MAIN, "fontSize": "0.85rem"}),
+            html.Span(f"Δ{d['rain_delta']:+.1f} · {lbl}",
+                      style={"color": (_GREEN if d["rain_delta"] > 1.0 else
+                                       _RED if d["rain_delta"] < -1.0
+                                       else TEXT_DIM),
+                             "fontWeight": "700", "fontSize": "0.8rem"}),
+            html.Div(f"{d['wet_n']} wet · {d['dry_n']} dry classified races "
+                     "(2023 →)",
+                     style={"color": TEXT_DIM, "fontSize": "0.7rem",
+                            "marginBottom": "10px"}),
+        ]))
+    da = wp.get("a", {}).get("rain_delta", np.nan)
+    db_ = wp.get("b", {}).get("rain_delta", np.nan)
+    if np.isfinite(da) and np.isfinite(db_):
+        diff = da - db_
+        verdict = (f"Rain historically shifts this duel toward {a} by "
+                   f"{diff:+.1f} positions per race — pray for rain."
+                   if diff > 0.8 else
+                   f"Rain historically shifts this duel toward {b} "
+                   f"({diff:+.1f}) — hope it stays dry."
+                   if diff < -0.8 else
+                   "Rain is roughly neutral between these two.")
+        items.append(html.P(html.B(verdict),
+                            style={"color": TEXT_MAIN, "fontSize": "0.85rem",
+                                   "marginBottom": 0}))
+    return card("IF IT RAINS — THE EQUALIZER",
+        html.Div(items),
+        info="Positions gained grid → flag per classified race, split by the "
+             "measured per-race rain flag (race_stats.csv, 2023 →). The "
+             "wet-vs-dry delta reads each driver's racecraft when grip "
+             "disappears; retirements are excluded so crashes don't pollute "
+             "the skill read. Wet samples are small — treat ±1 position as "
+             "noise. No weather forecast is wired in: this is the "
+             "if-it-rains scenario, not a prediction.")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1124,7 +1334,7 @@ def render_duel(a, b):
     _safe_section("MISTAKE RADAR — WHERE THE ERROR COMES", _mistake_section,
                   ctx, a, b, ca, cb)
     _safe_section("STRATEGY PLAYBOOK", _strategy_section, ctx, res, a, b,
-                  ga, gb)
+                  ga, gb, pred)
     _safe_section("CHAOS CHANNELS — STARTS & RELIABILITY", _chaos_section,
                   ctx, a, b, ta, tb, ca, cb)
 

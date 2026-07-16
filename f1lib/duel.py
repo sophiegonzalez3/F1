@@ -371,6 +371,104 @@ def wet_profile(a: str, b: str) -> dict:
     return out
 
 
+_FORECAST_CACHE: dict = {}
+
+
+def rain_forecast(season: int, meeting: str) -> dict | None:
+    """Race-day precipitation probability for an UPCOMING event, from the
+    Open-Meteo forecast API at the circuit's coordinates (track_scene's
+    circuit table). Returns None for past events, events beyond the 16-day
+    forecast horizon, unknown circuits, or when offline — callers fall back
+    to the if-it-rains scenario framing. Memoized per process."""
+    key = (int(season), str(meeting))
+    if key in _FORECAST_CACHE:
+        return _FORECAST_CACHE[key]
+    out = None
+    try:
+        from f1lib.track_scene import _circuit_conf
+        conf = _circuit_conf(meeting)
+        if conf:
+            import fastf1
+            from f1lib.config import FASTF1_CACHE_DIR
+            fastf1.Cache.enable_cache(str(Path(FASTF1_CACHE_DIR)))
+            sched = fastf1.get_event_schedule(int(season),
+                                              include_testing=False)
+            row = sched[sched["EventName"].astype(str).str.strip()
+                        == str(meeting).strip()]
+            if not row.empty:
+                race_date = pd.to_datetime(row["EventDate"].iloc[0])
+                today = pd.Timestamp.now().normalize()
+                horizon = (race_date.normalize() - today).days
+                if 0 <= horizon <= 15:
+                    import requests
+                    lat, lon = conf["latlon"]
+                    day = race_date.strftime("%Y-%m-%d")
+                    r = requests.get(
+                        "https://api.open-meteo.com/v1/forecast",
+                        params={"latitude": lat, "longitude": lon,
+                                "daily": "precipitation_probability_max,"
+                                         "precipitation_sum",
+                                "start_date": day, "end_date": day,
+                                "timezone": "auto"},
+                        timeout=6)
+                    r.raise_for_status()
+                    daily = r.json().get("daily", {})
+                    probs = daily.get("precipitation_probability_max") or []
+                    sums = daily.get("precipitation_sum") or []
+                    if probs and probs[0] is not None:
+                        out = {"date": day,
+                               "p_rain": float(probs[0]) / 100.0,
+                               "precip_mm": float(sums[0])
+                               if sums and sums[0] is not None else np.nan}
+    except Exception as exc:
+        logger.info("rain forecast unavailable for %s %s: %s",
+                    season, meeting, exc)
+    _FORECAST_CACHE[key] = out
+    return out
+
+
+def corner_type_profile(a: str, b: str) -> pd.DataFrame:
+    """Mistake rates per corner TYPE (slow / medium / fast, from the cached
+    track-line speed at each corner) pooled across the whole archive — the
+    generalized read when one circuit's sample is thin, and a style
+    diagnostic: who errs where the car is slow vs where it's fast."""
+    from f1lib.mistakes import load_corner_fractions, load_track_line
+    d = load_mistakes(drivers=[a, b])
+    if d.empty:
+        return pd.DataFrame()
+
+    def _classify(ck: str) -> dict[str, str]:
+        # the archive circuit_key IS the slugified event name, so it doubles
+        # as the track-map lookup key
+        fracs = load_corner_fractions(ck)
+        line = load_track_line(ck)
+        if fracs.empty or line.empty or "Speed" not in line.columns:
+            return {}
+        lf = line["frac"].to_numpy(float)
+        ls = pd.to_numeric(line["Speed"], errors="coerce").to_numpy(float)
+        out = {}
+        for _, c in fracs.iterrows():
+            m = (lf >= c["frac"] - 0.02) & (lf <= c["frac"] + 0.02)
+            v = np.nanmin(ls[m]) if m.sum() >= 2 else np.nan
+            out[str(c["label"])] = ("slow" if v < 120 else
+                                    "medium" if v < 200 else "fast") \
+                if np.isfinite(v) else ""
+        return out
+
+    types = {ck: _classify(ck) for ck in d["circuit_key"].dropna().unique()}
+    d = d.copy()
+    d["ctype"] = [types.get(ck, {}).get(str(c), "")
+                  for ck, c in zip(d["circuit_key"], d["corner"])]
+    d = d[d["ctype"] != ""]
+    if d.empty:
+        return pd.DataFrame()
+    g = (d.groupby(["Driver_Short", "ctype"], as_index=False)
+         .agg(passes=("n_laps", "sum"), mistakes=("n_mistakes", "sum"),
+              time_lost=("time_lost_s", "sum")))
+    g["rate"] = 100 * g["mistakes"] / g["passes"].clip(lower=1)
+    return g
+
+
 # ─────────────────────────────────────────────────────────────
 # 4. Corner deltas & attack zones
 # ─────────────────────────────────────────────────────────────

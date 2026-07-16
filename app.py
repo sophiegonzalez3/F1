@@ -381,6 +381,11 @@ def render(tab, ss, sd, st):
     if tab == "tab-data":
         return _render_tab(tab, ss, sd, st)
     key = (tab, tuple(ss), tuple(sd), tuple(st), DATA_GENERATION)
+    if tab == "tab-quali":
+        # the 3D replay's default cars follow the last DUEL pair — a QUALI
+        # layout memoized under an older pair must not be served
+        import tabs.duel as _duel_mod
+        key = key + (_duel_mod.LAST_PAIR,)
     hit = key in _TAB_RENDER_MEMO
     if hit:
         _TAB_RENDER_MEMO.move_to_end(key)

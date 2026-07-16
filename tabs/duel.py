@@ -60,6 +60,10 @@ _FORECASTER: RaceForecaster | None = None
 _PRED_CACHE: dict = {}
 _BODY_CACHE: dict = {}
 
+# Last (attacker, target) rendered — the QUALI tab's 3D replay reads this to
+# open as the pair's ghost duel, and app.py keys its QUALI memo on it.
+LAST_PAIR: tuple[str, str] | None = None
+
 _GOLD = "#FFD700"
 _RED = "#E8002D"
 _GREEN = "#00C04B"
@@ -454,6 +458,31 @@ def _mistake_map_fig(line: pd.DataFrame, fracs: pd.DataFrame,
     return fig
 
 
+def _corner_type_fig(ct: pd.DataFrame, a: str, b: str,
+                     ca: str, cb: str) -> go.Figure:
+    order = ["slow", "medium", "fast"]
+    fig = go.Figure()
+    for drv, col in ((a, ca), (b, cb)):
+        g = ct[ct["Driver_Short"] == drv].set_index("ctype").reindex(order)
+        fig.add_trace(go.Bar(
+            x=[f"{o} corners" for o in order], y=g["rate"], name=drv,
+            marker_color=col,
+            text=[f"{v:.1f}" if np.isfinite(v) else "–" for v in g["rate"]],
+            textposition="outside", textfont=dict(size=10),
+            customdata=np.stack([g["mistakes"].fillna(0),
+                                 g["passes"].fillna(0)], axis=-1),
+            hovertemplate=(drv + " · %{x}<br>%{y:.1f} mistakes /100 passes"
+                           "<br>%{customdata[0]:.0f} events / "
+                           "%{customdata[1]:.0f} passes<extra></extra>")))
+    theme(fig, 320, "")
+    fig.update_layout(barmode="group",
+                      yaxis_title="micro-mistakes /100 corner passes",
+                      legend=dict(orientation="h", x=0, y=1.15,
+                                  bgcolor="rgba(0,0,0,0)"),
+                      margin=dict(l=50, r=10, t=10, b=30))
+    return fig
+
+
 def _lap1_fig(l1: dict, a: str, b: str, ca: str, cb: str) -> go.Figure:
     cats = ["career avg", "at this circuit"]
     va = [l1.get("a", {}).get("mean_gain", np.nan),
@@ -700,6 +729,13 @@ def _attack_section(ctx, a, b, ca, cb):
                  "time systematically comes from (slow/medium/fast corners), "
                  "the apex-speed style contrast, and the single biggest "
                  "weapon."),
+        html.P([html.B("👻 Watch it: "),
+                f"open the QUALI tab — the 3D replay now opens as the "
+                f"{a} vs {b} ghost duel (both best laps released together, "
+                f"camera following {a}), so every one of these deltas is "
+                "visible as a real gap on the real track."],
+               style={"color": TEXT_DIM, "fontSize": "0.8rem",
+                      "marginBottom": "4px"}),
     ])
 
 
@@ -779,6 +815,49 @@ def _mistake_section(ctx, a, b, ca, cb):
                         "circuit. Small samples — treat as a lean, not a "
                         "verdict."),
         ], className="mb-2"))
+
+    # archive-wide profile by corner type
+    try:
+        ct = duel.corner_type_profile(a, b)
+    except Exception as exc:
+        logger.warning("corner-type profile failed: %s", exc)
+        ct = pd.DataFrame()
+    if not ct.empty:
+        read = ""
+        try:
+            piv = ct.pivot(index="ctype", columns="Driver_Short",
+                           values="rate")
+            if a in piv.columns and b in piv.columns:
+                diff = (piv[b] - piv[a]).dropna()
+                if not diff.empty:
+                    worst = diff.idxmax()
+                    if diff[worst] > 0.3:
+                        read = (f"{b} is most error-prone relative to {a} in "
+                                f"{worst} corners (+{diff[worst]:.1f} "
+                                f"/100 passes) — the highest-percentage places "
+                                "to apply pressure, at any circuit.")
+                    elif diff.min() < -0.3:
+                        best = diff.idxmin()
+                        read = (f"{a} actually errs more than {b} in "
+                                f"{best} corners ({-diff[best]:.1f} "
+                                "/100 passes) — discipline there matters more "
+                                "than attack.")
+        except Exception:
+            pass
+        parts.append(card("ERROR PROFILE BY CORNER TYPE — ALL CIRCUITS",
+            html.Div([
+                dcc.Graph(figure=_corner_type_fig(ct, a, b, ca, cb),
+                          config=GFX),
+                html.P(read, style={"color": TEXT_MAIN, "fontSize": "0.85rem",
+                                    "marginBottom": 0}) if read else html.Div(),
+            ]),
+            info="The same micro-mistake detection pooled over the ENTIRE "
+                 "archive (every scanned circuit, 2023 →), with each corner "
+                 "classified slow (<120 km/h), medium (120–200) or fast "
+                 "(>200) from the cached track-line speed. Tens of thousands "
+                 "of corner passes per driver, so this is the statistically "
+                 "solid version of the single-circuit map — where each "
+                 "driver's errors structurally live."))
 
     # live weekend
     if not live.empty:
@@ -1126,15 +1205,30 @@ def _chaos_section(ctx, a, b, ta, tb, ca, cb):
                               "what the duel simulation uses as each car's "
                               "DNF probability."), md=6),
         ]),
-        _wet_card(a, b, ca, cb),
+        _wet_card(ctx, a, b, ca, cb),
     ])
 
 
-def _wet_card(a, b, ca, cb):
+def _wet_card(ctx, a, b, ca, cb):
     wp = duel.wet_profile(a, b)
     if not wp or not (wp.get("a", {}).get("wet_n") or wp.get("b", {}).get("wet_n")):
         return html.Div()
     items = []
+    fc = duel.rain_forecast(ctx["season"], ctx["event"])
+    if fc:
+        pr = fc["p_rain"]
+        items.append(html.Div([
+            html.Span("RACE-DAY FORECAST  ", style={
+                "color": TEXT_DIM, "fontSize": "0.68rem",
+                "letterSpacing": "2px"}),
+            html.Span(f"{pr*100:.0f}% precipitation probability",
+                      style={"color": ("#4FC3F7" if pr >= 0.4 else TEXT_MAIN),
+                             "fontWeight": "800", "fontSize": "0.95rem"}),
+            html.Span(f"  ·  {fc['precip_mm']:.1f} mm expected  ·  "
+                      f"{fc['date']} · Open-Meteo",
+                      style={"color": TEXT_DIM, "fontSize": "0.72rem"}),
+        ], style={"marginBottom": "12px", "paddingBottom": "10px",
+                  "borderBottom": f"1px solid {GRID_CLR}"}))
     for drv, col, tag in ((a, ca, "a"), (b, cb, "b")):
         d = wp.get(tag, {})
         if not d or not np.isfinite(d.get("rain_delta", np.nan)):
@@ -1184,8 +1278,10 @@ def _wet_card(a, b, ca, cb):
              "wet-vs-dry delta reads each driver's racecraft when grip "
              "disappears; retirements are excluded so crashes don't pollute "
              "the skill read. Wet samples are small — treat ±1 position as "
-             "noise. No weather forecast is wired in: this is the "
-             "if-it-rains scenario, not a prediction.")
+             "noise. When the loaded event's race is within the next 16 "
+             "days, the header shows the live Open-Meteo precipitation "
+             "forecast at the circuit; for past events this stays an "
+             "if-it-rains scenario.")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1253,6 +1349,9 @@ def render_duel(a, b):
     roster = _roster()
     if ctx is None or roster.empty:
         return dbc.Alert("No event loaded.", color="warning")
+
+    global LAST_PAIR
+    LAST_PAIR = (a, b)
 
     key = (a, b, state.DATA_GENERATION)
     if key in _BODY_CACHE:

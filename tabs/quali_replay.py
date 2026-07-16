@@ -239,6 +239,19 @@ def quali3d_card(season: int, meeting: str) -> html.Div:
     n_frames = int(payload["tMax"] / payload["dt"]) + 1 if loaded else 1
     opts = _driver_options(payload) if loaded else []
     default_shown = [o["value"] for o in opts[:3]]
+    default_focus = opts[0]["value"] if opts else None
+    # When a pair was picked in the DUEL tab, the replay opens as that ghost
+    # duel: just the two cars shown, camera following the attacker.
+    try:
+        from tabs.duel import LAST_PAIR
+        if LAST_PAIR:
+            have = {o["value"] for o in opts}
+            pair = [d for d in LAST_PAIR if d in have]
+            if len(pair) == 2:
+                default_shown = pair
+                default_focus = pair[0]
+    except Exception:
+        pass
 
     controls = html.Div([
         dbc.Button("▶ Play", id="q3d-play", size="sm", color="danger",
@@ -285,8 +298,7 @@ def quali3d_card(season: int, meeting: str) -> html.Div:
         html.Div([
             html.Span("FOLLOW", style=_LBL_STYLE),
             dcc.Dropdown(id="q3d-focus", multi=False, clearable=False,
-                         options=opts,
-                         value=(opts[0]["value"] if opts else None),
+                         options=opts, value=default_focus,
                          style={"minWidth": "170px", "fontSize": "0.78rem"}),
         ], style={"display": "flex", "alignItems": "center", "gap": "8px"}),
     ], style={"display": "flex", "alignItems": "center", "gap": "10px",

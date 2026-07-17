@@ -550,13 +550,24 @@ def load_sessions(
                          "track_status", "race_control", "results")
     }
 
+    skipped: list[str] = []
     for info in session_info_list:
-        result = load_session(
-            season       = str(info["SEASON"]),
-            meeting      = info["MEETING"],
-            session      = info["SESSION"],
-            force_reload = force_reload,
-        )
+        try:
+            result = load_session(
+                season       = str(info["SEASON"]),
+                meeting      = info["MEETING"],
+                session      = info["SESSION"],
+                force_reload = force_reload,
+            )
+        except Exception as exc:
+            # During a live weekend the schedule lists a session before FastF1
+            # has its data (Session.load partially fails, then .laps raises
+            # DataNotLoadedError). Skip the session instead of killing the app.
+            key = _session_key(str(info["SEASON"]), info["MEETING"], info["SESSION"])
+            logger.warning("  [skip] %s — session data not available (%s: %s)",
+                           key, type(exc).__name__, exc)
+            skipped.append(key)
+            continue
         source = "cache" if result["from_cache"] else "FastF1"
         logger.info("  [%s] %s", source, result["session_name"])
 
@@ -564,6 +575,10 @@ def load_sessions(
             df = result[key]
             if not df.empty:
                 buckets[key].append(df)
+
+    if skipped:
+        logger.warning("Skipped %d unavailable session(s): %s",
+                       len(skipped), ", ".join(skipped))
 
     return {
         key: pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()

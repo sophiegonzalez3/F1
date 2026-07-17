@@ -56,8 +56,10 @@ from f1lib.state import rebuild_state, SESSION_INFO_LIST
 state.register(globals())
 
 # ── Initial load (default sessions) ──────────────────────────
+# initial_load falls back to the previous completed event when the newest
+# one has no published data yet (live weekend) instead of crashing.
 print("Loading sessions (cache-first)…")
-rebuild_state(SESSION_INFO_LIST)
+state.initial_load()
 
 
 # ── Circuit characteristics reference table ───────────────────

@@ -25,7 +25,10 @@ from __future__ import annotations
 import logging
 
 from f1lib.config import CURRENT_SEASON
-from f1lib.data_loader import load_sessions, most_recent_event
+from f1lib.data_loader import (
+    load_sessions, most_recent_event,
+    get_available_sessions, sessions_for_meeting,
+)
 from f1lib.processing import (
     clean_and_enrich_laps, analyze_stints,
     identify_quali_sim_laps,
@@ -170,3 +173,51 @@ def rebuild_state(session_info_list: list[dict], force_reload: bool = False) -> 
         post_load_hook(list(session_info_list))
 
     return LAST_LOAD_MSG
+
+
+# ── Boot-time load with event fallback ───────────────────────
+
+def _recent_events(max_events: int = 4) -> list[tuple[int, str, list[dict]]]:
+    """(season, meeting, session_info_list) for the most recent events,
+    newest first, walking back through fallback seasons if needed."""
+    out: list[tuple[int, str, list[dict]]] = []
+    for season in (CURRENT_SEASON, CURRENT_SEASON - 1, CURRENT_SEASON - 2):
+        try:
+            avail = get_available_sessions(season)
+        except Exception as exc:
+            logger.warning("Schedule discovery failed for %s: %s", season, exc)
+            continue
+        for rnd in sorted({it["round"] for it in avail}, reverse=True):
+            meeting = next(it["meeting"] for it in avail if it["round"] == rnd)
+            out.append((season, meeting, sessions_for_meeting(season, meeting)))
+            if len(out) >= max_events:
+                return out
+    return out
+
+
+def initial_load() -> str:
+    """
+    Startup load. Tries SESSION_INFO_LIST (the newest event) first; if that
+    yields no lap data — typical on a live race weekend, where the schedule
+    already lists a session FastF1 has no data for yet — falls back to the
+    previous completed event instead of leaving the app empty.
+    """
+    msg = rebuild_state(SESSION_INFO_LIST)
+    if laps is not None:
+        return msg
+
+    logger.warning(
+        "Startup event has no loadable session data yet (live weekend?); "
+        "falling back to the previous completed event…")
+    for season, meeting, info in _recent_events():
+        if not info or info == SESSION_INFO_LIST:
+            continue
+        print(f"Fallback event: {meeting} {season} — {len(info)} session(s)",
+              flush=True)
+        msg = rebuild_state(info)
+        if laps is not None:
+            return msg
+
+    logger.warning("No event could be loaded at startup — dashboard starts "
+                   "without session data.")
+    return msg

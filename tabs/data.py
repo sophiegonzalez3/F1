@@ -599,8 +599,19 @@ def update_event_controls(season, meeting):
 
 
 # ── Load the selected event's sessions (rebuilds app state) ──
+# Shared by the DATA tab's Load button and the sidebar's — ctx.triggered_id
+# decides which picker pair supplies (season, meeting). The DATA-tab status
+# div only exists while that tab is rendered; writing to a missing component
+# is a no-op (suppress_callback_exceptions=True).
+def _side_status(text: str, ok: bool = True):
+    """Compact one-line status for the narrow sidebar panel."""
+    return html.Div(text, style={"color": "#00D2BE" if ok else "#FF8700",
+                                 "fontSize": "0.68rem"})
+
+
 @callback(
     Output("data-load-status",  "children"),
+    Output("side-load-status",  "children"),
     Output("session-filter",    "options"),
     Output("session-filter",    "value"),
     Output("team-filter",       "options"),
@@ -609,21 +620,37 @@ def update_event_controls(season, meeting):
     Output("driver-filter",     "value"),
     Output("main-subtitle",     "children"),
     Input("data-load-btn",      "n_clicks"),
+    Input("side-load-btn",      "n_clicks"),
     State("data-season-select", "value"),
     State("data-event-select",  "value"),
+    State("side-season-select", "value"),
+    State("side-event-select",  "value"),
     prevent_initial_call=True,
 )
-def load_selected(_n, season, meeting):
+def load_selected(_n, _n_side, season, meeting, side_season, side_meeting):
+    # The DATA-tab button (re)mounts every time that tab renders, and Dash
+    # fires callbacks for dynamically-added Inputs regardless of
+    # prevent_initial_call — which used to trigger a redundant full reload
+    # AND reset the driver/team filters to "all" on every DATA-tab visit.
+    # A real click always carries n_clicks >= 1.
+    trig = ctx.triggered_id
+    if not {"data-load-btn": _n, "side-load-btn": _n_side}.get(trig):
+        return tuple([no_update] * 9)
+    if trig == "side-load-btn":
+        season, meeting = side_season, side_meeting
+
     if not meeting:
         warn = dbc.Alert("Pick an event before loading.",
                          color="warning", style={"fontSize": "0.8rem"})
-        return (warn, *([no_update] * 7))
+        return (warn, _side_status("⚠️ pick an event first", ok=False),
+                *([no_update] * 7))
 
     info = sessions_for_meeting(int(season) if season else AVAILABLE_SEASON, meeting)
     if not info:
         warn = dbc.Alert("No sessions available for that event yet.",
                          color="warning", style={"fontSize": "0.8rem"})
-        return (warn, *([no_update] * 7))
+        return (warn, _side_status("⚠️ no sessions available yet", ok=False),
+                *([no_update] * 7))
 
     try:
         msg = rebuild_state(info)
@@ -636,20 +663,22 @@ def load_selected(_n, season, meeting):
                                 style={"fontSize": "0.68rem", "marginTop": "8px",
                                        "whiteSpace": "pre-wrap"})],
                       color="danger", style={"fontSize": "0.8rem"}),
+            _side_status(f"❌ load failed: {exc}", ok=False),
             *([no_update] * 7),
         )
 
     status = dbc.Alert(("✅ " if ok else "⚠️ ") + msg,
                        color="success" if ok else "warning",
                        style={"fontSize": "0.82rem"})
+    side = _side_status(("✅ " if ok else "⚠️ ") + f"{meeting} {season}", ok=ok)
     if not ok:
-        return (status, *([no_update] * 7))
+        return (status, side, *([no_update] * 7))
 
     sess_opts = [{"label": s, "value": s} for s in SESSIONS]
     team_opts = [{"label": t, "value": t} for t in TEAMS]
     drv_opts  = [{"label": d, "value": d} for d in DRIVERS]
     subtitle  = " | ".join(SESSIONS)
-    return (status,
+    return (status, side,
             sess_opts, SESSIONS,
             team_opts, TEAMS,
             drv_opts,  DRIVERS,

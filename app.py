@@ -4,7 +4,14 @@ Run:   python app.py
 Open:  http://127.0.0.1:8050
 """
 from __future__ import annotations
-import logging, warnings, re
+import logging, sys, warnings, re
+
+# Register this module under its import name immediately. The app runs as
+# `python app.py`, so this module is "__main__" — without the alias, the lazy
+# `import app` in f1lib/standings.py and tabs/telemetry.py RE-EXECUTES this
+# whole file (second Dash instance, second initial_load()) the first time it
+# runs, silently reloading the boot event over whatever the user had loaded.
+sys.modules.setdefault("app", sys.modules[__name__])
 # Silence the known-noisy categories from the pandas/fastf1 stack only.
 # Anything else (RuntimeWarning, SettingWithCopyWarning, …) should surface:
 # it usually points at a real bug rather than upstream churn.
@@ -159,8 +166,12 @@ from f1lib.figures import (
 )
 
 # ── App layout ───────────────────────────────────────────────
+# compress=True (flask-compress): tab-layout responses reach ~5 MB of raw
+# figure JSON — gzip/brotli cuts them ~10×, which is what remote users on the
+# Tailscale funnel actually feel.
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.CYBORG],
-                title="F1 Dashboard", suppress_callback_exceptions=True)
+                title="F1 Dashboard", suppress_callback_exceptions=True,
+                compress=True)
 
 # ── Serve cached team-radio mp3s (so html.Audio can play them) ──
 from flask import send_from_directory, abort
@@ -175,30 +186,9 @@ def _serve_radio(clip):
         abort(404)
     return send_from_directory(target.parent, target.name)
 
-SIDEBAR = dbc.Col([html.Div([
-    html.Img(src=app.get_asset_url("f1_logo.svg"),
-             style={"height":"34px","marginBottom":"18px"}),
-    html.Hr(style={"borderColor":GRID_CLR}),
-    html.P("TEAMS", style={"color":TEXT_DIM,"fontSize":"0.68rem","letterSpacing":"2px"}),
-    dcc.Dropdown(id="team-filter",
-        options=[{"label":t,"value":t} for t in TEAMS], value=TEAMS, multi=True,
-        style={"backgroundColor":"#111","fontSize":"0.78rem"}),
-    html.Hr(style={"borderColor":GRID_CLR}),
-    html.P("DRIVERS", style={"color":TEXT_DIM,"fontSize":"0.68rem","letterSpacing":"2px"}),
-    dcc.Dropdown(id="driver-filter",
-        options=[{"label":d,"value":d} for d in DRIVERS], value=DRIVERS, multi=True,
-        style={"backgroundColor":"#111","fontSize":"0.78rem"}),
-    html.Hr(style={"borderColor":GRID_CLR}),
-    # SESSIONS is the least-frequently changed filter, so it sits at the
-    # bottom of the panel below the teams/drivers selectors.
-    html.P("SESSIONS", style={"color":TEXT_DIM,"fontSize":"0.68rem","letterSpacing":"2px"}),
-    dcc.Checklist(id="session-filter",
-        options=[{"label":s,"value":s} for s in SESSIONS], value=SESSIONS,
-        inputStyle={"marginRight":"8px","accentColor":ACCENT},
-        labelStyle={"display":"block","marginBottom":"8px","fontSize":"0.78rem"}),
-], style={"padding":"16px","height":"100vh","overflowY":"auto",
-          "background":"#09091A","borderRight":f"1px solid {GRID_CLR}"})],
-width=2, style={"padding":"0"})
+# Sidebar (event picker + team/driver/session filters + quick-select buttons)
+# lives in tabs/sidebar.py; its callbacks register on import.
+from tabs.sidebar import build_sidebar
 
 TABS = dbc.Tabs([
     dbc.Tab(label="DATA",           tab_id="tab-data"),
@@ -214,7 +204,8 @@ TABS = dbc.Tabs([
 ], id="tabs", active_tab="tab-data",
    style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
 
-MAIN = dbc.Col([
+def _main_col() -> dbc.Col:
+    return dbc.Col([
     html.Div([
         html.H2("F1 SESSION ANALYSIS",
                 style={"color":ACCENT,"fontWeight":"900","letterSpacing":"3px","marginBottom":"4px","fontSize":"1.3rem"}),
@@ -233,15 +224,26 @@ MAIN = dbc.Col([
         ], style={"display":"flex","alignItems":"center"}),
     ], style={"display":"flex","justifyContent":"space-between",
               "alignItems":"flex-start"}),
-    html.P(" | ".join(SESSIONS), id="main-subtitle",
+    html.P(" | ".join(state.SESSIONS), id="main-subtitle",
            style={"color":TEXT_DIM,"marginBottom":"18px","fontSize":"0.78rem"}),
     TABS,
     dcc.Loading(html.Div(id="tab-content"), type="default",
                 color=ACCENT, delay_show=250),
 ], width=10, style={"padding":"24px","background":DARK_BG,"minHeight":"100vh"})
 
-app.layout = dbc.Container(dbc.Row([SIDEBAR,MAIN],className="g-0"),
-    fluid=True, style={"background":DARK_BG,"fontFamily":"Inter, sans-serif"})
+
+def _layout():
+    """Evaluated on every page load (Dash callable-layout), so the sidebar's
+    event picker / filter values and the subtitle always reflect the currently
+    loaded event — a static layout would show the boot event after a browser
+    refresh that follows a runtime event switch."""
+    return dbc.Container(
+        dbc.Row([build_sidebar(app.get_asset_url("f1_logo.svg")), _main_col()],
+                className="g-0"),
+        fluid=True, style={"background": DARK_BG, "fontFamily": "Inter, sans-serif"})
+
+
+app.layout = _layout
 
 # ── Routing callback ─────────────────────────────────────────
 # Tab layouts are memoized per (tab, filters, data generation): switching back
@@ -250,7 +252,69 @@ app.layout = dbc.Container(dbc.Row([SIDEBAR,MAIN],className="g-0"),
 # everything. tab-data is never memoized (it shows live load/cache status).
 from collections import OrderedDict as _OrderedDict
 _TAB_RENDER_MEMO: _OrderedDict = _OrderedDict()
-_TAB_MEMO_MAX = 12
+# Sized to hold one full prewarm sweep (9 tabs) plus a couple of
+# filter-variant leftovers before LRU eviction kicks in.
+_TAB_MEMO_MAX = 24
+
+
+def _memo_key(tab, ss, sd, st):
+    key = (tab, tuple(ss), tuple(sd), tuple(st), DATA_GENERATION)
+    if tab == "tab-quali":
+        # the 3D replay's default cars follow the last DUEL pair — a QUALI
+        # layout memoized under an older pair must not be served
+        import tabs.duel as _duel_mod
+        key = key + (_duel_mod.LAST_PAIR,)
+    return key
+
+
+# ── Background tab prewarm ───────────────────────────────────
+# First-visit builds measured at 0.7–4.3 s per tab (RACE 4.3 s, WEEK END
+# PRED 3.7 s, TELEMETRY 3.4 s). After every render (page open, data load,
+# filter change) a daemon thread quietly builds the not-yet-memoized tabs
+# for the current filters, so by the time the user clicks one it is served
+# from the memo. Heaviest tabs first; a newer schedule or a data reload
+# cancels the sweep (results from a stale world are dropped).
+_PREWARM_TABS = ("tab-race", "tab-weekend", "tab-laps", "tab-teams",
+                 "tab-season", "tab-stints", "tab-quali", "tab-track",
+                 "tab-duel")
+_prewarm_seq = 0
+
+
+def _schedule_tab_prewarm(ss, sd, st, skip=None, delay=0.75):
+    global _prewarm_seq
+    _prewarm_seq += 1
+    my_seq = _prewarm_seq
+    gen = state.DATA_GENERATION
+    ss, sd, st = list(ss), list(sd), list(st)
+
+    def _worker():
+        from time import sleep, perf_counter
+        sleep(delay)                       # let the interactive request finish
+        for tab in _PREWARM_TABS:
+            if my_seq != _prewarm_seq or gen != state.DATA_GENERATION:
+                return                     # superseded — stop the sweep
+            if tab == skip:
+                continue
+            key = _memo_key(tab, ss, sd, st)
+            if key in _TAB_RENDER_MEMO:
+                continue
+            t0 = perf_counter()
+            try:
+                out = _render_tab(tab, ss, sd, st)
+            except Exception as exc:
+                print(f"prewarm {tab}: failed ({exc})", flush=True)
+                continue
+            if gen != state.DATA_GENERATION:
+                return                     # data reloaded mid-build — drop it
+            _TAB_RENDER_MEMO[key] = out
+            while len(_TAB_RENDER_MEMO) > _TAB_MEMO_MAX:
+                _TAB_RENDER_MEMO.popitem(last=False)
+            print(f"prewarm {tab}: built in {(perf_counter()-t0)*1000:.0f} ms",
+                  flush=True)
+            sleep(0.1)                     # breathe between builds
+
+    import threading
+    threading.Thread(target=_worker, daemon=True, name="tab-prewarm").start()
 
 
 def _section_header(title, intro):
@@ -381,13 +445,10 @@ def render(tab, ss, sd, st):
     t0 = perf_counter()
     ss=ss or SESSIONS; sd=sd or DRIVERS; st=st or TEAMS
     if tab == "tab-data":
-        return _render_tab(tab, ss, sd, st)
-    key = (tab, tuple(ss), tuple(sd), tuple(st), DATA_GENERATION)
-    if tab == "tab-quali":
-        # the 3D replay's default cars follow the last DUEL pair — a QUALI
-        # layout memoized under an older pair must not be served
-        import tabs.duel as _duel_mod
-        key = key + (_duel_mod.LAST_PAIR,)
+        out = _render_tab(tab, ss, sd, st)
+        _schedule_tab_prewarm(ss, sd, st)
+        return out
+    key = _memo_key(tab, ss, sd, st)
     hit = key in _TAB_RENDER_MEMO
     if hit:
         _TAB_RENDER_MEMO.move_to_end(key)
@@ -399,6 +460,7 @@ def render(tab, ss, sd, st):
             _TAB_RENDER_MEMO.popitem(last=False)
     print(f"render {tab}: {'memo hit' if hit else 'built'} "
           f"in {(perf_counter()-t0)*1000:.0f} ms", flush=True)
+    _schedule_tab_prewarm(ss, sd, st, skip=tab)
     return out
 
 from tabs.overview import tab_overview

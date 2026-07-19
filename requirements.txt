@@ -3,6 +3,7 @@
 # KeyError on pandas 3.0. numpy is capped to its pandas-2.x-compatible line.
 dash>=2.17,<3
 dash-bootstrap-components>=1.6
+flask-compress>=1.15  # gzip/brotli for dash JSON responses (tab payloads reach 5 MB raw)
 plotly>=5.22
 pandas>=2.2,<3
 numpy>=1.26,<2.3

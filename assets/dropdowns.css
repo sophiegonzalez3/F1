@@ -21,3 +21,68 @@
 .Select--single .Select-arrow {
     border-top-color: #BBB;
 }
+
+/* ── Multi-select (sidebar TEAMS / DRIVERS filters) ──────────────────────
+   react-select's multi variant kept its light defaults (pale-blue chips,
+   dark type-to-search text, white menu) on the dark sidebar — the filters
+   looked broken and typing to search was near-invisible. Match the dark
+   single-select treatment. */
+.Select--multi .Select-control {
+    background-color: #111 !important;
+    border-color: #333 !important;
+    /* 20 driver chips would swallow the whole sidebar — scroll instead */
+    max-height: 132px;
+    overflow-y: auto;
+}
+
+.Select--multi .Select-value {
+    background-color: #1E1E32 !important;
+    border: 1px solid #3A3A55 !important;
+    color: #EDEDED !important;
+}
+
+.Select--multi .Select-value-label {
+    color: #EDEDED !important;
+}
+
+.Select--multi .Select-value-icon {
+    border-right: 1px solid #3A3A55 !important;
+    color: #BBB !important;
+}
+
+.Select--multi .Select-value-icon:hover,
+.Select--multi .Select-value-icon:focus {
+    background-color: #E10600 !important;
+    color: #FFF !important;
+}
+
+/* The text typed into any dropdown's search box. */
+.Select-input > input {
+    color: #EDEDED !important;
+}
+
+/* ── Options menu (all dropdowns): dark instead of stock white ─────────── */
+.Select-menu-outer {
+    background-color: #16162A !important;
+    border-color: #333 !important;
+}
+
+.Select-option {
+    background-color: #16162A !important;
+    color: #CFCFCF !important;
+}
+
+.Select-option.is-focused {
+    background-color: #2A2A44 !important;
+    color: #FFF !important;
+}
+
+.Select-option.is-selected {
+    background-color: #22223A !important;
+    color: #FFF !important;
+}
+
+.Select-noresults {
+    background-color: #16162A !important;
+    color: #8A8A8A !important;
+}

@@ -166,6 +166,23 @@ def _team_champ_rank() -> dict[str, int]:
     return rank
 
 
+def _season_team_tiers() -> dict[str, list[str]]:
+    """Split the loaded season's constructors into top / midfield / backfield
+    thirds by the SEASON-GLOBAL championship order (the latest round available
+    for that season, not the standings at the loaded event). Used by the
+    sidebar's team quick-select buttons. Empty dict if no standings exist."""
+    season, _, _ = _loaded_meeting_season_round()
+    pts = _standings_after_round(season, None)      # None → latest round
+    if not pts:
+        return {}
+    ordered = [t for t, _ in sorted(pts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    n = len(ordered)
+    n_edge = max(1, round(n / 3))                   # 10 teams → 3/4/3
+    return {"top":  ordered[:n_edge],
+            "mid":  ordered[n_edge:n - n_edge],
+            "back": ordered[n - n_edge:]}
+
+
 def _order_teams_by_champ(teams) -> list[str]:
     """Default ordering for team-categorical charts: by current championship
     standing (leader first), with any team not in the standings kept after the

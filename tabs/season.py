@@ -8,6 +8,9 @@ data/team_pace_by_event.csv (compute_team_pace.py); no session loads.
 """
 from __future__ import annotations
 
+import base64
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -16,7 +19,7 @@ import dash_bootstrap_components as dbc
 
 from f1lib.components import theme, card, GFX, abbr
 from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
-from tabs.pace_data import team_pace_df, seasons, event_short
+from tabs.pace_data import team_pace_df, seasons, event_short, season_calendar_df
 from tabs.regulations import regulations_block
 from tabs.finance import finance_block, compliance_card
 from tabs.hr import hr_section
@@ -122,6 +125,143 @@ def _character_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
     return fig
 
 
+# ── Season calendar ribbon ───────────────────────────────────
+_SPRINT_CLR = "#FFB300"          # gold — sprint weekends
+_COUNTRY_ISO2 = {
+    "Abu Dhabi": "AE", "United Arab Emirates": "AE", "Australia": "AU",
+    "Austria": "AT", "Azerbaijan": "AZ", "Bahrain": "BH", "Belgium": "BE",
+    "Brazil": "BR", "Canada": "CA", "China": "CN", "France": "FR",
+    "Germany": "DE", "Great Britain": "GB", "United Kingdom": "GB",
+    "Hungary": "HU", "Italy": "IT", "Japan": "JP", "Mexico": "MX",
+    "Monaco": "MC", "Netherlands": "NL", "Portugal": "PT", "Qatar": "QA",
+    "Russia": "RU", "Saudi Arabia": "SA", "Singapore": "SG", "Spain": "ES",
+    "Turkey": "TR", "United States": "US",
+}
+
+
+_FLAG_DIR = Path("assets/flags")
+_flag_uri_cache: dict[str, str | None] = {}
+
+
+def _flag_uri(country: str) -> str | None:
+    """data:-URI for a country's flag SVG (assets/flags/<iso2>.svg), so flags
+    render identically on every OS — Windows Chrome has no flag-emoji glyphs.
+    None when the country is unmapped or the asset is missing."""
+    iso = _COUNTRY_ISO2.get(str(country))
+    if not iso:
+        return None
+    iso = iso.lower()
+    if iso not in _flag_uri_cache:
+        p = _FLAG_DIR / f"{iso}.svg"
+        if p.exists():
+            b64 = base64.b64encode(p.read_bytes()).decode("ascii")
+            _flag_uri_cache[iso] = f"data:image/svg+xml;base64,{b64}"
+        else:
+            _flag_uri_cache[iso] = None
+    return _flag_uri_cache[iso]
+
+
+def _calendar_fig(cal: pd.DataFrame, height: int = 210) -> go.Figure:
+    """Horizontal Jan→Dec ribbon: one date-positioned marker per round.
+    Solid = already run, outline = upcoming; red = Grand Prix, gold = sprint;
+    a dotted line marks today. Detail lives in the hover card."""
+    cal = cal.copy()
+    cal["x"] = pd.to_datetime(cal["event_date"], errors="coerce")
+    cal = cal[cal["x"].notna()].sort_values("round")
+    fig = go.Figure()
+    if cal.empty:
+        theme(fig, height)
+        return fig
+
+    today = pd.Timestamp.now().normalize()
+    is_past = cal["x"] < today
+    is_sprint = cal["sprint"].astype(bool)
+    base = np.where(is_sprint, _SPRINT_CLR, ACCENT)
+
+    fill = np.where(is_past, base, "rgba(0,0,0,0)")
+    line_w = np.where(is_past, 1.0, 2.0)
+    fmt = np.where(is_sprint, "Sprint weekend", "Grand Prix")
+    pretty = cal["x"].dt.strftime("%a %d %b %Y")
+
+    customdata = np.stack([
+        cal["round"].astype(int), cal["event"].map(event_short),
+        cal["location"], cal["country"], pretty, fmt,
+    ], axis=-1)
+
+    fig.add_hline(y=0, line=dict(color=GRID_CLR, width=2))
+    fig.add_trace(go.Scatter(
+        x=cal["x"], y=np.zeros(len(cal)), mode="markers+text",
+        text=cal["round"].astype(int), textposition="middle center",
+        textfont=dict(size=10, color=TEXT_MAIN, family="Arial Black"),
+        marker=dict(size=24, color=fill, line=dict(color=base, width=line_w)),
+        customdata=customdata, showlegend=False,
+        hovertemplate=("<b>R%{customdata[0]} · %{customdata[1]} GP</b><br>"
+                       "%{customdata[2]}, %{customdata[3]}<br>"
+                       "%{customdata[4]}<br>%{customdata[5]}<extra></extra>"),
+    ))
+    # Real flag image above each round, short event name below. A wide box +
+    # sizing="contain" makes the flag height-limited, so every flag renders the
+    # same height regardless of the season's date span.
+    pad = pd.Timedelta(days=10)
+    span_ms = (cal["x"].max() - cal["x"].min() + 2 * pad).total_seconds() * 1000
+    for _, r in cal.iterrows():
+        xs = r["x"].isoformat()
+        uri = _flag_uri(r["country"])
+        if uri:
+            fig.add_layout_image(dict(
+                source=uri, xref="x", yref="y", x=xs, y=0.72,
+                sizex=span_ms * 0.035, sizey=0.42, xanchor="center",
+                yanchor="middle", sizing="contain", layer="above"))
+        fig.add_annotation(x=xs, y=0, yshift=-26, textangle=-45,
+                           text=event_short(r["event"]), showarrow=False,
+                           xanchor="right", font=dict(size=9, color=TEXT_DIM))
+
+    if cal["x"].min() <= today <= cal["x"].max():
+        fig.add_vline(x=today.isoformat(), line=dict(color=ACCENT, width=1.5,
+                      dash="dot"))
+        fig.add_annotation(x=today.isoformat(), y=1, yref="paper", yshift=6,
+                           text="TODAY", showarrow=False, xanchor="center",
+                           font=dict(size=9, color=ACCENT, family="Arial Black"))
+
+    # Legend key (marker-only dummy traces).
+    for name, clr, hollow in (("Grand Prix", ACCENT, False),
+                              ("Sprint", _SPRINT_CLR, False),
+                              ("Upcoming", TEXT_DIM, True)):
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers", name=name, hoverinfo="skip",
+            marker=dict(size=11, line=dict(color=clr, width=2),
+                        color="rgba(0,0,0,0)" if hollow else clr)))
+
+    theme(fig, height)
+    fig.update_xaxes(type="date", dtick="M1", tickformat="%b", title_text=None,
+                     showgrid=True, gridcolor=GRID_CLR,
+                     range=[(cal["x"].min() - pad).isoformat(),
+                            (cal["x"].max() + pad).isoformat()])
+    fig.update_yaxes(visible=False, range=[-1.3, 1.3], fixedrange=True)
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=40),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.0,
+                                  xanchor="right", x=1.0))
+    return fig
+
+
+def _calendar_ribbon(season: int):
+    cal = season_calendar_df()
+    cal = cal[cal["season"] == season] if not cal.empty else cal
+    if cal.empty:
+        return None
+    return card(
+        "Season Calendar",
+        dcc.Graph(figure=_calendar_fig(cal), config=GFX),
+        info=("Data: the full season schedule (round, circuit, date and "
+              "sprint/normal format) from data/season_calendar.csv "
+              "(scripts/fetch_calendar.py). Solid markers are rounds already "
+              "run, outlines are still to come; gold marks a sprint weekend "
+              "and the dotted line is today. Date-proportional spacing shows "
+              "the season's rhythm — back-to-back triple-headers cluster, the "
+              "summer break opens a gap. Hover a round for the detail."),
+    )
+
+
 def _season_content(season: int) -> html.Div:
     df = team_pace_df()
     s = df[df["season"] == season]
@@ -129,7 +269,8 @@ def _season_content(season: int) -> html.Div:
         return html.P("No pace data for this season — run compute_team_pace.py.",
                       style={"color": TEXT_DIM})
     n_race = s["race_pace_gap_pct"].notna().sum()
-    return html.Div([
+    ribbon = _calendar_ribbon(season)
+    return html.Div(([ribbon] if ribbon else []) + [
         card(
             "Qualifying Pace Gap by Round",
             dcc.Graph(figure=_trend_fig(

@@ -131,6 +131,13 @@ class PaceModel:
     def round_of(self, season: int, event: str) -> int | None:
         return self._round_of.get((int(season), str(event)))
 
+    def next_round_of(self, season: int) -> int:
+        """Round to assume for an event not yet in the pace table (its
+        qualifying results haven't reached the archive): one past the
+        season's newest round, so the prior draws on every round to date."""
+        r = self.pace[self.pace["season"] == season]["round"]
+        return int(r.max()) + 1 if len(r) else 1
+
     def teams_of_season(self, season: int) -> list[str]:
         return sorted(self.pace[self.pace["season"] == season]["team"].unique())
 
@@ -270,8 +277,12 @@ class PaceModel:
         """
         round_ = round_ if round_ is not None else self.round_of(season, event)
         if round_ is None:
-            raise ValueError(f"event not in pace table: {season} {event} — "
-                             "run compute_team_pace.py for that season")
+            # Mid-weekend of a new event: quali hasn't reached the results
+            # archive yet, so the pace table has no row for it. Treat it as
+            # the season's next round — the prior is unaffected (it only
+            # uses strictly-earlier rounds) and cached practice measurements
+            # update it as usual.
+            round_ = self.next_round_of(season)
         if measurements is None:
             measurements, _ = event_measurements(season, event)
 

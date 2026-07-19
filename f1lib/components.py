@@ -7,6 +7,8 @@ config.py, dash, and plotly — never on loaded session data.
 """
 from __future__ import annotations
 
+import uuid
+
 from dash import html, dash_table
 import dash_bootstrap_components as dbc
 
@@ -46,16 +48,27 @@ TABLE_STYLE = dict(
 
 # ── Building blocks ──────────────────────────────────────────
 
+def tip(children, text, placement="bottom", style=None):
+    """Hover tooltip that works in every browser. Native `title=` tooltips
+    are unreliable in Safari and never show on touch devices, so bind a
+    Bootstrap tooltip to a uniquely-id'd span instead.
+    Returns [span, dbc.Tooltip] — splice both into the parent's children."""
+    tid = f"tip-{uuid.uuid4().hex[:12]}"
+    return [
+        html.Span(children, id=tid, style=style),
+        dbc.Tooltip(text, target=tid, placement=placement,
+                    delay={"show": 150, "hide": 50}, class_name="app-tooltip"),
+    ]
+
+
 def card(title, children, info=None):
     """A titled card. Pass `info` to show a small ⓘ tooltip in the header
     explaining what data the graph uses and why it is relevant (hover to read)."""
     header = [html.Span(title, style={"fontWeight": "700", "letterSpacing": "1px", "fontSize": "0.85rem"})]
     if info:
-        header.append(html.Span(
-            " ⓘ", title=info,
-            style={"cursor": "help", "fontSize": "0.72rem", "opacity": "0.6",
-                   "userSelect": "none", "marginLeft": "6px"},
-        ))
+        header += tip(" ⓘ", info, style={
+            "cursor": "help", "fontSize": "0.72rem", "opacity": "0.6",
+            "userSelect": "none", "marginLeft": "6px"})
     return dbc.Card([
         dbc.CardHeader(header),
         dbc.CardBody(children),
@@ -64,13 +77,16 @@ def card(title, children, info=None):
 
 
 def kpi(label, value, color=ACCENT, tooltip=None):
-    label_content = [label, html.Span(
-        " ⓘ", title=tooltip,
-        style={"cursor": "help", "fontSize": "0.65rem", "opacity": "0.6", "userSelect": "none"}
-    )] if tooltip else [label]
+    label_content, tip_comp = [label], []
+    if tooltip:
+        icon, overlay = tip(" ⓘ", tooltip, style={
+            "cursor": "help", "fontSize": "0.65rem", "opacity": "0.6", "userSelect": "none"})
+        label_content.append(icon)
+        tip_comp = [overlay]  # overlay renders a div — keep it out of the <p>
     return dbc.Col(dbc.Card(dbc.CardBody([
         html.P(label_content, style={"color": TEXT_DIM, "fontSize": "0.72rem", "marginBottom": "4px", "letterSpacing": "1px"}),
         html.H4(value, style={"color": color, "fontWeight": "800", "marginBottom": 0}),
+        *tip_comp,
     ]), style={"background": CARD_BG, "border": f"1px solid {GRID_CLR}", "borderRadius": "8px"}),
     xs=6, md=3, className="mb-3")
 

@@ -119,10 +119,10 @@ sharpens as FP1 → FP2 → FP3 data comes in.
 
 4. **Rebuild the derived tables** (after the race is cached):
    ```bash
-   python scripts/compute_team_pace.py                 # data/team_pace_by_event.csv (SEASON tab + Upgrade Impact)
-   python scripts/compute_circuit_characteristics.py   # measured circuit scores (new circuit / fresh telemetry)
-   python -m f1lib.fetch_historical_results            # refresh results + championship standings archive
+   python scripts/after_race.py   # results archive → team pace → race stats → ATR → mistakes
    ```
+   (`scripts/compute_circuit_characteristics.py` stays separate — only needed
+   for a new circuit or fresh telemetry coverage.)
 
 5. **Pre-bake the Quali 3D replay** (optional — makes the QUALI 3D view load
    instantly for the new circuit):

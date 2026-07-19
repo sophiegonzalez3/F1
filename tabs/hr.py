@@ -274,6 +274,9 @@ def _sankey_fig(df: pd.DataFrame, include_rumored: bool) -> go.Figure:
     if not include_rumored:
         d = d[d["status"].str.casefold() != "rumored"]
     d = d[(d["from_team"] != "") & (d["to_team"] != "")]
+    # Internal promotions (same org on both ends) are not team-to-team flow —
+    # they live in their own bar chart below.
+    d = d[d["from_team"] != d["to_team"]]
 
     fig = go.Figure()
     if d.empty:
@@ -326,13 +329,16 @@ def _sankey_fig(df: pd.DataFrame, include_rumored: bool) -> go.Figure:
         ),
     ))
     n_nodes = max(len(left), len(right))
+    seasons = d["season"].dropna()
+    span = (f"{int(seasons.min())}–{int(seasons.max())}"
+            if not seasons.empty else "")
     fig.update_layout(
         paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
         font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=11),
         height=max(430, 34 * n_nodes + 120),
         margin=dict(l=10, r=10, t=54, b=20),
         title=dict(text="Where the people went — team-to-team staff flow "
-                        "(2024–2026)", font=dict(size=13)),
+                        f"({span})", font=dict(size=13)),
         annotations=[
             dict(x=0.02, y=1.06, xref="paper", yref="paper", showarrow=False,
                  text="◀ LOST FROM", font=dict(size=10, color=TEXT_DIM),
@@ -353,6 +359,7 @@ def _net_fig(df: pd.DataFrame, include_rumored: bool) -> go.Figure:
     if not include_rumored:
         d = d[d["status"].str.casefold() != "rumored"]
     d = d[(d["from_team"] != "") & (d["to_team"] != "")]
+    d = d[d["from_team"] != d["to_team"]]        # promotions aren't churn
     d["src"] = d["from_team"].map(_node_team)
     d["dst"] = d["to_team"].map(_node_team)
 
@@ -392,6 +399,55 @@ def _net_fig(df: pd.DataFrame, include_rumored: bool) -> go.Figure:
                      range=[-span - 1.2, span + 1.2], dtick=1, zeroline=False)
     fig.update_yaxes(title_text=None)
     fig.update_layout(margin=dict(l=118, r=24, t=50, b=44), showlegend=False,
+                      bargap=0.35)
+    return fig
+
+
+def _promotions_fig(df: pd.DataFrame, include_rumored: bool) -> go.Figure:
+    """Horizontal bar of INTERNAL promotions/appointments per team — rows where
+    from_team == to_team. These are excluded from the Sankey and net-balance
+    (they aren't churn) and counted here instead: a team backfilling from
+    within reads very differently from one hiring off the market. Non-team
+    orgs (FIA etc.) pool into 'Other' like everywhere else."""
+    d = df.copy()
+    if not include_rumored:
+        d = d[d["status"].str.casefold() != "rumored"]
+    d = d[(d["from_team"] != "") & (d["from_team"] == d["to_team"])]
+
+    fig = go.Figure()
+    if d.empty:
+        fig.update_layout(paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
+                          height=200, font=dict(color=TEXT_MAIN),
+                          annotations=[dict(text="No internal promotions for "
+                                            "this filter.", showarrow=False,
+                                            font=dict(color=TEXT_DIM))])
+        return fig
+
+    d["team"] = d["to_team"].map(_node_team)
+    g = (d.groupby("team")
+         .agg(n=("name", "size"),
+              names=("name", lambda s: ", ".join(sorted(s))))
+         .reset_index()
+         .sort_values("n", ascending=True))
+
+    labels = g["team"].tolist()
+    vals = g["n"].tolist()
+    fig.add_trace(go.Bar(
+        y=labels, x=vals, orientation="h",
+        marker=dict(color=[_node_color(t) for t in labels],
+                    line=dict(color="#000", width=0.5)),
+        customdata=g["names"].tolist(),
+        text=[str(v) for v in vals], textposition="outside",
+        textfont=dict(size=11),
+        hovertemplate=("<b>%{y}</b><br>%{x} internal promotion(s)<br>"
+                       "%{customdata}<extra></extra>"),
+    ))
+    theme(fig, max(260, 30 * len(labels) + 120),
+          "Internal promotions by team · backfilling from within")
+    fig.update_xaxes(title_text="People promoted / re-appointed internally",
+                     dtick=1, rangemode="tozero")
+    fig.update_yaxes(title_text=None)
+    fig.update_layout(margin=dict(l=118, r=40, t=50, b=44), showlegend=False,
                       bargap=0.35)
     return fig
 
@@ -552,20 +608,38 @@ def hr_section() -> html.Div:
               "Each person is one unit of flow from their origin team (left) to "
               "their destination team (right); bar thickness on the left = "
               "talent a team LOST, on the right = talent it GAINED, so you can "
-              "read momentum at a glance. Non-F1-team endpoints (departures, "
-              "the FIA, FOM, and any outside-industry / manufacturer / "
-              "retirement move) are pooled into one 'Other' node. Toggle "
-              "'Include rumored' to fold in unconfirmed moves (e.g. Horner → "
-              "Alpine)."),
+              "read momentum at a glance. Anything that is not a current F1 "
+              "team (departures, the FIA, FOM, sister divisions like AMPT or "
+              "RBAT, and outside-industry orgs) is pooled into one 'Other' "
+              "node. Internal promotions (same team on both ends) are NOT "
+              "drawn here — they have their own card below. Toggle 'Include "
+              "rumored' to fold in unconfirmed moves (e.g. Horner → Alpine)."),
     )
 
-    body = html.Div([intro, kpis, size_card, sankey_card, _moves_table(df)])
+    promo_card = card(
+        "Internal Promotions — backfilling from within",
+        dcc.Graph(id="hr-promotions", figure=_promotions_fig(df, False),
+                  config=GFX),
+        info=("Data: staff_moves.csv rows where origin and destination are the "
+              "same team — promotions and internal re-appointments (e.g. "
+              "Permane to Racing Bulls TP, Waterhouse's Red Bull remit, the "
+              "Alpine three-TD restructure). Why: under the budget cap a team "
+              "that promotes from within is making a different bet than one "
+              "buying on the transfer market — this chart shows who leans on "
+              "which approach. These rows are excluded from the Sankey and "
+              "net-balance above so they don't inflate a team's churn; "
+              "non-team orgs pool into 'Other'. Hover a bar for the names; "
+              "the rumored toggle above applies here too."),
+    )
+
+    body = html.Div([intro, kpis, size_card, sankey_card, promo_card,
+                     _moves_table(df)])
     return card(
         "Staff Movements — the budget-cap transfer market",
         body,
         info=("Data: data/staff_moves.csv, a curated list of senior technical "
-              "and management moves (not drivers) across 2024–2026, each with "
-              "a source link. Why: with spending frozen by the cap, recruiting "
+              "and management moves (not drivers) from 2024 onwards — "
+              "including announced future starts — each with a source link. Why: with spending frozen by the cap, recruiting "
               "the right technical leadership is one of the few remaining ways "
               "to buy pace — and gardening-leave clauses mean a signing today "
               "may not pay off for a year or two. The table is fully "
@@ -574,10 +648,11 @@ def hr_section() -> html.Div:
     )
 
 
-@callback([Output("hr-sankey", "figure"), Output("hr-net", "figure")],
+@callback([Output("hr-sankey", "figure"), Output("hr-net", "figure"),
+           Output("hr-promotions", "figure")],
           Input("hr-rumored-toggle", "value"),
           prevent_initial_call=True)
 def _update_hr_figs(include_rumored):
     df = moves_df()
     b = bool(include_rumored)
-    return _sankey_fig(df, b), _net_fig(df, b)
+    return _sankey_fig(df, b), _net_fig(df, b), _promotions_fig(df, b)

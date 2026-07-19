@@ -1,0 +1,38 @@
+/* Bootstrap tooltips replace native title= hovers: Safari shows title
+   tooltips late or not at all, and touch devices never show them.
+   Style the replacement for the app's dark theme and give the longer
+   info texts room to wrap. */
+.app-tooltip .tooltip-inner {
+    max-width: 380px;
+    text-align: left;
+    background-color: #1A1A2E;
+    color: #EDEDED;
+    border: 1px solid #2A2A3E;
+    font-size: 0.75rem;
+    line-height: 1.45;
+    padding: 8px 12px;
+    border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+}
+
+.app-tooltip.tooltip.show {
+    opacity: 1;
+}
+
+/* Match the arrow to the tooltip border for each placement. */
+.app-tooltip.bs-tooltip-top .tooltip-arrow::before,
+.app-tooltip[data-popper-placement^="top"] .tooltip-arrow::before {
+    border-top-color: #2A2A3E;
+}
+.app-tooltip.bs-tooltip-bottom .tooltip-arrow::before,
+.app-tooltip[data-popper-placement^="bottom"] .tooltip-arrow::before {
+    border-bottom-color: #2A2A3E;
+}
+.app-tooltip.bs-tooltip-start .tooltip-arrow::before,
+.app-tooltip[data-popper-placement^="left"] .tooltip-arrow::before {
+    border-left-color: #2A2A3E;
+}
+.app-tooltip.bs-tooltip-end .tooltip-arrow::before,
+.app-tooltip[data-popper-placement^="right"] .tooltip-arrow::before {
+    border-right-color: #2A2A3E;
+}

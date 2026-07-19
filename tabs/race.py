@@ -23,7 +23,7 @@ import dash_bootstrap_components as dbc
 
 import f1lib.state as state
 from f1lib.components import (
-    theme, card, kpi, GFX, TABLE_STYLE, styled_table,
+    theme, card, kpi, GFX, TABLE_STYLE, styled_table, tip,
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
 )
 from f1lib.config import (
@@ -1673,11 +1673,11 @@ def _team_radio_table(rdf: pd.DataFrame, selected_codes: list[str],
         clr = TEAM_COLORS.get(_code_team(r["Driver_Short"]), ACCENT)
         txt = (r.get(col) or "").strip() or "(no speech detected)"
         is_reviewed = bool(r.get("reviewed", False))
-        badge = html.Span("✓" if is_reviewed else "•",
-                          title=("Reviewed — transcript checked/corrected"
-                                 if is_reviewed else "Not yet reviewed (raw transcript)"),
-                          style={"color": ("#34D399" if is_reviewed else TEXT_DIM),
-                                 "fontWeight": "800", "cursor": "help"})
+        badge = tip("✓" if is_reviewed else "•",
+                    ("Reviewed — transcript checked/corrected"
+                     if is_reviewed else "Not yet reviewed (raw transcript)"),
+                    style={"color": ("#34D399" if is_reviewed else TEXT_DIM),
+                           "fontWeight": "800", "cursor": "help"})
         rows.append(html.Tr([
             html.Td(badge, style={"padding": "6px 4px 6px 10px", "textAlign": "center"}),
             html.Td(r["Clock"], style={"padding": "6px 10px", "color": TEXT_DIM,

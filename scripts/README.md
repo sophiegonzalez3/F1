@@ -37,6 +37,12 @@ Most take `--dry-run`/`--help`; check the script's own docstring for details.
 | `fetch_previous_races.py` | Backfills the **previous season's Race** for every cached meeting. Args: `--dry-run`, `--sessions "Race,Qualifying"`. | The RACE tab needs its season‑1 fallback (current year's race not run yet). |
 | `refetch_positions.py` | Re-fetches cached sessions so telemetry includes **X/Y track position**, rebuilding the parquet caches in place. Args: `--all`. | The racing-line / replay view is empty for older events (caches predate the X/Y merge). |
 
+## One-shot post-race refresh
+
+| Script | What it does | Run it when |
+|---|---|---|
+| `after_race.py` | Runs the whole post-race chain in order: `fetch_historical_results` → `compute_team_pace` → `compute_race_stats` → `compute_atr` → `compute_mistakes` (root). Stops on first failure. Args: `--skip-mistakes`. | After caching a new race via the Data tab. Radio review and quali-scene baking stay manual. |
+
 ## Compute derived data (writes CSVs the app reads)
 
 | Script | What it does | Run it when |

@@ -410,9 +410,9 @@ def tab_brief(sel_drivers=None, sel_teams=None):
               [["Driver_Short", "Team"]].drop_duplicates()
               .rename(columns={"Driver_Short": "driver", "Team": "team"})
               if state.laps is not None else pd.DataFrame())
-    round_ = _model().round_of(season, event)
+    round_ = _model().round_of(season, event) or _model().next_round_of(season)
     dpred = _model().driver_predictions(final, roster, "longrun",
-                                        as_of=(season, round_) if round_ else None)
+                                        as_of=(season, round_))
     if not dpred.empty:
         dprobs = _model().driver_outcome_probs(dpred)          # full field
         dprobs_show = _show_drivers(dprobs)
@@ -465,7 +465,7 @@ def tab_brief(sel_drivers=None, sel_teams=None):
     rf = _forecaster()
     if not dpred.empty and rf is not None:
         qpred = _model().driver_predictions(
-            final, roster, "onelap", as_of=(season, round_) if round_ else None)
+            final, roster, "onelap", as_of=(season, round_))
         # real grid once qualifying is loaded, else sample it from the one-lap
         # prediction (so the pre-quali forecast carries grid uncertainty)
         grid = None

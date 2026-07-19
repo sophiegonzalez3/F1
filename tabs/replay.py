@@ -612,18 +612,24 @@ def _radio_pip_children(payload: dict) -> list:
     """Clickable pips on the timeline, one per transcribed radio clip
     (assets/replay.js seeks to the clip's frame on click)."""
     n = max(payload["n"] - 1, 1)
-    return [
-        html.Span(
-            title=f"{r['code']}: {r['text'][:90]}",
+    out = []
+    for i, r in enumerate(payload.get("radio", [])):
+        pid = f"replay-radio-pip-{i}"
+        out.append(html.Span(
+            id=pid,
             style={"position": "absolute", "left": f"{r['f'] / n * 100:.2f}%",
                    "top": "2px", "width": "8px", "height": "8px",
                    "marginLeft": "-4px", "borderRadius": "50%",
                    "background": "#00D2BE", "opacity": "0.85",
                    "cursor": "pointer"},
             **{"data-frame": str(r["f"])},
-        )
-        for r in payload.get("radio", [])
-    ]
+        ))
+        out.append(dbc.Tooltip(
+            f"{r['code']}: {r['text'][:90]} — click to jump there",
+            target=pid, placement="top",
+            delay={"show": 150, "hide": 50}, class_name="app-tooltip",
+        ))
+    return out
 
 
 def _slider_marks(payload: dict) -> dict:
@@ -769,7 +775,6 @@ def replay_card(season: int, meeting: str, codes: list[str] | None = None) -> ht
         controls,
         html.Div(id="replay-radio-pips",
                  children=_radio_pip_children(fp) if loaded else [],
-                 title="team-radio clips — click to jump there",
                  style={"position": "relative", "height": "12px",
                         "margin": "6px 2px 0"}),
         dcc.Slider(id="replay-slider", min=0,

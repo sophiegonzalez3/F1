@@ -45,6 +45,7 @@ from f1lib.tyre_allocations import _allocation_chips, _laps_event
 from f1lib.data_loader import load_session, load_sessions, is_cached
 from f1lib.radio_loader import load_race_radio, race_radio_available, radio_cached
 from tabs.replay import replay_card
+from tabs.race3d import race3d_card
 from f1lib.pitstops_loader import load_pitstops
 from f1lib.standings import _order_by_champ, _order_teams_by_champ
 
@@ -2022,6 +2023,7 @@ def tab_race(sel_drivers=None, sel_teams=None):
         banner,
         replay_card(shown_year, meeting,
                     codes=sorted(rl["Driver_Short"].dropna().unique())),
+        race3d_card(shown_year, meeting),
         card(
             "Lap Time Evolution – All Laps (Race)",
             dcc.Graph(figure=evo_fig, config=GFX),

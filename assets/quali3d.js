@@ -1,14 +1,21 @@
-/* Quali 3D Replay — Three.js clientside implementation (see tabs/quali_replay.py).
+/* 3D Replay viewer — Three.js clientside implementation.
  *
- * The payload (georeferenced track scene + each driver's best-lap arrays at
- * 10 Hz) lives in the `q3d-data` dcc.Store. onData builds the WebGL scene in
- * #q3d-mount; a requestAnimationFrame loop renders at display rate and
- * interpolates between telemetry frames. The dcc.Interval only echoes the
- * playhead back to the slider. THREE is only referenced inside callbacks, so
- * asset load order doesn't matter.
+ * One factory (makeReplay3D) drives two cards from the same code:
+ *   • quali3d — each driver's best qualifying lap, ghost-synced at t=0
+ *     (see tabs/quali_replay.py, ids q3d-*)
+ *   • race3d  — the whole field on a shared race clock through lap 1
+ *     (see tabs/race3d.py, ids r3d-*)
+ *
+ * The payload (georeferenced track scene + per-driver arrays at 10 Hz) lives
+ * in the `<ID>-data` dcc.Store. onData builds the WebGL scene in #<ID>-mount;
+ * a requestAnimationFrame loop renders at display rate and interpolates
+ * between telemetry frames. The dcc.Interval only echoes the playhead back to
+ * the slider. THREE is only referenced inside callbacks, so asset load order
+ * doesn't matter.
  */
 
 (function () {
+  function makeReplay3D(ID, NS) {
   const Q = {
     data: null, t: 0, playing: false, speed: 1,
     camMode: "chase", focus: null, shown: [],
@@ -17,7 +24,7 @@
     orbit: { yaw: -0.7, pitch: 0.9, radius: 600 },
   };
   const nu = () => window.dash_clientside.no_update;
-  window.__q3d = Q;                       // debug handle (read-only use)
+  window["__" + ID] = Q;                  // debug handle (read-only use)
 
   /* ---------- helpers ---------- */
 
@@ -392,7 +399,7 @@
 
   function buildScene() {
     const THREE = window.THREE;
-    const mount = document.getElementById("q3d-mount");
+    const mount = document.getElementById(ID + "-mount");
     if (!mount || !Q.data) return false;
     disposeScene();
     mount.innerHTML = "";
@@ -482,16 +489,16 @@
       "font-family:Inter,sans-serif;color:#fff;text-shadow:0 1px 3px #000;";
     hud.innerHTML =
       '<div style="display:flex;align-items:baseline;gap:10px">' +
-      '<span id="q3d-hud-code" style="font-weight:800;font-size:1.05rem"></span>' +
-      '<span id="q3d-hud-spd" style="font-weight:800;font-size:1.9rem;' +
+      '<span id="' + ID + '-hud-code" style="font-weight:800;font-size:1.05rem"></span>' +
+      '<span id="' + ID + '-hud-spd" style="font-weight:800;font-size:1.9rem;' +
       'font-variant-numeric:tabular-nums"></span>' +
       '<span style="font-size:0.75rem;color:#aaa">km/h</span>' +
-      '<span id="q3d-hud-gear" style="font-weight:800;font-size:1.3rem;color:#9aa2ff"></span></div>' +
+      '<span id="' + ID + '-hud-gear" style="font-weight:800;font-size:1.3rem;color:#9aa2ff"></span></div>' +
       '<div style="width:170px;height:5px;background:#333;border-radius:3px;margin-top:5px">' +
-      '<div id="q3d-hud-thr" style="height:5px;background:#2ECC71;border-radius:3px;width:0%"></div></div>' +
+      '<div id="' + ID + '-hud-thr" style="height:5px;background:#2ECC71;border-radius:3px;width:0%"></div></div>' +
       '<div style="width:170px;height:5px;background:#333;border-radius:3px;margin-top:3px">' +
-      '<div id="q3d-hud-brk" style="height:5px;background:#E10600;border-radius:3px;width:0%"></div></div>' +
-      '<div id="q3d-hud-elev" style="font-size:0.7rem;color:#aaa;margin-top:4px"></div>';
+      '<div id="' + ID + '-hud-brk" style="height:5px;background:#E10600;border-radius:3px;width:0%"></div></div>' +
+      '<div id="' + ID + '-hud-elev" style="font-size:0.7rem;color:#aaa;margin-top:4px"></div>';
     mount.appendChild(hud);
 
     // orbit interaction: left-drag rotates, right- or shift-drag PANS the
@@ -578,19 +585,19 @@
   function updateHud(t) {
     const focus = Q.focus;
     const car = Q.three && Q.three.cars[focus];
-    const el = (id) => document.getElementById(id);
-    if (!car || !el("q3d-hud-spd")) return;
+    const el = (suffix) => document.getElementById(ID + suffix);
+    if (!car || !el("-hud-spd")) return;
     const d = car.d;
     const i = Math.min(d.spd.length - 1, Math.floor(t / Q.data.dt));
-    el("q3d-hud-code").textContent = d.code + " · " + d.lt;
-    el("q3d-hud-code").style.color = d.color;
-    el("q3d-hud-spd").textContent = d.spd[i];
-    el("q3d-hud-gear").textContent = "G" + d.gear[i];
-    el("q3d-hud-thr").style.width = d.thr[i] + "%";
-    el("q3d-hud-brk").style.width = (d.brk[i] ? 100 : 0) + "%";
+    el("-hud-code").textContent = d.code + " · " + d.lt;
+    el("-hud-code").style.color = d.color;
+    el("-hud-spd").textContent = d.spd[i];
+    el("-hud-gear").textContent = "G" + d.gear[i];
+    el("-hud-thr").style.width = d.thr[i] + "%";
+    el("-hud-brk").style.width = (d.brk[i] ? 100 : 0) + "%";
     const sc = Q.data.scene;
     const di = d.didx[i];
-    el("q3d-hud-elev").textContent =
+    el("-hud-elev").textContent =
       "elev +" + sc.z[2][di].toFixed(1) + " m · bank " +
       Math.abs(sc.bank[di]).toFixed(1) + "° · " +
       (sc.dist[di] / 1000).toFixed(2) + " km";
@@ -740,7 +747,7 @@
   /* ---------- dash clientside namespace ---------- */
 
   window.dash_clientside = Object.assign({}, window.dash_clientside, {
-    quali3d: {
+    [NS]: {
       onData: function (data, shown, focus, camMode) {
         Q.data = data || null;
         Q.t = 0; Q.playing = false; Q.lastTs = null;
@@ -795,4 +802,8 @@
       },
     },
   });
+  }
+
+  makeReplay3D("q3d", "quali3d");   // QUALI tab — best-lap ghosts
+  makeReplay3D("r3d", "race3d");    // RACE tab — lap 1, whole field
 })();

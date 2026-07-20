@@ -190,8 +190,16 @@ def _serve_radio(clip):
 # lives in tabs/sidebar.py; its callbacks register on import.
 from tabs.sidebar import build_sidebar
 
+# The main tab bar. "Optional / archived" tabs (currently only DATA QUALITY)
+# are kept out of the primary row: they are still real dbc.Tabs — so they can
+# be made active and rendered normally — but hidden from the bar with
+# display:none and surfaced instead through the "+" dropdown after the last tab.
+_ARCHIVED_TABS = [
+    ("tab-data", "DATA QUALITY"),
+]
+_ARCHIVED_IDS = {tid for tid, _ in _ARCHIVED_TABS}
+
 TABS = dbc.Tabs([
-    dbc.Tab(label="DATA",           tab_id="tab-data"),
     dbc.Tab(label="SEASON",         tab_id="tab-season"),
     dbc.Tab(label="TRACK",          tab_id="tab-track"),
     dbc.Tab(label="WEEK END PRED",  tab_id="tab-weekend"),
@@ -201,8 +209,31 @@ TABS = dbc.Tabs([
     dbc.Tab(label="RACE",           tab_id="tab-race"),
     dbc.Tab(label="DUEL",           tab_id="tab-duel"),
     dbc.Tab(label="TEAM & TEAMATE", tab_id="tab-teams"),
-], id="tabs", active_tab="tab-data",
-   style={"borderBottom":f"2px solid {ACCENT}","marginBottom":"16px"})
+    # Archived tabs live in the bar but are hidden; the "+" menu selects them.
+    *[dbc.Tab(label=lbl, tab_id=tid, tab_style={"display": "none"})
+      for tid, lbl in _ARCHIVED_TABS],
+], id="tabs", active_tab="tab-season")
+
+# "+" dropdown holding the optional / archived tabs, pinned after the last tab.
+_MORE_MENU = dbc.DropdownMenu(
+    label="+",
+    id="more-tabs-menu",
+    nav=False, in_navbar=False, right=True,
+    toggle_style={"color": TEXT_DIM, "background": "transparent",
+                  "border": "none", "fontSize": "1.2rem", "fontWeight": "700",
+                  "padding": "2px 12px", "lineHeight": "1"},
+    children=[
+        dbc.DropdownMenuItem("OPTIONAL / ARCHIVED", header=True),
+        *[dbc.DropdownMenuItem(lbl, id={"type": "more-tab", "tab": tid},
+                               n_clicks=0)
+          for tid, lbl in _ARCHIVED_TABS],
+    ],
+)
+
+_TAB_BAR = html.Div(
+    [html.Div(TABS, style={"flex": "1", "minWidth": "0"}), _MORE_MENU],
+    style={"display": "flex", "alignItems": "flex-end",
+           "borderBottom": f"2px solid {ACCENT}", "marginBottom": "16px"})
 
 def _main_col() -> dbc.Col:
     return dbc.Col([
@@ -226,7 +257,7 @@ def _main_col() -> dbc.Col:
               "alignItems":"flex-start"}),
     html.P(" | ".join(state.SESSIONS), id="main-subtitle",
            style={"color":TEXT_DIM,"marginBottom":"18px","fontSize":"0.78rem"}),
-    TABS,
+    _TAB_BAR,
     dcc.Loading(html.Div(id="tab-content"), type="default",
                 color=ACCENT, delay_show=250),
 ], width=10, style={"padding":"24px","background":DARK_BG,"minHeight":"100vh"})
@@ -433,6 +464,17 @@ def _render_tab(tab, ss, sd, st):
             upgrades=upgrade_impact_section(),
         )
     return html.P("Select a tab.")
+
+
+@app.callback(Output("tabs", "active_tab"),
+              Input({"type": "more-tab", "tab": ALL}, "n_clicks"),
+              prevent_initial_call=True)
+def _select_archived_tab(_clicks):
+    """Clicking an item in the '+' menu activates that hidden/archived tab."""
+    trig = ctx.triggered_id
+    if not trig or not any(_clicks):
+        return no_update
+    return trig["tab"]
 
 
 @app.callback(Output("tab-content","children"),

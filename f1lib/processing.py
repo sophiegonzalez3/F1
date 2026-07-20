@@ -971,8 +971,10 @@ def detect_stint_cliffs(
 
 def compound_offsets(
     laps: pd.DataFrame,
-    max_age: int = 10,
-    min_laps_per_side: int = 3,
+    ref_age: int = 5,
+    min_stint_laps: int = 4,
+    max_start_age: int = 8,
+    min_drivers: int = 3,
 ) -> pd.DataFrame:
     """
     Estimate the pace offset between tyre compounds from RACE/Sprint laps.
@@ -982,10 +984,26 @@ def compound_offsets(
     excluded on purpose — fuel loads there are unknown and differ by run
     programme, which would contaminate the offsets.)
 
-    Method: within each driver, take the trimmed median of corrected lap
-    times on each compound at tyre age ≤ max_age; difference the compounds
-    within the driver (cancels car+driver pace); aggregate the per-driver
-    differences across the field (median + IQR).
+    Method — a *per-stint fresh-pace* estimate rather than raw low-age laps.
+    The old approach compared each driver's clean laps at tyre age ≤ N, but in
+    modern long-stint races the low-age laps happen right after a stop or at
+    the start, i.e. exactly when the car sits in traffic (dirty air) — so
+    after the perturbed/dirty-air filters almost every driver was left with
+    only one usable compound and the card came up empty. Instead:
+
+      1. For every race stint (≥ min_stint_laps laps, started on a roughly
+         fresh set so we're not back-extrapolating a scrubbed tyre), fit a
+         line to corrected lap time vs tyre age and read off the fitted pace
+         at a common low reference age (ref_age). Clean (non-dirty-air) laps
+         are preferred; a stint falls back to all its valid laps only when it
+         has too few clean ones, so the softer opening stints run in start
+         traffic still contribute.
+      2. Per driver × compound, take the median stint pace (cancels stint
+         count); difference the compounds within each driver (cancels car +
+         driver speed); aggregate across the field (median + IQR).
+
+    Fitting the whole stint and evaluating at a shared age both uses far more
+    laps and puts every compound on an equal tyre-age footing.
 
     Returns one row per compound pair:
     Pair ("SOFT → MEDIUM"), Offset_s (median; positive = second compound
@@ -1003,30 +1021,55 @@ def compound_offsets(
     ].copy()
     if "Perturbed_Lap" in pool.columns:
         pool = pool[~pool["Perturbed_Lap"]]
-    if "Dirty_Air" in pool.columns:
-        pool = pool[~pool["Dirty_Air"]]
-    pool = pool[pd.to_numeric(pool[_age], errors="coerce") <= max_age]
+    pool["_age"] = pd.to_numeric(pool[_age], errors="coerce")
+    pool = pool[pool["_age"].notna()]
     if pool.empty:
         return pd.DataFrame()
+    _has_dirty = "Dirty_Air" in pool.columns
 
+    # ── 1. One fresh-pace estimate per stint (fit → evaluate at ref_age) ──
+    stint_rows = []
+    for (drv_short, _sess, _stint), g in pool.groupby(
+        ["Driver_Short", "session_name", "Stint"]
+    ):
+        g_clean = g[~g["Dirty_Air"]] if _has_dirty else g
+        used = g_clean if len(g_clean) >= min_stint_laps else g
+        if len(used) < min_stint_laps:
+            continue
+        # only fresh(-ish) sets, so ref_age is inside/near the observed range
+        if used["_age"].min() > max_start_age:
+            continue
+        x = used["_age"].to_numpy(dtype=float)
+        y = used[_y].to_numpy(dtype=float)
+        if np.ptp(x) < 2:                       # need spread to fit a slope
+            continue
+        slope, intercept = np.polyfit(x, y, 1)
+        stint_rows.append(dict(
+            Driver_Short=drv_short,
+            Compound=g["Compound"].iloc[0],
+            Pace=intercept + slope * ref_age,
+        ))
+    if not stint_rows:
+        return pd.DataFrame()
+    stint_df = pd.DataFrame(stint_rows)
+
+    # ── 2. Per driver × compound median, then per-driver compound diffs ──
     per_dc = (
-        pool.groupby(["Driver_Short", "Compound"])[_y]
-        .agg(rep=_trimmed_median, n="size")
+        stint_df.groupby(["Driver_Short", "Compound"])["Pace"]
+        .median()
         .reset_index()
     )
-    per_dc = per_dc[per_dc["n"] >= min_laps_per_side]
 
     order = ["SOFT", "MEDIUM", "HARD", "INTER", "WET"]
     comps = [c for c in order if c in per_dc["Compound"].unique()]
+    wide  = per_dc.pivot(index="Driver_Short", columns="Compound", values="Pace")
     rows = []
     for i, c1 in enumerate(comps):
         for c2 in comps[i + 1:]:
-            wide = per_dc.pivot(index="Driver_Short", columns="Compound",
-                                values="rep")
             if c1 not in wide.columns or c2 not in wide.columns:
                 continue
             diff = (wide[c2] - wide[c1]).dropna()
-            if len(diff) < 3:
+            if len(diff) < min_drivers:
                 continue
             rows.append(dict(
                 Pair=f"{c1} → {c2}",

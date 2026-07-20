@@ -609,77 +609,107 @@ def _side_status(text: str, ok: bool = True):
                                  "fontSize": "0.68rem"})
 
 
-@callback(
-    Output("data-load-status",  "children"),
-    Output("side-load-status",  "children"),
-    Output("session-filter",    "options"),
-    Output("session-filter",    "value"),
-    Output("team-filter",       "options"),
-    Output("team-filter",       "value"),
-    Output("driver-filter",     "options"),
-    Output("driver-filter",     "value"),
-    Output("main-subtitle",     "children"),
-    Input("data-load-btn",      "n_clicks"),
-    Input("side-load-btn",      "n_clicks"),
-    State("data-season-select", "value"),
-    State("data-event-select",  "value"),
-    State("side-season-select", "value"),
-    State("side-event-select",  "value"),
-    prevent_initial_call=True,
-)
-def load_selected(_n, _n_side, season, meeting, side_season, side_meeting):
-    # The DATA-tab button (re)mounts every time that tab renders, and Dash
-    # fires callbacks for dynamically-added Inputs regardless of
-    # prevent_initial_call — which used to trigger a redundant full reload
-    # AND reset the driver/team filters to "all" on every DATA-tab visit.
-    # A real click always carries n_clicks >= 1.
-    trig = ctx.triggered_id
-    if not {"data-load-btn": _n, "side-load-btn": _n_side}.get(trig):
-        return tuple([no_update] * 9)
-    if trig == "side-load-btn":
-        season, meeting = side_season, side_meeting
+# The DATA-tab controls (data-load-btn / data-load-status / data-season-select
+# / data-event-select) only exist in the layout while the archived DATA QUALITY
+# tab is open. A single shared callback that lists them as Input/State/Output is
+# rejected wholesale by Dash whenever that tab is closed ("a nonexistent object
+# was used in an Input") — which silently broke the sidebar's Load button once
+# DATA stopped being the boot tab. So the two Load buttons drive two separate
+# callbacks over the same _run_load() core; the sidebar one references only the
+# always-present sidebar components.
+def _run_load(season, meeting):
+    """Load an event's sessions and rebuild app state.
 
+    Returns (status_alert, side_children, filters) where filters is either
+    None (nothing to apply) or the 7-tuple of session/team/driver options+values
+    plus the page subtitle. Both Load callbacks share this core.
+    """
     if not meeting:
         warn = dbc.Alert("Pick an event before loading.",
                          color="warning", style={"fontSize": "0.8rem"})
-        return (warn, _side_status("⚠️ pick an event first", ok=False),
-                *([no_update] * 7))
+        return warn, _side_status("⚠️ pick an event first", ok=False), None
 
     info = sessions_for_meeting(int(season) if season else AVAILABLE_SEASON, meeting)
     if not info:
         warn = dbc.Alert("No sessions available for that event yet.",
                          color="warning", style={"fontSize": "0.8rem"})
-        return (warn, _side_status("⚠️ no sessions available yet", ok=False),
-                *([no_update] * 7))
+        return warn, _side_status("⚠️ no sessions available yet", ok=False), None
 
     try:
         msg = rebuild_state(info)
         ok  = msg.startswith("Loaded")
     except Exception as exc:
         import traceback
-        return (
-            dbc.Alert([html.B("Load failed: "), str(exc),
-                       html.Pre(traceback.format_exc(),
-                                style={"fontSize": "0.68rem", "marginTop": "8px",
-                                       "whiteSpace": "pre-wrap"})],
-                      color="danger", style={"fontSize": "0.8rem"}),
-            _side_status(f"❌ load failed: {exc}", ok=False),
-            *([no_update] * 7),
-        )
+        alert = dbc.Alert([html.B("Load failed: "), str(exc),
+                           html.Pre(traceback.format_exc(),
+                                    style={"fontSize": "0.68rem", "marginTop": "8px",
+                                           "whiteSpace": "pre-wrap"})],
+                          color="danger", style={"fontSize": "0.8rem"})
+        return alert, _side_status(f"❌ load failed: {exc}", ok=False), None
 
     status = dbc.Alert(("✅ " if ok else "⚠️ ") + msg,
                        color="success" if ok else "warning",
                        style={"fontSize": "0.82rem"})
     side = _side_status(("✅ " if ok else "⚠️ ") + f"{meeting} {season}", ok=ok)
     if not ok:
-        return (status, side, *([no_update] * 7))
+        return status, side, None
 
-    sess_opts = [{"label": s, "value": s} for s in SESSIONS]
-    team_opts = [{"label": t, "value": t} for t in TEAMS]
-    drv_opts  = [{"label": d, "value": d} for d in DRIVERS]
-    subtitle  = " | ".join(SESSIONS)
-    return (status, side,
-            sess_opts, SESSIONS,
-            team_opts, TEAMS,
-            drv_opts,  DRIVERS,
-            subtitle)
+    filters = (
+        [{"label": s, "value": s} for s in SESSIONS], list(SESSIONS),
+        [{"label": t, "value": t} for t in TEAMS],    list(TEAMS),
+        [{"label": d, "value": d} for d in DRIVERS],  list(DRIVERS),
+        " | ".join(SESSIONS),
+    )
+    return status, side, filters
+
+
+# ── Sidebar Load button — references only always-present components ──
+@callback(
+    Output("side-load-status", "children"),
+    Output("session-filter",   "options"),
+    Output("session-filter",   "value"),
+    Output("team-filter",      "options"),
+    Output("team-filter",      "value"),
+    Output("driver-filter",    "options"),
+    Output("driver-filter",    "value"),
+    Output("main-subtitle",    "children"),
+    Input("side-load-btn",      "n_clicks"),
+    State("side-season-select", "value"),
+    State("side-event-select",  "value"),
+    prevent_initial_call=True,
+)
+def load_selected_side(n_side, season, meeting):
+    if not n_side:                       # remount / spurious fire, never a click
+        return tuple([no_update] * 8)
+    _status, side, filters = _run_load(season, meeting)
+    if filters is None:
+        return (side, *([no_update] * 7))
+    return (side, *filters)
+
+
+# ── DATA-tab Load button — adds the tab's own inline status output ──
+@callback(
+    Output("data-load-status", "children"),
+    Output("side-load-status", "children", allow_duplicate=True),
+    Output("session-filter",   "options", allow_duplicate=True),
+    Output("session-filter",   "value",   allow_duplicate=True),
+    Output("team-filter",      "options", allow_duplicate=True),
+    Output("team-filter",      "value",   allow_duplicate=True),
+    Output("driver-filter",    "options", allow_duplicate=True),
+    Output("driver-filter",    "value",   allow_duplicate=True),
+    Output("main-subtitle",    "children", allow_duplicate=True),
+    Input("data-load-btn",      "n_clicks"),
+    State("data-season-select", "value"),
+    State("data-event-select",  "value"),
+    prevent_initial_call=True,
+)
+def load_selected_data(n_data, season, meeting):
+    # The DATA-tab button remounts every time that tab renders, and Dash fires
+    # callbacks for dynamically-added Inputs regardless of prevent_initial_call.
+    # A real click always carries n_clicks >= 1.
+    if not n_data:
+        return tuple([no_update] * 9)
+    status, side, filters = _run_load(season, meeting)
+    if filters is None:
+        return (status, side, *([no_update] * 7))
+    return (status, side, *filters)

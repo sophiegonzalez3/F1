@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from dash import html, dcc, dash_table, callback, Input, Output, State
 import dash_bootstrap_components as dbc
 
@@ -24,12 +25,18 @@ from f1lib.config import (
 from f1lib.processing import (
     field_deg_curves, detect_stint_cliffs, compound_offsets, format_lap_time,
 )
-from f1lib.figures import _add_flag_bands, _add_rain_bands, _lap_evolution_fig, _tyre_history_chart
+from f1lib.figures import _add_flag_bands, _add_rain_bands, _lap_evolution_fig
 from f1lib.tyre_allocations import _allocation_chips, _laps_event
 
 # mirror the mutable data state so bare `laps`, `stints`, SESSIONS, DRIVERS,
 # TEAMS, COMPOUNDS reads inside the moved bodies keep working across reloads
 state.register(globals())
+
+# Max slope standard error (s/lap) for a per-stint degradation-rate fit to be
+# trusted on the Degradation Rate bars. Above this the fit is noise — a real
+# deg slope is pinned down far more tightly — so it is dropped rather than
+# plotted as a physically implausible outlier that blows the axis wide open.
+MAX_DEG_SE = 0.5
 
 # ── Stints – Lap Evolution graph callback ────────────────────
 @callback(
@@ -138,6 +145,18 @@ def update_stint_key_options(driver, ss, st):
 
     first_val = opts[0]["value"] if opts else None
     return opts, first_val
+
+
+# ── Field Degradation Curves — full-screen modal toggle ──────
+@callback(
+    Output("field-curves-modal", "is_open"),
+    Input("field-curves-enlarge", "n_clicks"),
+    Input("field-curves-close",   "n_clicks"),
+    State("field-curves-modal",   "is_open"),
+    prevent_initial_call=True,
+)
+def toggle_field_curves_modal(_open_click, _close_click, is_open):
+    return not is_open
 
 
 @callback(
@@ -314,27 +333,21 @@ def tab_stints(fl, fs):
                   "showing both typical pace (the body) and consistency (the spread)."),
         ))
 
-    # 3. Tyre Degradation – per compound:
-    #    (a) Ranked horizontal bar: Stint_Deg_Rate from each driver's LONGEST
-    #        valid stint (ties → lowest slope standard error). Selecting by
-    #        best R² — the previous approach — is biased: R² scales with
-    #        |slope|, so it systematically picked each driver's most-degrading
-    #        stint and hid flat (well-managed) ones. Error bars show ±1.96×SE.
-    #        Source: analyze_stints(), fuel- AND track-evolution-corrected.
-    #    (b) Normalised evolution: track-corrected lap-time delta from a
-    #        baseline of the stint's first 3 clean laps (median — a single
-    #        lap-1 baseline is the noisiest lap of the stint), using the
-    #        LONGEST valid non-perturbed stint per driver × compound.
-    deg_cards = []
+    # 3. Tyre Degradation — the per-compound charts are collected here and then
+    #    laid out three-across in a handful of merged cards (one row of SOFT /
+    #    MEDIUM / HARD per view) rather than a separate card per compound:
+    #       • deg_bar_figs   – per-driver degradation RATE (longest valid stint,
+    #                          fuel- & track-corrected, ±95% CI whiskers)
+    #       • field_cur_data – pooled field degradation curve inputs
+    #       • field_dev_figs – per-driver deg vs the field curve
     valid_stints = fs[fs["Valid_Stint"]].copy() if not fs.empty else pd.DataFrame()
 
-    # Build a clean laps pool: ValidLap AND not Perturbed_Lap (if column exists)
-    _perturb_mask = fl["Perturbed_Lap"] if "Perturbed_Lap" in fl.columns else pd.Series(False, index=fl.index)
-    clean_laps = fl[fl["ValidLap"] & ~_perturb_mask].copy()
-
-    # Cliff detection across all compounds (markers on the evolution charts
-    # below + the dedicated Cliff Map card after the per-compound cards)
+    # Cliff detection across all compounds (feeds the dedicated Cliff card).
     cliffs_df = detect_stint_cliffs(fl)
+
+    deg_bar_figs:   dict[str, go.Figure] = {}
+    field_cur_data: dict[str, dict]      = {}
+    field_dev_figs: dict[str, go.Figure] = {}
 
     for compound in COMPOUNDS:
         comp_stints = (
@@ -361,12 +374,21 @@ def tab_stints(fl, fs):
                 .drop(columns=["_se"])
             )
             df_deg = df_deg[df_deg["Stint_Deg_Rate"].notna()].copy()
+            # Drop fits too imprecise to plot: short/noisy stints produce
+            # slope estimates with a huge standard error (e.g. SE 1–6 s/lap)
+            # and physically implausible rates (−3.7 or +2.3 s/lap) that are
+            # indistinguishable from noise and stretch the axis so the real,
+            # tightly-fitted bars become unreadable. A real deg slope is
+            # pinned down far better than this. NaN SE (can't judge) is kept.
+            if "Stint_Deg_SE" in df_deg.columns:
+                _se = pd.to_numeric(df_deg["Stint_Deg_SE"], errors="coerce")
+                df_deg = df_deg[~(_se > MAX_DEG_SE)].copy()
 
         if not df_deg.empty:
             df_deg = df_deg.sort_values("Stint_Deg_Rate", ascending=False)
             df_deg["Color"]   = df_deg["Team"].map(TEAM_COLORS).fillna("#808080")
             df_deg["DegFmt"]  = df_deg["Stint_Deg_Rate"].apply(
-                lambda x: f"+{x:.4f}" if x >= 0 else f"{x:.4f}"
+                lambda x: f"+{x:.3f}" if x >= 0 else f"{x:.3f}"
             )
             _has_se = "Stint_Deg_SE" in df_deg.columns
             df_deg["CI95"] = (
@@ -374,14 +396,33 @@ def tab_stints(fl, fs):
                 if _has_se else np.nan
             )
             df_deg["CIFmt"] = df_deg["CI95"].apply(
-                lambda x: f"±{x:.4f}" if pd.notna(x) else "±n/a"
+                lambda x: f"±{x:.3f}" if pd.notna(x) else "±n/a"
             )
             df_deg["R2Fmt"] = df_deg["Stint_Deg_R2"].apply(
                 lambda x: f"R²={x:.2f}" if pd.notna(x) else "R²=n/a"
             )
-            max_abs = (
-                (df_deg["Stint_Deg_Rate"].abs() + df_deg["CI95"].fillna(0))
-                .max() * 1.3 or 0.05
+            # Fit the x-axis tightly to the bar VALUES instead of a symmetric
+            # ±max range, which left the mostly-unused negative half empty. The
+            # range is driven by the deg rates themselves (not rate ± CI): a few
+            # short, noisy stints have huge slope SEs whose whiskers would
+            # otherwise blow the axis wide open. Keep 0 in view so the green/red
+            # zones + zeroline still read, and leave headroom past the bar tips
+            # for the outside value labels (more on the positive side).
+            _rate    = df_deg["Stint_Deg_Rate"].astype(float)
+            _lo_data = float(_rate.min())
+            _hi_data = float(_rate.max())
+            _lo   = min(0.0, _lo_data)
+            _hi   = max(0.0, _hi_data)
+            _span = (_hi - _lo) or 0.05
+            x_lo  = _lo - (_span * 0.12 if _lo_data < 0 else _span * 0.04)
+            x_hi  = _hi + _span * 0.20
+            # Clip the CI whiskers so an outlier SE can't overrun the plot.
+            _ci      = df_deg["CI95"].fillna(0).astype(float)
+            _ci_disp = np.clip(
+                np.minimum.reduce([_ci.values,
+                                   (x_hi - _rate.values),
+                                   (_rate.values - x_lo)]),
+                0.0, None,
             )
 
             fig_bar = go.Figure(go.Bar(
@@ -394,7 +435,7 @@ def tab_stints(fl, fs):
                 ),
                 error_x=dict(
                     type="data",
-                    array=df_deg["CI95"].fillna(0),
+                    array=_ci_disp,
                     color="rgba(255,255,255,0.55)",
                     thickness=1.2, width=4,
                 ) if _has_se else None,
@@ -412,316 +453,319 @@ def tab_stints(fl, fs):
                 textfont=dict(size=10, color=TEXT_MAIN),
             ))
             fig_bar.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
-            fig_bar.add_vrect(x0=-max_abs, x1=0,
+            fig_bar.add_vrect(x0=x_lo, x1=0,
                 fillcolor="rgba(0,200,100,0.05)", line_width=0, layer="below")
-            fig_bar.add_vrect(x0=0, x1=max_abs,
+            fig_bar.add_vrect(x0=0, x1=x_hi,
                 fillcolor="rgba(225,6,0,0.05)", line_width=0, layer="below")
             ht = max(300, 28 * len(df_deg) + 80)
-            theme(fig_bar, ht,
-                  f"{compound} – Degradation Rate (longest stint, fuel- & track-corrected)")
+            theme(fig_bar, ht, compound)
             fig_bar.update_layout(
                 xaxis=dict(
-                    title="s/lap of tyre age  ·  lower = less degradation",
-                    range=[-max_abs, max_abs],
+                    title="s/lap of tyre age",
+                    range=[x_lo, x_hi],
                     gridcolor=GRID_CLR, zeroline=False,
                 ),
                 yaxis=dict(gridcolor=GRID_CLR, zeroline=False, autorange="reversed"),
                 bargap=0.25, showlegend=False,
-                annotations=[dict(
-                    text="whiskers = 95% confidence interval of the fitted slope",
-                    xref="paper", yref="paper", x=1, y=1.02,
-                    xanchor="right", showarrow=False,
-                    font=dict(size=9, color=TEXT_DIM),
-                )],
+                margin=dict(l=8, r=8, t=44, b=44),
             )
+            deg_bar_figs[compound] = fig_bar
 
-        # --- (b) Normalised evolution: longest clean stint per driver ---
-        # Group clean laps by (driver, stint) and pick the stint with most laps
-        comp_clean = clean_laps[clean_laps["Compound"] == compound].copy()
-        _age_col = "TyreAge" if "TyreAge" in comp_clean.columns else "LapInStint"
-
-        fig_norm = go.Figure()
-        if not comp_clean.empty:
-            stint_lens = (
-                comp_clean.groupby(["Driver_Short", "session_name", "Stint"])
-                .size()
-                .reset_index(name="_n_laps")
-                .sort_values("_n_laps", ascending=False)
-            )
-            # Best stint = longest; one per driver
-            best_per_drv = (
-                stint_lens.groupby("Driver_Short", sort=False)
-                .first()
-                .reset_index()
-            )
-            for _, brow in best_per_drv.iterrows():
-                drv  = brow["Driver_Short"]
-                sess = brow["session_name"]
-                snt  = brow["Stint"]
-                n    = int(brow["_n_laps"])
-                if n < 2:
-                    continue
-                df_drv = (
-                    comp_clean[
-                        (comp_clean["Driver_Short"] == drv)
-                        & (comp_clean["session_name"] == sess)
-                        & (comp_clean["Stint"] == snt)
-                    ]
-                    .sort_values(_age_col)
-                )
-                _y_col = ("LapTime_TrackCorrected"
-                          if "LapTime_TrackCorrected" in df_drv.columns
-                          else "LapTime_FuelCorrected")
-                # Baseline = median of the stint's first 3 clean laps. A
-                # single-lap baseline (the old approach) anchored every
-                # subsequent point to the noisiest lap of the stint.
-                baseline = df_drv[_y_col].head(3).median()
-                if pd.isna(baseline) or baseline <= 0:
-                    continue
-                clr   = TEAM_COLORS.get(df_drv["Team"].iloc[0], "#808080")
-                delta = df_drv[_y_col] - baseline
-                sess_label = sess.split("_")[0]
-                fig_norm.add_trace(go.Scatter(
-                    x=df_drv[_age_col],
-                    y=delta,
-                    mode="lines+markers",
-                    name=f"{drv} ({n} laps, {sess_label})",
-                    line=dict(color=clr, width=2),
-                    marker=dict(size=6, color=clr),
-                    hovertemplate=(
-                        f"<b>{drv}</b><br>"
-                        "Tyre age: %{x} laps<br>"
-                        "Δ fuel-corrected from stint start: %{y:+.3f} s"
-                        "<extra></extra>"
-                    ),
-                ))
-                # Star marker where this stint's deg cliff was detected
-                if not cliffs_df.empty:
-                    cl = cliffs_df[
-                        (cliffs_df["Driver_Short"] == drv)
-                        & (cliffs_df["session_name"] == sess)
-                        & (cliffs_df["Stint"] == snt)
-                    ]
-                    if not cl.empty:
-                        c_age = float(cl["Cliff_Age"].iloc[0])
-                        ages  = pd.to_numeric(df_drv[_age_col], errors="coerce")
-                        j     = (ages - c_age).abs().idxmin()
-                        fig_norm.add_trace(go.Scatter(
-                            x=[df_drv.loc[j, _age_col]],
-                            y=[float(delta.loc[j])],
-                            mode="markers",
-                            marker=dict(symbol="star", size=14, color="#FFD700",
-                                        line=dict(color="#000", width=1)),
-                            showlegend=False,
-                            hovertemplate=(
-                                f"<b>{drv} — tyre cliff</b><br>"
-                                f"From age {c_age:.0f}: "
-                                f"{cl['Cliff_Slope'].iloc[0]:+.2f} s/lap "
-                                f"(was {cl['Base_Slope'].iloc[0]:+.2f} before)"
-                                "<extra></extra>"
-                            ),
-                        ))
-            if fig_norm.data:
-                fig_norm.add_hline(y=0, line=dict(color="white", width=1, dash="dash"))
-                fig_norm.add_hrect(y0=0, y1=999,
-                    fillcolor="rgba(225,6,0,0.03)", line_width=0, layer="below")
-                fig_norm.add_hrect(y0=-999, y1=0,
-                    fillcolor="rgba(0,200,100,0.03)", line_width=0, layer="below")
-
-        theme(fig_norm, 460,
-              f"{compound} – Normalised Deg (Δ fuel- & track-corrected vs early-stint baseline, longest clean stint)")
-        fig_norm.update_layout(
-            xaxis_title="Tyre Age (laps)",
-            yaxis_title="Δ Corrected lap time (s)  ↓ better",
-            legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR, borderwidth=1),
-            annotations=[dict(
-                text="Perturbed laps (yellow / SC / VSC / red) excluded",
-                xref="paper", yref="paper", x=1, y=1.02,
-                xanchor="right", showarrow=False,
-                font=dict(size=9, color=TEXT_DIM),
-            )],
-        )
-
-        _deg_info = (
-            f"Data ({compound}): left bar = degradation rate (s/lap of tyre age) "
-            "from a linear fit on each driver's longest valid stint, corrected for "
-            "fuel burn AND field-wide track evolution; whiskers show the 95% "
-            "confidence interval of the slope. Right line = corrected lap-time "
-            "delta from an early-stint baseline (median of the first 3 clean laps) "
-            "for each driver's longest clean stint, with a gold star where a deg "
-            "cliff was detected. Perturbed laps (yellow/SC/VSC/red flags) are "
-            "excluded, and the fits also drop laps run in dirty air (<2 s behind "
-            "another car). Why: with fuel, track-grip trends and traffic removed, "
-            "what remains is the tyre itself — lower/flatter = less degradation."
-        )
-        if fig_bar is not None:
-            deg_cards.append(card(
-                f"Tyre Degradation – {compound}",
-                dbc.Row([
-                    dbc.Col(dcc.Graph(figure=fig_bar,  config=GFX), md=5),
-                    dbc.Col(dcc.Graph(figure=fig_norm, config=GFX), md=7),
-                ]),
-                info=_deg_info,
-            ))
-        else:
-            deg_cards.append(card(
-                f"Tyre Degradation – {compound}",
-                dcc.Graph(figure=fig_norm, config=GFX),
-                info=_deg_info,
-            ))
-
-        # --- (c) Field degradation curve + driver deviation ranking ---
+        # --- (b) Field degradation: pooled curve inputs + deg-vs-field bar ---
         # Pools EVERY clean stint on this compound (not just each driver's
         # longest), so it borrows statistical strength from the whole field.
+        # The curves themselves are drawn together, three-across, in a single
+        # subplot figure after the loop (so the team legend appears once); here
+        # we only keep the data and build the compact per-driver deviation bar.
         fd = field_deg_curves(fl, compound)
-        if fd is not None:
-            curve, tcurves, dev = fd["curve"], fd["team_curves"], fd["driver_dev"]
+        if fd is None:
+            continue
+        field_cur_data[compound] = fd
 
-            fig_field = go.Figure()
+        dev = fd["driver_dev"]
+        if not dev.empty:
+            dev_s = dev.sort_values("Avg_Dev_s")
+            dev_s["Color"]  = dev_s["Team"].map(TEAM_COLORS).fillna("#808080")
+            dev_s["DevFmt"] = dev_s["Avg_Dev_s"].apply(lambda x: f"{x:+.3f}")
+            _dmax = max(dev_s["Avg_Dev_s"].abs().max() * 1.35, 0.05)
+            fig_dev = go.Figure(go.Bar(
+                y=dev_s["Driver_Short"], x=dev_s["Avg_Dev_s"],
+                orientation="h",
+                marker=dict(color=dev_s["Color"],
+                            line=dict(color=GRID_CLR, width=0.5)),
+                customdata=dev_s[["Team", "N_Laps"]].values,
+                hovertemplate=(
+                    "<b>%{y}</b>  Team: %{customdata[0]}<br>"
+                    "Avg vs field at equal tyre age: %{x:+.3f} s<br>"
+                    "Clean laps used: %{customdata[1]}<extra></extra>"
+                ),
+                text=dev_s["DevFmt"], textposition="outside",
+                textfont=dict(size=10, color=TEXT_MAIN),
+            ))
+            fig_dev.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
+            fig_dev.add_vrect(x0=-_dmax, x1=0,
+                fillcolor="rgba(0,200,100,0.05)", line_width=0, layer="below")
+            fig_dev.add_vrect(x0=0, x1=_dmax,
+                fillcolor="rgba(225,6,0,0.05)", line_width=0, layer="below")
+            ht_dev = max(300, 24 * len(dev_s) + 80)
+            theme(fig_dev, ht_dev, compound)
+            fig_dev.update_layout(
+                xaxis=dict(title="s vs field median",
+                           range=[-_dmax, _dmax],
+                           gridcolor=GRID_CLR, zeroline=False),
+                yaxis=dict(gridcolor=GRID_CLR, zeroline=False, autorange="reversed"),
+                bargap=0.25, showlegend=False,
+                margin=dict(l=8, r=8, t=44, b=44),
+            )
+            field_dev_figs[compound] = fig_dev
+
+    # ── Assemble the merged degradation cards (SOFT / MEDIUM / HARD across) ──
+    def _deg_columns(figs: dict, empty_msg: str):
+        """One dbc.Row with a column per compound; a note where data is thin."""
+        cols = []
+        for comp in COMPOUNDS:
+            fig = figs.get(comp)
+            body = (
+                dcc.Graph(figure=fig, config=GFX) if fig is not None
+                else html.Div(
+                    [html.Div(comp, style={"fontWeight": "700",
+                                           "color": COMPOUND_COLORS.get(comp, TEXT_DIM)}),
+                     html.Div(empty_msg, style={"fontSize": "0.72rem"})],
+                    style={"color": TEXT_DIM, "textAlign": "center",
+                           "padding": "60px 8px"},
+                )
+            )
+            cols.append(dbc.Col(body, md=4))
+        return dbc.Row(cols)
+
+    # Equalise heights so the three plots line up neatly side by side.
+    if deg_bar_figs:
+        _h = max(f.layout.height for f in deg_bar_figs.values())
+        for f in deg_bar_figs.values():
+            f.update_layout(height=_h)
+    if field_dev_figs:
+        _h = max(f.layout.height for f in field_dev_figs.values())
+        for f in field_dev_figs.values():
+            f.update_layout(height=_h)
+
+    # (a) Merged degradation-rate bars
+    deg_rate_card = card(
+        "Tyre Degradation Rate — by Compound",
+        _deg_columns(deg_bar_figs, "no valid stint on this compound"),
+        info=("Data: degradation rate (s/lap of tyre age) from a linear fit on "
+              "each driver's longest valid stint per compound, corrected for "
+              "fuel burn AND field-wide track evolution; whiskers = 95% "
+              "confidence interval of the fitted slope. Bars are coloured by "
+              "team and sorted worst→best. The green half is negative "
+              "(tyre gains as it ages / holds on), the red half positive. Why: "
+              "with fuel and track-grip trends removed, what remains is the tyre "
+              "itself — lower/flatter = less degradation."),
+    )
+
+    # (b) Merged field degradation curves — one subplot figure, shared legend
+    fig_curves = None
+    cur_comps = [c for c in COMPOUNDS if c in field_cur_data]
+    if cur_comps:
+        fig_curves = make_subplots(
+            rows=1, cols=len(cur_comps), shared_yaxes=True,
+            subplot_titles=cur_comps, horizontal_spacing=0.035,
+        )
+        _seen: set[str] = set()   # each legend entry appears once across subplots
+
+        def _show(key: str) -> bool:
+            if key in _seen:
+                return False
+            _seen.add(key)
+            return True
+
+        for j, comp in enumerate(cur_comps, start=1):
+            fd = field_cur_data[comp]
+            curve, tcurves = fd["curve"], fd["team_curves"]
             # IQR band (q25–q75) behind everything
-            fig_field.add_trace(go.Scatter(
+            fig_curves.add_trace(go.Scatter(
                 x=curve["_age"], y=curve["q75"], mode="lines",
                 line=dict(width=0), showlegend=False, hoverinfo="skip",
-            ))
-            fig_field.add_trace(go.Scatter(
+            ), row=1, col=j)
+            fig_curves.add_trace(go.Scatter(
                 x=curve["_age"], y=curve["q25"], mode="lines",
                 line=dict(width=0), fill="tonexty",
                 fillcolor="rgba(255,255,255,0.09)",
-                name="field IQR", showlegend=True, hoverinfo="skip",
-            ))
+                name="field IQR", legendgroup="field IQR",
+                showlegend=_show("field IQR"), hoverinfo="skip",
+            ), row=1, col=j)
             # Per-team median curves
             for team in sorted(tcurves["Team"].dropna().unique()):
                 tg = tcurves[tcurves["Team"] == team].sort_values("_age")
                 if len(tg) < 3:
                     continue
                 clr = TEAM_COLORS.get(team, "#808080")
-                fig_field.add_trace(go.Scatter(
+                fig_curves.add_trace(go.Scatter(
                     x=tg["_age"], y=tg["median"], mode="lines",
-                    name=_abbr(team),
+                    name=_abbr(team), legendgroup=team, showlegend=_show(team),
                     line=dict(color=clr, width=1.4),
                     hovertemplate=(
-                        f"<b>{team}</b><br>"
+                        f"<b>{team}</b> · {comp}<br>"
                         "Tyre age: %{x} laps<br>"
                         "Δ vs stint start: %{y:+.3f} s<extra></extra>"
                     ),
-                ))
+                ), row=1, col=j)
             # Field median on top
-            fig_field.add_trace(go.Scatter(
+            fig_curves.add_trace(go.Scatter(
                 x=curve["_age"], y=curve["median"], mode="lines",
-                name="FIELD",
+                name="FIELD", legendgroup="FIELD", showlegend=_show("FIELD"),
                 line=dict(color="#FFFFFF", width=3, dash="dot"),
                 customdata=curve[["n_stints"]].values,
                 hovertemplate=(
-                    "<b>Field median</b><br>"
+                    f"<b>Field median</b> · {comp}<br>"
                     "Tyre age: %{x} laps<br>"
                     "Δ vs stint start: %{y:+.3f} s<br>"
                     "Stints contributing: %{customdata[0]}<extra></extra>"
                 ),
-            ))
-            fig_field.add_hline(y=0, line=dict(color="white", width=1, dash="dash"))
-            theme(fig_field, 480,
-                  f"{compound} – Field Degradation Curve (all clean stints, corrected)")
-            fig_field.update_layout(
-                xaxis_title="Tyre Age (laps)",
-                yaxis_title="Δ Corrected lap time vs stint start (s)",
-                legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR,
-                            borderwidth=1, font=dict(size=9)),
-            )
+            ), row=1, col=j)
+            fig_curves.add_hline(y=0, line=dict(color="white", width=1, dash="dash"),
+                                 row=1, col=j)
+            fig_curves.update_xaxes(title_text="Tyre Age (laps)", row=1, col=j,
+                                    gridcolor=GRID_CLR, zeroline=False)
+        theme(fig_curves, 470)
+        fig_curves.update_yaxes(title_text="Δ Corrected lap time vs stint start (s)",
+                                row=1, col=1, gridcolor=GRID_CLR, zeroline=False)
+        fig_curves.update_layout(
+            legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR,
+                        borderwidth=1, font=dict(size=9)),
+            margin=dict(l=8, r=8, t=44, b=44),
+        )
 
-            fig_dev = None
-            if not dev.empty:
-                dev_s = dev.sort_values("Avg_Dev_s")
-                dev_s["Color"]  = dev_s["Team"].map(TEAM_COLORS).fillna("#808080")
-                dev_s["DevFmt"] = dev_s["Avg_Dev_s"].apply(lambda x: f"{x:+.3f}")
-                _dmax = max(dev_s["Avg_Dev_s"].abs().max() * 1.35, 0.05)
-                fig_dev = go.Figure(go.Bar(
-                    y=dev_s["Driver_Short"], x=dev_s["Avg_Dev_s"],
-                    orientation="h",
-                    marker=dict(color=dev_s["Color"],
-                                line=dict(color=GRID_CLR, width=0.5)),
-                    customdata=dev_s[["Team", "N_Laps"]].values,
-                    hovertemplate=(
-                        "<b>%{y}</b>  Team: %{customdata[0]}<br>"
-                        "Avg vs field at equal tyre age: %{x:+.3f} s<br>"
-                        "Clean laps used: %{customdata[1]}<extra></extra>"
+    if fig_curves is not None:
+        # A taller copy (with the modebar enabled) opens in a full-screen modal
+        # so the three side-by-side curves can be read clearly when needed.
+        fig_curves_big = go.Figure(fig_curves)
+        fig_curves_big.update_layout(height=None, margin=dict(l=40, r=20, t=40, b=50))
+        curve_body = html.Div([
+            html.Div(
+                dbc.Button("⤢  Open in big window", id="field-curves-enlarge",
+                           size="sm", color="secondary", outline=True,
+                           n_clicks=0, style={"fontSize": "0.72rem"}),
+                style={"textAlign": "right", "marginBottom": "4px"},
+            ),
+            dcc.Graph(figure=fig_curves, config=GFX),
+            dbc.Modal([
+                dbc.ModalHeader(dbc.ModalTitle(
+                    "Field Degradation Curves — by Compound")),
+                dbc.ModalBody(
+                    dcc.Graph(
+                        figure=fig_curves_big,
+                        config={"displayModeBar": True, "displaylogo": False},
+                        style={"height": "82vh"},
                     ),
-                    text=dev_s["DevFmt"], textposition="outside",
-                    textfont=dict(size=10, color=TEXT_MAIN),
-                ))
-                fig_dev.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
-                ht_dev = max(300, 24 * len(dev_s) + 80)
-                theme(fig_dev, ht_dev, f"{compound} – Deg vs Field")
-                fig_dev.update_layout(
-                    xaxis=dict(title="s vs field median  ·  negative = degrades less",
-                               range=[-_dmax, _dmax],
-                               gridcolor=GRID_CLR, zeroline=False),
-                    yaxis=dict(gridcolor=GRID_CLR, zeroline=False),
-                    bargap=0.25, showlegend=False,
-                )
+                    style={"padding": "8px"},
+                ),
+                dbc.ModalFooter(
+                    dbc.Button("Close", id="field-curves-close",
+                               size="sm", color="secondary", n_clicks=0)),
+            ], id="field-curves-modal", is_open=False, fullscreen=True,
+               scrollable=True),
+        ])
+    else:
+        curve_body = html.P("Not enough clean stints to build a field curve for "
+                            "the loaded sessions.", style={"color": TEXT_DIM})
 
-            _field_info = (
-                f"Data ({compound}): every clean stint of ≥5 laps contributes its "
-                "corrected lap-time delta vs its own early-stint baseline; the "
-                "white dotted line is the field median at each tyre age, the grey "
-                "band the 25–75% spread, coloured lines the per-team medians. "
-                "Right bar (when enough data): each driver's average gap to the "
-                "field curve at equal tyre age — negative = manages tyres better "
-                "than the field. Perturbed laps and laps in dirty air (<2 s "
-                "behind another car) are excluded. "
-                "Why: pooling all stints is far more robust than "
-                "any single-stint fit, and deviations from the pooled curve are "
-                "the cleanest tyre-management signal this data can give."
-            )
-            deg_cards.append(card(
-                f"Field Degradation – {compound}",
-                dbc.Row([
-                    dbc.Col(dcc.Graph(figure=fig_field, config=GFX),
-                            md=7 if fig_dev is not None else 12),
-                ] + ([dbc.Col(dcc.Graph(figure=fig_dev, config=GFX), md=5)]
-                     if fig_dev is not None else [])),
-                info=_field_info,
-            ))
+    field_curve_card = card(
+        "Field Degradation Curves — by Compound",
+        curve_body,
+        info=("Data: every clean stint of ≥5 laps contributes its corrected "
+              "lap-time delta vs its own early-stint baseline; the white dotted "
+              "line is the field median at each tyre age, the grey band the "
+              "25–75% spread, coloured lines the per-team medians. Perturbed "
+              "laps and laps in dirty air (<2 s behind another car) are "
+              "excluded. Why: pooling all stints is far more robust than any "
+              "single-stint fit. Tip: use “Open in big window” for a "
+              "full-screen, zoomable view."),
+    )
 
-    # 3b. Cliff Map — all detected cliffs across compounds in one view
+    # (c) Merged deg-vs-field bars
+    field_dev_card = card(
+        "Degradation vs the Field — by Compound",
+        _deg_columns(field_dev_figs, "not enough clean laps to rank"),
+        info=("Data: each driver's average gap to the pooled field degradation "
+              "curve at equal tyre age (from the curves above). Negative "
+              "(green) = the tyre degrades LESS than the field average, i.e. "
+              "better tyre management; positive (red) = worse. Perturbed and "
+              "dirty-air laps excluded. Why: deviation from the pooled curve is "
+              "the cleanest tyre-management signal this data can give."),
+    )
+
+    deg_cards = [deg_rate_card, field_curve_card, field_dev_card]
+
+    # 3b. Cliff timeline — each detected cliff as a tyre-life bar. The old
+    #     scatter (extra-deg vs cliff-age) left a big empty canvas around one or
+    #     two points; a horizontal "plateau → over the cliff" bar per cliff
+    #     stays legible no matter how few cliffs there are and reads directly as
+    #     "how long the tyre held, then how hard it fell".
     if not cliffs_df.empty:
         cm = cliffs_df.copy()
-        cm["Extra"]   = cm["Cliff_Slope"] - cm["Base_Slope"]
+        cm["Extra"]   = (cm["Cliff_Slope"] - cm["Base_Slope"]).round(3)
         cm["SessLbl"] = cm["session_name"].astype(str).str.split("_").str[0]
+        cm["Tail_Laps"] = pd.to_numeric(cm["Tail_Laps"], errors="coerce").fillna(1)
+        # longest-lasting tyres at the top
+        cm = cm.sort_values("Cliff_Age", ascending=False).reset_index(drop=True)
+        ypos   = list(range(len(cm)))
+        labels = [f"{r.Driver_Short}  ·  {r.Compound}"
+                  + (f"  ({r.SessLbl})" if cm["SessLbl"].nunique() > 1 else "")
+                  for r in cm.itertuples()]
+        plateau_clr = [_hex_to_rgba(COMPOUND_COLORS.get(c, "#808080"), 0.45)
+                       for c in cm["Compound"]]
+        cd = cm[["Driver_Short", "Team", "SessLbl", "Base_Slope",
+                 "Cliff_Slope", "Extra", "N_Laps"]].values
+
         fig_cliff = go.Figure()
-        for comp in COMPOUNDS:
-            sub = cm[cm["Compound"] == comp]
-            if sub.empty:
-                continue
-            fig_cliff.add_trace(go.Scatter(
-                x=sub["Cliff_Age"], y=sub["Extra"],
-                mode="markers+text",
-                name=comp,
-                text=sub["Driver_Short"],
-                textposition="top center",
-                textfont=dict(size=9, color=TEXT_DIM),
-                marker=dict(
-                    size=10,
-                    color=COMPOUND_COLORS.get(comp, "#808080"),
-                    line=dict(color="#000", width=1),
-                    symbol="star",
-                ),
-                customdata=sub[["Driver_Short", "Team", "SessLbl",
-                                "Base_Slope", "Cliff_Slope", "N_Laps"]].values,
-                hovertemplate=(
-                    "<b>%{customdata[0]}</b> · %{customdata[1]} "
-                    "(%{customdata[2]})<br>"
-                    "Cliff from tyre age %{x:.0f} laps<br>"
-                    "Deg before: %{customdata[3]:+.3f} s/lap → after: "
-                    "%{customdata[4]:+.3f} s/lap<br>"
-                    "Stint length: %{customdata[5]} laps<extra></extra>"
-                ),
-            ))
-        theme(fig_cliff, 440)
+        # Plateau: tyre age 0 → cliff onset (compound-tinted)
+        fig_cliff.add_trace(go.Bar(
+            y=ypos, x=cm["Cliff_Age"], base=0, orientation="h",
+            marker=dict(color=plateau_clr,
+                        line=dict(color=GRID_CLR, width=0.5)),
+            name="Plateau (by compound)",
+            customdata=cd,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b> · %{customdata[1]} "
+                "(%{customdata[2]})<br>"
+                "Plateau: tyre age 0 → %{x:.0f} laps<br>"
+                "Base deg: %{customdata[3]:+.3f} s/lap<extra></extra>"
+            ),
+        ))
+        # Over the cliff: cliff onset → end of the observed stint
+        fig_cliff.add_trace(go.Bar(
+            y=ypos, x=cm["Tail_Laps"], base=cm["Cliff_Age"], orientation="h",
+            marker=dict(color="#E10600", line=dict(color="#000", width=0.5)),
+            name="Over the cliff",
+            text=[f"+{e:.2f} s/lap" for e in cm["Extra"]],
+            textposition="outside", textfont=dict(size=10, color="#E10600"),
+            customdata=cd,
+            hovertemplate=(
+                "<b>%{customdata[0]}</b> · %{customdata[1]} "
+                "(%{customdata[2]})<br>"
+                "Cliff from tyre age %{base:.0f} laps<br>"
+                "Deg: %{customdata[3]:+.3f} → %{customdata[4]:+.3f} s/lap "
+                "(+%{customdata[5]:.2f} extra)<br>"
+                "Stint length: %{customdata[6]} laps<extra></extra>"
+            ),
+        ))
+        # Cliff-onset marker
+        fig_cliff.add_trace(go.Scatter(
+            y=ypos, x=cm["Cliff_Age"], mode="markers",
+            marker=dict(symbol="diamond", size=9, color="#FFD700",
+                        line=dict(color="#000", width=1)),
+            showlegend=False, hoverinfo="skip",
+        ))
+        ht = max(220, 46 * len(cm) + 90)
+        theme(fig_cliff, ht)
         fig_cliff.update_layout(
-            xaxis_title="Tyre age at cliff onset (laps)",
-            yaxis_title="Extra deg after cliff (s/lap on top of base rate)",
-            legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=GRID_CLR,
-                        borderwidth=1),
+            barmode="overlay",
+            xaxis=dict(title="Tyre age (laps)", gridcolor=GRID_CLR, zeroline=False),
+            yaxis=dict(tickvals=ypos, ticktext=labels, autorange="reversed",
+                       gridcolor=GRID_CLR, zeroline=False),
+            bargap=0.35,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"),
         )
         cliff_body = dcc.Graph(figure=fig_cliff, config=GFX)
     else:
@@ -733,14 +777,15 @@ def tab_stints(fl, fs):
         "Tyre Cliff Detection",
         cliff_body,
         info=("Data: every clean stint of ≥10 laps is tested with a "
-              "two-segment fit on corrected lap times; a star appears when "
+              "two-segment fit on corrected lap times; a cliff is flagged when "
               "the late-stint deg rate breaks sharply upward from the earlier "
               "trend (statistically better than a straight line, ≥+0.10 s/lap "
-              "extra). Position on the chart: further right = the tyre lasted "
-              "longer before falling off; higher = the harder it fell. Why: "
-              "the cliff, not the average deg rate, is what forces a pit stop "
-              "— knowing at what age each compound cliffs at this circuit is "
-              "the single most valuable strategy number."),
+              "extra). Each bar is one cliff: the compound-tinted part is the "
+              "tyre's plateau (age 0 → the gold cliff-onset diamond), the red "
+              "part the laps run after it fell off, labelled with the extra "
+              "deg. Why: the cliff, not the average deg rate, is what forces a "
+              "pit stop — knowing at what age each compound cliffs at this "
+              "circuit is the single most valuable strategy number."),
     )
 
     # 3c. Compound pace offsets (race sessions only — comparable fuel)
@@ -789,14 +834,17 @@ def tab_stints(fl, fs):
     offset_card = card(
         "Compound Pace Offsets",
         offset_body,
-        info=("Data: race/sprint laps only, tyre age ≤ 10, fuel- and "
-              "track-corrected. Each driver who ran both compounds "
-              "contributes their personal pace difference (which cancels out "
-              "car and driver speed); the bar is the field median, the "
-              "whiskers the driver-to-driver spread. Why: the compound offset "
-              "sets the strategy crossover — how many laps of tyre advantage "
-              "a fresh soft buys over a hard determines whether an extra stop "
-              "pays for itself."),
+        info=("Data: race/sprint laps only, fuel- and track-corrected. For "
+              "every stint a line is fitted to corrected lap time vs tyre age "
+              "and read off at a common low reference age, so each compound is "
+              "compared on an equal fresh-tyre footing (clean laps preferred, "
+              "falling back to all laps when a stint has too few). Each driver "
+              "who ran both compounds contributes their personal pace "
+              "difference (which cancels out car and driver speed); the bar is "
+              "the field median, the whiskers the driver-to-driver spread. "
+              "Why: the compound offset sets the strategy crossover — how many "
+              "laps of tyre advantage a fresh soft buys over a hard determines "
+              "whether an extra stop pays for itself."),
     )
 
     # 4. Stint Lap Inspector
@@ -837,8 +885,6 @@ def tab_stints(fl, fs):
         html.Div(id="stint-insp-table"),
     ])
 
-    tyre_usage_fig = _tyre_history_chart(fl)
-
     return html.Div([
         card("Lap Time Evolution – All Laps", evo_layout,
              info=("Data: every lap (valid or not) for the selected session, one line "
@@ -850,16 +896,6 @@ def tab_stints(fl, fs):
         *deg_cards,
         cliff_card,
         offset_card,
-        card(
-            "Tyre Compound Usage — Current Meeting",
-            dcc.Graph(figure=tyre_usage_fig, config=GFX)
-            if tyre_usage_fig.data else
-            html.P("No compound data available.", style={"color": TEXT_DIM}),
-            info=("Data: number of valid laps run on each compound, stacked per "
-                  "session, for the currently loaded meeting. Why: shows how teams "
-                  "spread their tyre allocation across the weekend and which "
-                  "compounds saw real running."),
-        ),
         card("Stint Lap Inspector", stint_inspector,
              info=("Data: the individual laps of any stint, picked from a "
                    "dropdown that pre-ranks each driver's stints by pace — "

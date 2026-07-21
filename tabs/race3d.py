@@ -37,12 +37,13 @@ import dash_bootstrap_components as dbc
 from f1lib.components import card
 from f1lib.config import TEAM_COLORS, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM
 from f1lib.data_loader import load_session
+from f1lib.telemetry_clean import clean_pos_samples, monotonic_didx
 from f1lib.track_scene import build_track_scene
 
 logger = logging.getLogger(__name__)
 
 REPLAYS_DIR = Path("data/replays")
-_PAYLOAD_VERSION = 1           # v1: lap-1 all-cars shared clock
+_PAYLOAD_VERSION = 5           # v5: staggered grid formation (real 2-column start)
 _DT = 0.1                      # replay grid step (s) → 10 Hz
 _PRE_ROLL = 3.0               # seconds of stationary grid before lights out
 _TAIL = 1.0                   # seconds after the last car crosses the line
@@ -86,22 +87,57 @@ def _seconds(s: pd.Series) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
 
 
-def _monotonic_didx(xi, yi, scene, tree):
-    """Nearest scene section per frame, constrained to move forward along the
-    lap — same forward-biased search the quali replay uses (a global nearest-XY
-    lookup breaks on crossover circuits)."""
+def _grid_slot(scene, grid_pos: int):
+    """Approximate (x, y) of a grid slot in the scene display frame: boxes
+    every 8 m behind the start line (scene section 0) along the centerline,
+    alternating sides. Used only when a car's position feed has no fix before
+    lights-out (e.g. Monaco 2026, where the feed only wakes as each car
+    crosses the timing line) — without an anchor every such car would sit at
+    the (0,0) placeholder 'floating in space' until its data starts."""
     n_sc = len(scene["cx"])
-    cxa = np.asarray(scene["cx"])
-    cya = np.asarray(scene["cy"])
-    out = np.empty(len(xi), dtype=np.int64)
-    _, prev = tree.query([xi[0], yi[0]])
-    out[0] = prev = int(prev)
-    for i in range(1, len(xi)):
-        cand = np.arange(prev - 4, prev + 41) % n_sc      # forward-biased
-        d2 = (cxa[cand] - xi[i]) ** 2 + (cya[cand] - yi[i]) ** 2
-        prev = int(cand[np.argmin(d2)])
-        out[i] = prev
-    return out
+    step = float(scene["step"])
+    back_m = 7.0 + 8.0 * (grid_pos - 1)
+    idx = (-int(round(back_m / step))) % n_sc
+    lat = 2.0 if grid_pos % 2 else -2.0
+    return (scene["cx"][idx] + scene["nx"][idx] * lat,
+            scene["cy"][idx] + scene["ny"][idx] * lat)
+
+
+_GRID_STAGGER_M = 2.5      # lateral offset of each grid column from centerline
+_GRID_LOCK_M = 2.0         # car within this of its grid box → full staggered slot
+_GRID_RELEASE_M = 35.0     # car this far from its box → fully on its real line
+_GRID_GATE_S = 15.0        # never re-apply the formation past this (avoids the
+                           #   lap-1 leader re-triggering as it nears the line)
+
+
+def _apply_grid_formation(xi, yi, didx, grid, lights_out, grid_pos, scene):
+    """Seat a car in its real staggered grid slot for the pre-start, then blend
+    onto its true racing line as it launches.
+
+    The F1 position feed can't resolve the ~2 m grid-box stagger — every
+    stationary grid car reads as a single-file line that merely follows the
+    track's curve (measured: a smooth ±2 m ramp front-to-back, not two
+    columns). But the grid is a KNOWN formation, so we reconstruct it from
+    GridPosition: odd rows one side, even rows the other, ±`_GRID_STAGGER_M`
+    across the track. Along-track position is left untouched (the feed gets
+    that right, ~8 m spacing), so nothing lurches — only the lateral offset is
+    driven to the column, and released as the car drives away from its box."""
+    if grid_pos is None:
+        return xi, yi
+    nx = np.asarray(scene["nx"]); ny = np.asarray(scene["ny"])
+    cx = np.asarray(scene["cx"]); cy = np.asarray(scene["cy"])
+    ref = int(np.argmin(np.abs(grid - lights_out)))     # last stationary frame
+    dist = np.hypot(xi - xi[ref], yi - yi[ref])          # how far it has launched
+    w = np.clip((_GRID_RELEASE_M - dist)
+                / (_GRID_RELEASE_M - _GRID_LOCK_M), 0.0, 1.0)
+    w[grid > lights_out + _GRID_GATE_S] = 0.0            # launch phase only
+    if not (w > 0).any():
+        return xi, yi
+    target = _GRID_STAGGER_M if (grid_pos % 2) else -_GRID_STAGGER_M
+    nxi, nyi = nx[didx], ny[didx]
+    lat = (xi - cx[didx]) * nxi + (yi - cy[didx]) * nyi  # current lateral
+    shift = w * (target - lat)                            # → column when w=1
+    return xi + shift * nxi, yi + shift * nyi
 
 
 def build_race3d_payload(season: int, meeting: str) -> dict | None:
@@ -150,6 +186,16 @@ def build_race3d_payload(season: int, meeting: str) -> dict | None:
     from scipy.spatial import cKDTree
     tree = cKDTree(np.column_stack([scene["cx"], scene["cy"]]))
 
+    lights_out = float(lap1["start_f"].min())
+    grid_map: dict[str, int] = {}
+    res = data.get("results")
+    if res is not None and not res.empty \
+            and {"DriverNumber", "GridPosition"}.issubset(res.columns):
+        for _, rr in res.iterrows():
+            gp = pd.to_numeric(rr["GridPosition"], errors="coerce")
+            if pd.notna(gp) and gp >= 1:
+                grid_map[str(rr["DriverNumber"]).strip()] = int(gp)
+
     drivers = []
     for drv, g1 in lap1.groupby(lap1["DriverNo"].astype(str).str.strip()):
         row = g1.iloc[0]
@@ -164,12 +210,33 @@ def build_race3d_payload(season: int, meeting: str) -> dict | None:
         if len(seg) < 30:
             continue
 
-        ts = seg["timestamp"].to_numpy(float)
-        xr, yr = _rotate(seg["X"].to_numpy(float) * 0.1,
-                         seg["Y"].to_numpy(float) * 0.1, ang)
-        xi = np.interp(grid, ts, xr)         # holds first/last pos outside range
-        yi = np.interp(grid, ts, yr)
-        didx = _monotonic_didx(xi, yi, scene, tree)
+        pos = clean_pos_samples(seg)
+        if len(pos) < 30:
+            continue
+        ts_pos = pos["timestamp"].to_numpy(float)
+        xr, yr = _rotate(pos["X"].to_numpy(float) * 0.1,
+                         pos["Y"].to_numpy(float) * 0.1, ang)
+        # feed woke only after lights-out (no fix on the grid) → park the car
+        # on its synthesized grid slot until the start, then bridge to the
+        # first real fix instead of holding a mid-straight position.
+        if ts_pos[0] > lights_out + 0.5 and drv in grid_map:
+            gx, gy = _grid_slot(scene, grid_map[drv])
+            ts_pos = np.concatenate([[t0 - 1.0, lights_out], ts_pos])
+            xr = np.concatenate([[gx, gx], xr])
+            yr = np.concatenate([[gy, gy], yr])
+
+        ts = seg["timestamp"].to_numpy(float)    # channel time base (car data)
+        # Constant-velocity glide across any gap left by dropped garbage: a
+        # feed dropout is exactly where the data is least trustworthy, so the
+        # humble steady interpolation beats a cleverer pacing that can amplify
+        # an inflated (overshot) gap into an alarming peak speed.
+        xi = np.interp(grid, ts_pos, xr)     # holds first/last pos outside range
+        yi = np.interp(grid, ts_pos, yr)
+        didx = monotonic_didx(xi, yi, scene, tree)
+        # seat the car in its real staggered grid slot for the pre-start /
+        # launch (the feed collapses the grid to a single file otherwise)
+        xi, yi = _apply_grid_formation(xi, yi, didx, grid, lights_out,
+                                       grid_map.get(drv), scene)
 
         def chan(col, default=0.0):
             if col not in seg.columns:

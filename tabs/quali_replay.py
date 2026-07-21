@@ -31,12 +31,13 @@ from f1lib.components import card
 from f1lib.config import TEAM_COLORS, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM
 from f1lib.data_loader import load_session
 from f1lib.processing import format_lap_time
+from f1lib.telemetry_clean import clean_pos_samples, monotonic_didx
 from f1lib.track_scene import build_track_scene, cached_scene
 
 logger = logging.getLogger(__name__)
 
 REPLAYS_DIR = Path("data/replays")
-_PAYLOAD_VERSION = 4           # v4: corner/straight names, terrain corridor clamp
+_PAYLOAD_VERSION = 7           # v7: speed-integral pos cleaning + gap pacing
 _DT = 0.1                      # lap replay grid step (s) → 10 Hz
 
 _PAYLOAD_MEM: dict[tuple, dict] = {}
@@ -112,24 +113,6 @@ def build_quali3d_payload(season: int, meeting: str) -> dict | None:
     lp = lp.dropna(subset=["LapTime_f", "start_f", "end_f"])
     # in/out laps are never a driver's best; no extra filtering needed
 
-    def _monotonic_didx(xi, yi, scene, tree):
-        """Nearest scene section per frame, constrained to move forward along
-        the lap. A global nearest-XY lookup breaks on crossover circuits
-        (Suzuka's figure-8: the bridge and the underpass share XY, and cars
-        would snap to the wrong level's elevation)."""
-        n_sc = len(scene["cx"])
-        cxa = np.asarray(scene["cx"])
-        cya = np.asarray(scene["cy"])
-        out = np.empty(len(xi), dtype=np.int64)
-        _, prev = tree.query([xi[0], yi[0]])
-        out[0] = prev = int(prev)
-        for i in range(1, len(xi)):
-            cand = np.arange(prev - 4, prev + 41) % n_sc   # forward-biased
-            d2 = (cxa[cand] - xi[i]) ** 2 + (cya[cand] - yi[i]) ** 2
-            prev = int(cand[np.argmin(d2)])
-            out[i] = prev
-        return out
-
     drivers = []
     for drv, g in lp.groupby(lp["DriverNo"].astype(str).str.strip()):
         best = g.loc[g["LapTime_f"].idxmin()]
@@ -144,13 +127,17 @@ def build_quali3d_payload(season: int, meeting: str) -> dict | None:
         if len(seg) < 30:
             continue
 
-        ts = seg["timestamp"].to_numpy(float)
+        pos = clean_pos_samples(seg)
+        if len(pos) < 30:
+            continue
+        ts_pos = pos["timestamp"].to_numpy(float)
+        ts = seg["timestamp"].to_numpy(float)    # channel time base (car data)
         grid = t0 + np.arange(int(dur / _DT) + 1) * _DT
-        xr, yr = _rotate(seg["X"].to_numpy(float) * 0.1,
-                         seg["Y"].to_numpy(float) * 0.1, ang)
-        xi = np.interp(grid, ts, xr)
-        yi = np.interp(grid, ts, yr)
-        didx = _monotonic_didx(xi, yi, scene, tree)
+        xr, yr = _rotate(pos["X"].to_numpy(float) * 0.1,
+                         pos["Y"].to_numpy(float) * 0.1, ang)
+        xi = np.interp(grid, ts_pos, xr)
+        yi = np.interp(grid, ts_pos, yr)
+        didx = monotonic_didx(xi, yi, scene, tree)
 
         def chan(col, default=0.0):
             if col not in seg.columns:

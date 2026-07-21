@@ -62,10 +62,22 @@
       y[i] = d.y[i] / 100;
       z[i] = surfaceZ(sc, d.didx[i], x[i], y[i]);
     }
+    // Heading from the local motion vector — but a stationary span (grid
+    // pre-roll, or any residual frozen-feed frame) has no direction and
+    // atan2(0,0) would snap the car to due-east and back (a visible spin).
+    // Hold the last real heading through no-motion frames, and back-fill the
+    // leading stationary frames (grid) with the first real heading so cars
+    // sit facing down the track, not sideways.
+    let last = NaN;
     for (let i = 0; i < n; i++) {
       const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
-      h[i] = Math.atan2(y[b] - y[a], x[b] - x[a]);
+      const ddx = x[b] - x[a], ddy = y[b] - y[a];
+      if (Math.hypot(ddx, ddy) > 0.05) { h[i] = Math.atan2(ddy, ddx); last = h[i]; }
+      else h[i] = last;                 // NaN until the first real heading
     }
+    let first = 0;
+    for (let i = 0; i < n; i++) { if (!Number.isNaN(h[i])) { first = h[i]; break; } }
+    for (let i = 0; i < n; i++) { if (Number.isNaN(h[i])) h[i] = first; }
     // light smoothing of heading (telemetry jitter)
     for (let i = 1; i < n; i++) h[i] = lerpAngle(h[i - 1], h[i], 0.6);
     return { x, y, z, h };
@@ -344,9 +356,18 @@
     return spr;
   }
 
+  // The F1 position feed can't separate cars that are level (see
+  // tabs/race3d.py): two battling cars sit on ~the same line, so life-size
+  // models pass through each other. Rendering the shell a bit under scale
+  // keeps positions 100% faithful while making crossings read as near-misses
+  // rather than collisions. Only the body shrinks — the code label above the
+  // car (added in buildScene) stays full size and legible.
+  const CAR_SCALE = 0.68;
+
   function carModel(color) {
     const THREE = window.THREE;
     const g = new THREE.Group();
+    const shell = new THREE.Group();          // scaled body; label stays on g
     // slight self-illumination: cars stay readable in tunnels and shadow —
     // they are the only strongly coloured objects in the scene
     const body = new THREE.MeshLambertMaterial({
@@ -365,15 +386,17 @@
     fwing.position.set(3.4, 0, 0.28);
     const rwing = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.9, 0.14), body);
     rwing.position.set(-2.5, 0, 1.15);
-    g.add(chassis, nose, cockpit, fwing, rwing);
+    shell.add(chassis, nose, cockpit, fwing, rwing);
 
     const wg = new THREE.CylinderGeometry(0.36, 0.36, 0.4, 10);
     [[1.6, 1.0], [1.6, -1.0], [-1.7, 1.0], [-1.7, -1.0]].forEach(([wx, wy]) => {
       const w = new THREE.Mesh(wg, dark);
       w.position.set(wx, wy, 0.36);
       // cylinder axis is Y by default — already the wheel axle direction
-      g.add(w);
+      shell.add(w);
     });
+    shell.scale.set(CAR_SCALE, CAR_SCALE, CAR_SCALE);
+    g.add(shell);
     return g;
   }
 

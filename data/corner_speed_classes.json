@@ -1,0 +1,18 @@
+{
+  "season": 2025,
+  "slow_max_kmh": 146.0,
+  "fast_min_kmh": 238.0,
+  "provenance": {
+    "generated": "2026-07-22",
+    "events": 24,
+    "corners": 403,
+    "method": "tertiles of per-corner apex (min) speed on the fastest cached Q lap, window \u00b140 m",
+    "percentiles_kmh": {
+      "10": 95.0,
+      "25": 125.9,
+      "50": 191.9,
+      "75": 255.2,
+      "90": 287.8
+    }
+  }
+}

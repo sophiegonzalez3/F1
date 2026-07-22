@@ -576,6 +576,7 @@ def _track_map_paths(season, event_name, session_id):
     return {
         "line":    base.with_suffix(".parquet"),
         "corners": Path(str(base) + "_corners.parquet"),
+        "marshal": Path(str(base) + "_marshal.parquet"),
         "meta":    base.with_suffix(".json"),
     }
 
@@ -594,24 +595,31 @@ def _read_track_map_cache(paths) -> dict | None:
     line = pd.read_parquet(paths["line"])
     corners = (pd.read_parquet(paths["corners"])
                if paths["corners"].exists() else pd.DataFrame())
+    marshal = (pd.read_parquet(paths["marshal"])
+               if paths["marshal"].exists() else pd.DataFrame())
     with open(paths["meta"], "r", encoding="utf-8") as fh:
         meta = _json.load(fh)
-    return {"line": line, "corners": corners, **meta}
+    return {"line": line, "corners": corners, "marshal_sectors": marshal, **meta}
 
 
 def get_track_map(season, event_name, session_id="Q", force=False) -> dict | None:
     """
     Return {line: DataFrame[X,Y,gear,Speed,sector,drs], corners: DataFrame,
-            rotation, driver, laptime, event, session} for the fastest lap of the
-    given session. Cached to data/track_maps/. Returns None if no lap/telemetry.
+            marshal_sectors: DataFrame, rotation, driver, laptime, event,
+            session} for the fastest lap of the given session. Cached to
+    data/track_maps/. Returns None if no lap/telemetry.
     """
     paths = _track_map_paths(season, event_name, session_id)
 
     if not force:
         cached = _read_track_map_cache(paths)
-        if cached is not None and _TRACK_LINE_COLS.issubset(cached["line"].columns):
+        if (cached is not None
+                and _TRACK_LINE_COLS.issubset(cached["line"].columns)
+                and paths["marshal"].exists()):
             return cached
-        # else: cache missing or pre-dates sectors/DRS → (re)fetch to upgrade.
+        # else: cache missing or pre-dates sectors/DRS/marshal sectors → (re)fetch
+        # to upgrade. The marshal parquet is written even when empty, so its mere
+        # existence marks a cache produced by this version.
 
     import fastf1
     fastf1.Cache.enable_cache(str(Path(FASTF1_CACHE_DIR)))
@@ -661,12 +669,18 @@ def get_track_map(season, event_name, session_id="Q", force=False) -> dict | Non
 
     rotation = 0.0
     corners = pd.DataFrame()
+    marshal = pd.DataFrame()
+    _MARKER_COLS = ["Number", "Letter", "X", "Y", "Angle", "Distance"]
     try:
         ci = sess.get_circuit_info()
         rotation = float(ci.rotation)
-        _corner_cols = [c for c in ["Number", "Letter", "X", "Y", "Angle", "Distance"]
-                        if c in ci.corners.columns]
+        _corner_cols = [c for c in _MARKER_COLS if c in ci.corners.columns]
         corners = ci.corners[_corner_cols].copy()
+        # Marshalling sectors — the real, per-circuit mini-sector boundaries F1's
+        # own timing uses (count varies by track: 21 at Spa, 25 at Silverstone…).
+        _ms = getattr(ci, "marshal_sectors", None)
+        if _ms is not None and not _ms.empty:
+            marshal = _ms[[c for c in _MARKER_COLS if c in _ms.columns]].copy()
     except Exception as exc:
         logging.warning("circuit_info unavailable for %s %s: %s", season, event_name, exc)
 
@@ -685,10 +699,12 @@ def get_track_map(season, event_name, session_id="Q", force=False) -> dict | Non
     line.to_parquet(paths["line"], index=False)
     if not corners.empty:
         corners.to_parquet(paths["corners"], index=False)
+    # written even when empty — its existence marks a cache carrying marshal data
+    marshal.to_parquet(paths["marshal"], index=False)
     with open(paths["meta"], "w", encoding="utf-8") as fh:
         _json.dump(meta, fh)
 
-    return {"line": line, "corners": corners, **meta}
+    return {"line": line, "corners": corners, "marshal_sectors": marshal, **meta}
 
 
 def _track_map_layout(fig: go.Figure, title: str, height: int = 480) -> go.Figure:

@@ -1,7 +1,7 @@
 """
-TELEMETRY tab — best-lap leaderboard + telemetry channel overlay + corner
-analysis + mini-sector delta decomposition + racing-line overlay + mini-
-sector heatmap. Adds the driver-style fingerprint section at the bottom.
+TELEMETRY tab — track zone dominance map + best-lap leaderboard + telemetry
+channel overlay + corner analysis + mini-sector delta decomposition +
+racing-line overlay. Adds the driver-style fingerprint section at the bottom.
 Extracted from app.py.
 """
 from __future__ import annotations
@@ -32,7 +32,9 @@ from f1lib.config import (
 from f1lib.processing import (
     best_laps_table, format_lap_time,
 )
+from f1lib.standings import _season_team_tiers
 from tabs.fingerprints import fingerprint_section
+from tabs.zones import zone_dominance_section
 
 # mirror data state so bare `laps`, `telemetry`, SESSIONS, etc. still resolve
 state.register(globals())
@@ -111,8 +113,9 @@ def _lap_telemetry(session, driver_short, lapno, tel_pool=None):
 def _best_lap_telemetry_frame(fl):
     """Concatenated telemetry of each driver's single best valid lap across all
     loaded sessions in *fl* (one best lap per driver). Tagged with Driver_Short
-    and Team. Used by the Max-Speed / Gear-usage charts, the mini-sector
-    heatmap, and the style fingerprints.
+    and Team. Used by the Max-Speed / Gear-usage charts and the style
+    fingerprints. (The zone dominance card does NOT use this — it measures
+    quartile pace over many laps, not a single best lap.)
 
     Splits the telemetry into per-(session, driver) pools with ONE pass first;
     windowing each lap then works on a few thousand rows. The old version
@@ -450,9 +453,9 @@ def _corner_analysis(specs):
     """Build the Corner Analysis outputs for the selected lap(s).
 
     *specs* is a list of (session, driver_short, lapno). Returns
-    ``(fig_speed, fig_brake, table_records, table_columns)``. When a single lap
-    is selected the speed chart shows its full entry/apex/exit profile; with
-    several laps it overlays each lap's apex speed for a direct comparison.
+    ``(fig_speed, fig_brake)``. When a single lap is selected the speed chart
+    shows its full entry/apex/exit profile; with several laps it overlays each
+    lap's apex speed for a direct comparison.
     """
     metrics = []   # (label_str, team, dataframe)
     for session, driver, lapno in specs:
@@ -470,7 +473,7 @@ def _corner_analysis(specs):
         msg = ("No corner geometry available for the selected lap(s) — the "
                "circuit map may still be downloading, or the laps predate the "
                "loaded telemetry window.")
-        return (_empty_channel_fig(msg), _empty_channel_fig(msg), [], [])
+        return _empty_channel_fig(msg), _empty_channel_fig(msg)
 
     # Master corner order (by track position) across every plotted lap.
     order = (pd.concat([m[2][["label", "frac"]] for m in metrics])
@@ -522,21 +525,7 @@ def _corner_analysis(specs):
                             xaxis=dict(type="category", categoryorder="array",
                                        categoryarray=order))
 
-    # Detail table (one row per corner per lap).
-    recs = []
-    for label, _team, cm in metrics:
-        for _, r in cm.iterrows():
-            recs.append({
-                "Lap": label, "Corner": r["label"],
-                "Entry": round(r["entry_speed"]) if np.isfinite(r["entry_speed"]) else None,
-                "Apex":  round(r["apex_speed"])  if np.isfinite(r["apex_speed"])  else None,
-                "Exit":  round(r["exit_speed"])  if np.isfinite(r["exit_speed"])  else None,
-                "Brake (m)": round(r["brake_dist"]) if np.isfinite(r["brake_dist"]) else None,
-                "Min Gear": int(r["min_gear"]) if np.isfinite(r["min_gear"]) else None,
-            })
-    cols = [{"name": c, "id": c} for c in
-            ["Lap", "Corner", "Entry", "Apex", "Exit", "Brake (m)", "Min Gear"]]
-    return fig_speed, fig_brake, recs, cols
+    return fig_speed, fig_brake
 
 
 # ── Delta decomposition by track sector ───────────────────────────
@@ -545,23 +534,6 @@ def _corner_analysis(specs):
 # Uses _lap_telemetry's integrated Distance + the lap's SectorNTime values;
 # no extra data source.
 _SECTOR_FILL = ("rgba(255,255,255,0.00)", "rgba(255,255,255,0.035)")
-
-
-def _minisector_times(dist, trel, n=MINI_SECTORS):
-    """Per-mini-sector traversal times for one lap.
-
-    Splits the lap into *n* equal-distance segments (edges at fractions
-    0, 1/n … 1 of the lap's measured length) and returns the time spent in each
-    by interpolating lap-relative time at the segment edges. *dist* must be
-    strictly increasing. Returns a float array of length *n* (NaN where the lap
-    is too short), so different laps' mini-sectors line up fraction-for-fraction.
-    """
-    dist = np.asarray(dist, float); trel = np.asarray(trel, float)
-    if dist.size < 2 or not np.isfinite(dist[-1]) or dist[-1] <= 0:
-        return np.full(n, np.nan)
-    edges = np.linspace(0.0, dist[-1], n + 1)
-    t_at  = np.interp(edges, dist, trel)
-    return np.diff(t_at)
 
 
 def _lap_trace(session, driver, lapno):
@@ -772,24 +744,72 @@ def _racing_line_fig(specs):
     return fig
 
 
+# ── Best Lap Leaderboard: one lap per driver, paged by championship tier ──
+_TIER_PAGES = [("top", "Top teams"), ("mid", "Midfield"), ("back", "Back of the grid")]
+
+
+def _leaderboard_tier_pages(disp: pd.DataFrame) -> list[tuple[str, list]]:
+    """Split the one-lap-per-driver leaderboard into three pages by the loaded
+    season's championship tier — the SAME top/mid/back split the sidebar's tier
+    buttons use — fastest lap first within each page. Falls back to pace-thirds
+    when no standings are available (e.g. pre-season)."""
+    tiers = _season_team_tiers()
+    if tiers and any(tiers.get(k) for k, _ in _TIER_PAGES):
+        pages = []
+        for key, label in _TIER_PAGES:
+            teams = set(tiers.get(key, []))
+            recs = disp[disp["Team"].isin(teams)].to_dict("records")
+            pages.append((label, recs))
+        return pages
+    # no standings → split the pace-sorted field into three near-equal pages
+    recs = disp.to_dict("records")
+    c = max(1, -(-len(recs) // 3))
+    return [("Fastest third", recs[:c]),
+            ("Middle third", recs[c:2 * c]),
+            ("Slowest third", recs[2 * c:])]
+
+
+def _tier_caption(idx: int, total: int, label: str, n: int) -> html.Span:
+    return html.Span([
+        html.Span(f"Page {idx + 1} / {total}", style={
+            "color": ACCENT, "fontWeight": "700"}),
+        html.Span(f"  ·  {label}  ·  {n} driver{'s' if n != 1 else ''}",
+                  style={"color": TEXT_DIM}),
+    ], style={"fontSize": "0.78rem"})
+
+
 def tab_laps(fl, ft):
-    # one heavy best-lap telemetry extraction, shared by the heatmap,
+    # one heavy best-lap telemetry extraction, shared by the zone dominance map,
     # max-speed/gear charts and the style fingerprints
     blt = _best_lap_telemetry_frame(fl)
-    sector_fig = _sector_heatmap(fl, blt=blt)
 
     bt=best_laps_table(fl)
+    # One row per driver: the absolute best valid lap across every loaded session
+    # (best_laps_table gives best-per-compound-per-session; collapse to the single
+    # fastest per driver).
+    bt=bt.loc[bt.groupby("Driver_Short")["LapTime_s"].idxmin()]
     bt["Best Lap"]=bt["LapTime_s"].apply(format_lap_time)
     disp=bt[["session_name","Driver_Short","Team","Compound","Best Lap","LapTime_s","TyreAge","LapNo"]].rename(columns={
         "session_name":"Session","Driver_Short":"Driver","LapTime_s":"Lap Time (s)","TyreAge":"Tyre Age","LapNo":"Lap #"
     }).sort_values("Lap Time (s)").reset_index(drop=True)
+
+    # Split into three pages by championship tier (same top/mid/back definition
+    # the sidebar's tier buttons use), fastest first within each page.
+    pages=_leaderboard_tier_pages(disp)
+    page0=pages[0][1] if pages else []
+    # custom pagination is incompatible with native sort/filter (they need the
+    # full dataset client-side); drop them for this table — each tier page is
+    # already ordered fastest-first.
+    _tbl_style={k:v for k,v in TABLE_STYLE.items()
+                if k not in ("sort_action","filter_action")}
     best_tbl=dash_table.DataTable(
         id="laptel-best-table",
-        data=disp.to_dict("records"),
+        data=page0,
         columns=[{"name":c,"id":c} for c in disp.columns],
         row_selectable="multi",
-        selected_rows=[0] if len(disp) else [],
-        **TABLE_STYLE,
+        selected_rows=[0] if page0 else [],
+        page_action="custom", page_current=0, page_count=len(pages),
+        **_tbl_style,       # provides page_size (20 > any tier, so a tier shows whole)
         style_data_conditional=[
             {"if":{"state":"selected"},
              "backgroundColor":ACCENT+"33","border":f"1px solid {ACCENT}"},
@@ -826,17 +846,40 @@ def tab_laps(fl, ft):
         gp["total"]=gp.groupby("Driver_Short")["cnt"].transform("sum")
         gp["pct"]=gp["cnt"]/gp["total"]*100
         drv_ord=sorted(gp["Driver_Short"].dropna().unique().tolist())
-        drv_colors=[TEAM_COLORS.get(drv_team.get(d,"x"),"#808080") for d in drv_ord]
-        for gear in sorted(gp["GearNo"].dropna().unique()):
+        drv_hex=[TEAM_COLORS.get(drv_team.get(d,"x"),"#808080") for d in drv_ord]
+        gears=sorted(gp["GearNo"].dropna().unique())
+        # Two channels: hue = team (so drivers stay scannable across the row),
+        # opacity = gear. Against the dark card a low alpha blends toward the
+        # background, so low gears read dark and the top gears read brightest.
+        # Without this every segment of a driver's stack was the same team
+        # colour and the breakdown was invisible.
+        def _alpha(i):
+            return 0.30+0.70*(i/(len(gears)-1)) if len(gears)>1 else 1.0
+        for i,gear in enumerate(gears):
             sub=gp[gp["GearNo"]==gear].set_index("Driver_Short")
+            a=_alpha(i)
             fig_gear.add_trace(go.Bar(
                 x=drv_ord,
                 y=[sub.loc[d,"pct"] if d in sub.index else 0 for d in drv_ord],
-                name=f"Gear {int(gear)}",
-                marker_color=drv_colors,
+                name=f"Gear {int(gear)}", showlegend=False,
+                marker=dict(color=[_hex_to_rgba(c,a) for c in drv_hex],
+                            line=dict(color=CARD_BG,width=0.8)),
                 hovertemplate="Driver: %{x}<br>Gear "+str(int(gear))+": %{y:.1f}%<extra></extra>"))
+        # The bars are multi-coloured, so their own legend swatch would show one
+        # arbitrary team. These empty traces carry a neutral swatch at each
+        # gear's opacity instead — the legend then reads as the gear ramp.
+        for i,gear in enumerate(gears):
+            fig_gear.add_trace(go.Bar(
+                x=[None],y=[None],name=f"Gear {int(gear)}",showlegend=True,
+                hoverinfo="skip",
+                marker=dict(color=_hex_to_rgba("#C8CCD4",_alpha(i)),
+                            line=dict(color=CARD_BG,width=0.8))))
         theme(fig_gear,420)
-        fig_gear.update_layout(barmode="stack",xaxis_title="Driver",yaxis_title="Time in Gear (%)")
+        fig_gear.update_layout(barmode="stack",xaxis_title="Driver",yaxis_title="Time in Gear (%)",
+                               bargap=0.25,
+                               legend=dict(orientation="h",yanchor="bottom",y=1.0,
+                                           xanchor="left",x=0,bgcolor="rgba(0,0,0,0)",
+                                           font=dict(size=10)))
     else:
         fig_gear=_empty_channel_fig("No best-lap telemetry available.")
 
@@ -850,27 +893,24 @@ def tab_laps(fl, ft):
     ])
 
     return html.Div([
-        card(f"Mini-Sector Dominance — best lap split into {MINI_SECTORS} segments, "
-             "% gap to fastest",
-             dcc.Graph(figure=sector_fig, config=GFX) if sector_fig.data else
-             html.P("No telemetry available for the selected sessions.",
-                    style={"color": TEXT_DIM}),
-             info=(f"Data: each driver's single best lap is split into {MINI_SECTORS} "
-                   "equal-distance mini-sectors (from the telemetry), and each cell is "
-                   "coloured by that driver's % gap to the fastest driver through that "
-                   "mini-sector (green = quickest there, red = slowest). Drivers are "
-                   "ordered fastest lap on top. Why: far finer than the three timing "
-                   "sectors — it shows exactly which stretches of track each driver "
-                   "owns and where the lap time is really won or lost.")),
+        zone_dominance_section(fl),
         card("Best Lap Leaderboard",
-             info=("Data: each driver's best valid lap per compound and session, "
-                   "ranked, with sector times and speed-trap figures. Why: the "
-                   "entry point for telemetry work — tick laps here to overlay "
-                   "their full telemetry traces in the charts below and see "
-                   "where the time difference is made."),
+             info=("Data: each driver's single fastest valid lap across all loaded "
+                   "sessions (one lap per driver). The list is paged by "
+                   "championship tier — page 1 the top teams, page 2 the "
+                   "midfield, page 3 the back of the grid (the same split as the "
+                   "sidebar's tier buttons). Why: the entry point for telemetry "
+                   "work — tick laps here to overlay their full telemetry traces "
+                   "in the charts below and see where the time difference is made."),
              children=html.Div([
-                 html.P("Select one or more laps (checkbox at left) to drive the "
-                        "Telemetry Channels overlay below.",
+                 dcc.Store(id="laptel-pages",
+                           data=[{"label": lbl, "records": recs} for lbl, recs in pages]),
+                 html.Div(_tier_caption(0, len(pages), pages[0][0], len(pages[0][1]))
+                          if pages else "",
+                          id="laptel-tier-label", style={"marginBottom":"6px"}),
+                 html.P("One lap per driver. Use the page controls below the table "
+                        "to move between tiers; tick laps to drive the Telemetry "
+                        "Channels overlay below.",
                         style={"color":TEXT_DIM,"fontSize":"0.74rem","marginBottom":"8px"}),
                  best_tbl,
              ])),
@@ -902,14 +942,9 @@ def tab_laps(fl, ft):
                     style={"color":TEXT_DIM,"fontWeight":"400","fontSize":"0.72rem","marginLeft":"6px"},
                 ),
              ]),
-             html.Div([
-                 dbc.Row([
-                     dbc.Col(dcc.Graph(id="corner-speed-graph", config=GFX), md=6),
-                     dbc.Col(dcc.Graph(id="corner-brake-graph", config=GFX), md=6),
-                 ]),
-                 dash_table.DataTable(
-                     id="corner-analysis-table", data=[], columns=[], **TABLE_STYLE,
-                 ),
+             dbc.Row([
+                 dbc.Col(dcc.Graph(id="corner-speed-graph", config=GFX), md=6),
+                 dbc.Col(dcc.Graph(id="corner-brake-graph", config=GFX), md=6),
              ]),
              info=("Data: for each lap you select in the Best Lap Leaderboard, the "
                    "lap is split into one zone per numbered corner (from the cached "
@@ -961,6 +996,28 @@ def tab_laps(fl, ft):
     ])
 
 
+# ── Leaderboard pagination — swap the table's rows per championship tier ──
+@callback(
+    Output("laptel-best-table", "data"),
+    Output("laptel-best-table", "selected_rows"),
+    Output("laptel-tier-label", "children"),
+    Input("laptel-best-table", "page_current"),
+    State("laptel-pages", "data"),
+    prevent_initial_call=True,
+)
+def _laptel_paginate(page_current, pages):
+    if not pages:
+        return [], [], no_update
+    i = max(0, min(int(page_current or 0), len(pages) - 1))
+    recs = pages[i].get("records", [])
+    # Clear the selection on a page change: the previously-selected row indices
+    # are meaningless against the new tier's rows, and leaving them set would
+    # re-fire the (heavy) telemetry overlays. Paging stays instant; the user
+    # ticks a lap on the new page to drive the charts.
+    return (recs, [],
+            _tier_caption(i, len(pages), pages[i].get("label", ""), len(recs)))
+
+
 # ── Telemetry Channels overlay — driven by leaderboard selection ──
 @callback(
     Output("laptel-channels-graph", "figure"),
@@ -989,8 +1046,6 @@ def update_laptel_channels(selected_rows, data):
 @callback(
     Output("corner-speed-graph", "figure"),
     Output("corner-brake-graph", "figure"),
-    Output("corner-analysis-table", "data"),
-    Output("corner-analysis-table", "columns"),
     Input("laptel-best-table", "selected_rows"),
     State("laptel-best-table", "data"),
 )
@@ -998,7 +1053,7 @@ def update_corner_analysis(selected_rows, data):
     if not data or not selected_rows:
         empty = _empty_channel_fig(
             "Select one or more laps in the Best Lap Leaderboard to view corner analysis.")
-        return empty, empty, [], []
+        return empty, empty
     specs = []
     for i in selected_rows:
         if i is None or i >= len(data):
@@ -1010,7 +1065,7 @@ def update_corner_analysis(selected_rows, data):
             continue
     if not specs:
         empty = _empty_channel_fig("Could not resolve the selected lap(s).")
-        return empty, empty, [], []
+        return empty, empty
     return _corner_analysis(specs)
 
 
@@ -1066,78 +1121,3 @@ def update_racing_line(selected_rows, data):
     return _racing_line_fig(specs)
 
 
-# ── Sector heatmap from laps data (current loaded meeting) ────
-def _sector_heatmap(laps_df: pd.DataFrame, blt: pd.DataFrame | None = None) -> go.Figure:
-    """Mini-sector dominance map: each driver's best lap split into MINI_SECTORS
-    equal-distance segments, coloured by % gap to the fastest driver in that
-    mini-sector (green = quickest there). Far finer than the three timing
-    sectors — it shows exactly which stretches of track each driver owns.
-
-    Pass `blt` (the best-lap telemetry frame) when the caller already built
-    it — tab_laps does — so the heavy extraction runs once per render."""
-    if telemetry is None or telemetry.empty or laps_df.empty:
-        return go.Figure()
-    if blt is None:
-        blt = _best_lap_telemetry_frame(laps_df)
-    if blt.empty or not {"Distance", "t_rel", "Driver_Short"}.issubset(blt.columns):
-        return go.Figure()
-
-    n = MINI_SECTORS
-    times, teams = {}, {}
-    for drv, g in blt.groupby("Driver_Short"):
-        g = g.sort_values("Distance")
-        dist = pd.to_numeric(g["Distance"], errors="coerce").to_numpy()
-        trel = pd.to_numeric(g["t_rel"], errors="coerce").to_numpy()
-        ok = np.isfinite(dist) & np.isfinite(trel)
-        dist, trel = dist[ok], trel[ok]
-        if dist.size < n + 1:
-            continue
-        keep = np.concatenate([[True], np.diff(dist) > 0])      # strictly increasing
-        dist, trel = dist[keep], trel[keep]
-        mt = _minisector_times(dist, trel, n)
-        if np.all(np.isnan(mt)):
-            continue
-        times[drv] = mt
-        teams[drv] = g["Team"].iloc[0] if "Team" in g.columns else None
-    if not times:
-        return go.Figure()
-
-    cols = [str(i + 1) for i in range(n)]
-    mat = pd.DataFrame(times, index=cols).T                     # drivers × mini-sectors
-    mat = mat.reindex(mat.sum(axis=1).sort_values().index)      # fastest lap on top
-
-    gap_pct = mat.copy()
-    for col in gap_pct.columns:
-        leader = gap_pct[col].min()
-        gap_pct[col] = (gap_pct[col] - leader) / leader * 100 if leader and np.isfinite(leader) else np.nan
-
-    # Colour by each mini-sector's OWN range (fastest=0 → slowest=1), so the
-    # within-mini-sector ranking is legible everywhere. With a shared scale the
-    # mini-sectors with the biggest spread dominate and tightly-matched ones all
-    # wash out to the same green.
-    znorm = gap_pct.copy()
-    for col in znorm.columns:
-        cmax = znorm[col].max()
-        znorm[col] = znorm[col] / cmax if (cmax and np.isfinite(cmax) and cmax > 0) else 0.0
-
-    text_annot = mat.applymap(lambda v: f"{v:.3f}s" if pd.notna(v) else "—")
-
-    fig = go.Figure(go.Heatmap(
-        z=znorm.values, x=cols, y=list(gap_pct.index),
-        colorscale=[[0, "#2ECC71"], [0.5, "#F1C40F"], [1, "#E74C3C"]],
-        zmin=0, zmax=1,
-        text=text_annot.values, customdata=gap_pct.values,
-        hovertemplate=("Driver: %{y}<br>Mini-sector: %{x}<br>"
-                       "Time: %{text}<br>Gap: +%{customdata:.3f}%<extra></extra>"),
-        colorbar=dict(title=dict(text="rank in<br>mini-sector", font=dict(color=TEXT_MAIN)),
-                      tickvals=[0, 1], ticktext=["fastest", "slowest"],
-                      tickfont=dict(color=TEXT_MAIN)),
-    ))
-    h = max(300, len(mat) * 26 + 100)
-    theme(fig, h)
-    fig.update_layout(
-        xaxis_title="Mini-sector  (1 = start/finish → lap end)",
-        margin=dict(l=80, r=80, t=30, b=40),
-        yaxis=dict(autorange="reversed"),
-    )
-    return fig

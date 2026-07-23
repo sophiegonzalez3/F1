@@ -18,6 +18,7 @@ from dash import html, dcc, callback, Input, Output
 import dash_bootstrap_components as dbc
 
 from f1lib.components import theme, card, GFX, abbr
+from f1lib.glossary import gloss
 from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
 from tabs.pace_data import team_pace_df, seasons, event_short, season_calendar_df
 from tabs.regulations import regulations_block
@@ -31,6 +32,7 @@ from tabs.season_ops import (
     chaos_timeline_card, pit_league_card, lap1_league_card,
     pu_points_card, affinity_card, testing_card, penalties_card,
 )
+from tabs.season_intro import season_intro_block
 
 
 def _team_order(s: pd.DataFrame) -> list[str]:
@@ -262,6 +264,84 @@ def _calendar_ribbon(season: int):
     )
 
 
+# ── Plain-English "bottom line" readings (newcomer layer) ────
+# Data-driven one-liners: they read the same season table the charts draw from
+# and state, in plain words, what the picture is actually saying — for a viewer
+# who can't yet read a pace-gap chart. See f1lib/glossary.py for the term layer.
+
+def _fmt_team(t) -> str:
+    t = str(t)
+    for suf in (" F1 Team", " Racing"):
+        if t.endswith(suf):
+            t = t[: -len(suf)]
+    return t
+
+
+def _fastest_team(s: pd.DataFrame, col: str):
+    """Team with the smallest average gap in `col` (= quickest). None if empty."""
+    avg = s.groupby("team")[col].mean().dropna().sort_values()
+    return None if avg.empty else avg.index[0]
+
+
+def _points_plain(s: pd.DataFrame):
+    last = (s.sort_values("round").groupby("team")["cum_points"].last()
+            .sort_values(ascending=False))
+    if last.empty:
+        return None
+    leader, pts = _fmt_team(last.index[0]), last.iloc[0]
+    n = int(s["round"].max())
+    tail = (" The team with the most points at the end of the year wins the "
+            "Constructors' title.")
+    if len(last) >= 2:
+        margin, second = pts - last.iloc[1], _fmt_team(last.index[1])
+        if margin >= 1:
+            return (f"{n} rounds in, {leader} lead with {pts:.0f} points — "
+                    f"{margin:.0f} ahead of {second}.{tail}")
+        return (f"{n} rounds in, {leader} and {second} are locked together at "
+                f"the top on about {pts:.0f} points.{tail}")
+    return f"{leader} lead with {pts:.0f} points.{tail}"
+
+
+def _quali_plain(s: pd.DataFrame):
+    fastest = _fastest_team(s, "quali_gap_pct")
+    if fastest is None:
+        return None
+    return (f"Over a single flat-out lap this season, {_fmt_team(fastest)} have "
+            "been the quickest car on average — the strongest qualifiers, so "
+            "they tend to line up near the front for the race.")
+
+
+def _race_plain(s: pd.DataFrame, quali_fastest):
+    fastest = _fastest_team(s, "race_pace_gap_pct")
+    if fastest is None:
+        return None
+    if quali_fastest is not None and fastest != quali_fastest:
+        tail = (f" — a different car than the one-lap pacesetter "
+                f"({_fmt_team(quali_fastest)}), so watch them recover ground "
+                "over a race.")
+    else:
+        tail = (" — the same car that tops one-lap pace, the mark of an "
+                "all-round-strong package.")
+    return (f"Over long runs on wearing tyres, {_fmt_team(fastest)} have the "
+            f"best race pace on average{tail}")
+
+
+def _character_plain(s: pd.DataFrame):
+    avg = (s.groupby("team")[["quali_gap_pct", "race_pace_gap_pct"]]
+           .mean().dropna())
+    if avg.empty:
+        return None
+    gain = (avg["quali_gap_pct"] - avg["race_pace_gap_pct"]).sort_values(
+        ascending=False)
+    if gain.iloc[0] > 0.05:
+        return (f"Teams below the dotted line race better than they qualify. "
+                f"{_fmt_team(gain.index[0])} gain the most on Sundays — gentler "
+                "on their tyres and stronger with a heavy fuel load than their "
+                "Saturday pace suggests.")
+    return ("Most teams sit close to the line — about as strong in the race as "
+            "they are in qualifying.")
+
+
 def _season_content(season: int) -> html.Div:
     df = team_pace_df()
     s = df[df["season"] == season]
@@ -269,10 +349,13 @@ def _season_content(season: int) -> html.Div:
         return html.P("No pace data for this season — run compute_team_pace.py.",
                       style={"color": TEXT_DIM})
     n_race = s["race_pace_gap_pct"].notna().sum()
-    ribbon = _calendar_ribbon(season)
-    return html.Div(([ribbon] if ribbon else []) + [
+    quali_fastest = _fastest_team(s, "quali_gap_pct")
+    # The season-calendar ribbon now lives at the top of the tab, above the
+    # championship standings (see tab_season) — not here in SEASON FORM.
+    return html.Div([
         card(
-            "Qualifying Pace Gap by Round",
+            [*gloss("qualifying", "Qualifying"), " ",
+             *gloss("one-lap pace", "Pace"), " Gap by Round"],
             dcc.Graph(figure=_trend_fig(
                 s, "quali_gap_pct", "Gap to pole (%)"), config=GFX),
             info=("Data: each team's best single qualifying lap (best of "
@@ -281,9 +364,10 @@ def _season_content(season: int) -> html.Div:
                   "cleanest read of raw car pace over a season — development "
                   "trends, upgrades working (or not), and who is closing on "
                   "whom. Click the legend to isolate teams."),
+            plain=_quali_plain(s),
         ),
         card(
-            "Race Pace Gap by Round",
+            [*gloss("race pace", "Race Pace"), " Gap by Round"],
             dcc.Graph(figure=_trend_fig(
                 s, "race_pace_gap_pct", "Gap to best (%)"), config=GFX)
             if n_race else
@@ -297,14 +381,17 @@ def _season_content(season: int) -> html.Div:
                   "Sunday car performance, free of qualifying engine modes "
                   "and low-fuel glory runs; compare with the qualifying "
                   "chart to spot one-lap vs race-run cars."),
+            plain=_race_plain(s, quali_fastest),
         ),
         card(
-            "Constructors' Points Race",
+            [*gloss("constructor", "Constructors'"), " ",
+             *gloss("points", "Points"), " Race"],
             dcc.Graph(figure=_points_fig(s), config=GFX),
             info=("Data: cumulative constructor points (race + sprint) after "
                   "each round. Why: the championship story in one picture — "
                   "where gaps opened, and whether pace trends above are "
                   "converting into points."),
+            plain=_points_plain(s),
         ),
         card(
             "Saturday vs Sunday Character",
@@ -315,6 +402,7 @@ def _season_content(season: int) -> html.Div:
                   "race better than they qualify (tyre-gentle, heavy-fuel "
                   "strong) — expect them to gain on Sundays; above the line "
                   "is a quali car that goes backwards in races."),
+            plain=_character_plain(s),
         ),
     ] + [c for c in (affinity_card(season), chaos_timeline_card(season),
                       pit_league_card(season), lap1_league_card(season),
@@ -365,8 +453,17 @@ def tab_season(standings=None, upgrades=None) -> html.Div:
         ])
     )
     parts = []
+    # Newcomer front door (Option C): the season story + collapsible "New to
+    # F1?" primer, pinned above everything. Always about the latest season.
+    if yrs:
+        parts.append(season_intro_block(max(yrs)))
     if standings is not None:
+        # Season calendar ribbon sits just above the championship leaderboard —
+        # the season's shape (when/where races happen, what's still to come)
+        # before the table of who's currently winning it.
+        cal_card = _calendar_ribbon(max(yrs)) if yrs else None
         parts += [
+            *([cal_card] if cal_card is not None else []),
             _section_header("CHAMPIONSHIP STANDINGS",
                             "drivers' and constructors' tables for the loaded "
                             "season · rank arrows show this event's effect"),

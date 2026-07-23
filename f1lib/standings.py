@@ -543,12 +543,132 @@ def _constructor_standings_widget(fl):
     )
 
 
+def _driver_name_lookup() -> dict[str, str]:
+    """Abbreviation → full name from the loaded session results (free). Covers
+    the current grid; unknown codes fall back to the abbreviation."""
+    r = getattr(state, "results_raw", None)
+    if r is None or getattr(r, "empty", True):
+        return {}
+    if "Abbreviation" in r.columns and "FullName" in r.columns:
+        return {str(a): str(n) for a, n in zip(r["Abbreviation"], r["FullName"])
+                if str(n) and str(n) != "nan"}
+    return {}
+
+
+def _recent_champions(n: int = 5) -> list[dict]:
+    """The last `n` COMPLETED seasons' top two in each championship (drivers +
+    constructors), most recent first. The newest season in the archive is
+    assumed in-progress and skipped."""
+    if HIST_DRIVER_STANDINGS.empty or HIST_STANDINGS.empty:
+        return []
+    seasons = sorted(int(s) for s in HIST_DRIVER_STANDINGS["season"].unique())
+    completed = seasons[:-1] if len(seasons) > 1 else seasons
+    out = []
+    for season in sorted(completed, reverse=True)[:n]:
+        ds = _driver_standings_after_round(season, None)
+        ts = _standings_after_round(season, None)
+        if not ds or not ts:
+            continue
+        d = sorted(ds.items(), key=lambda kv: -kv[1]["pts"])
+        t = sorted(ts.items(), key=lambda kv: -kv[1])
+        out.append({
+            "season": season,
+            "d1_abbr": d[0][0], "d1_team": d[0][1]["team"],
+            "d2_abbr": d[1][0] if len(d) > 1 else None,
+            "d2_team": d[1][1]["team"] if len(d) > 1 else None,
+            "t1_team": t[0][0],
+            "t2_team": t[1][0] if len(t) > 1 else None,
+        })
+    return out
+
+
+def _champions_card():
+    """Small 'Recent Champions' card that fills the space beneath the (shorter)
+    constructor leaderboard — champion + runner-up in both titles, per season.
+    None if the archive can't answer."""
+    rows_data = _recent_champions(7)
+    if not rows_data:
+        return None
+    names = _driver_name_lookup()
+
+    def _line(rank, clr, text, champ):
+        return html.Div([
+            html.Span(rank, style={
+                "flex": "0 0 12px", "fontSize": "0.6rem", "fontWeight": "800",
+                "color": ACCENT if champ else TEXT_DIM, "textAlign": "center"}),
+            html.Span(style={
+                "display": "inline-block", "width": "7px", "height": "7px",
+                "borderRadius": "50%", "background": clr, "margin": "0 6px",
+                "flex": "0 0 auto", "opacity": "1" if champ else "0.55"}),
+            html.Span(text, style={
+                "overflow": "hidden", "textOverflow": "ellipsis",
+                "whiteSpace": "nowrap"}),
+        ], style={"display": "flex", "alignItems": "center",
+                  "fontSize": "0.78rem",
+                  "fontWeight": "700" if champ else "400",
+                  "color": TEXT_MAIN if champ else TEXT_DIM,
+                  "marginBottom": "2px" if champ else 0})
+
+    def _stack(c1, n1, c2, n2):
+        return html.Div([
+            _line("1", c1, n1, True),
+            _line("2", c2, n2, False) if n2 else html.Div(),
+        ], style={"flex": "1", "minWidth": 0})
+
+    head = html.Div([
+        html.Span("YEAR", style={"flex": "0 0 40px", "fontSize": "0.64rem",
+                                 "color": TEXT_DIM, "letterSpacing": "0.5px"}),
+        html.Span("DRIVERS'", style={"flex": "1", "fontSize": "0.64rem",
+                                     "color": TEXT_DIM, "letterSpacing": "0.5px"}),
+        html.Span("CONSTRUCTORS'", style={"flex": "1", "fontSize": "0.64rem",
+                                          "color": TEXT_DIM,
+                                          "letterSpacing": "0.5px"}),
+    ], style={"display": "flex", "gap": "8px", "padding": "0 0 6px",
+              "borderBottom": f"1px solid {GRID_CLR}", "marginBottom": "2px"})
+
+    body_rows = []
+    for i, r in enumerate(rows_data):
+        d1c = TEAM_COLORS.get(r["d1_team"], "#808080")
+        d2c = TEAM_COLORS.get(r["d2_team"], "#808080")
+        t1c = TEAM_COLORS.get(r["t1_team"], "#808080")
+        t2c = TEAM_COLORS.get(r["t2_team"], "#808080")
+        d1n = names.get(r["d1_abbr"], r["d1_abbr"])
+        d2n = names.get(r["d2_abbr"], r["d2_abbr"]) if r["d2_abbr"] else None
+        body_rows.append(html.Div([
+            html.Span(str(r["season"]), style={
+                "flex": "0 0 40px", "fontWeight": "800", "color": TEXT_MAIN,
+                "fontSize": "0.82rem"}),
+            _stack(d1c, d1n, d2c, d2n),
+            _stack(t1c, r["t1_team"], t2c, r["t2_team"]),
+        ], style={
+            "display": "flex", "gap": "8px", "alignItems": "center",
+            "padding": "7px 0",
+            "borderTop": f"1px solid {GRID_CLR}" if i else "none"}))
+
+    return card(
+        "Championship historic winner",
+        html.Div([head] + body_rows),
+        info=("Data: the top two of both the drivers' and constructors' "
+              "championships for each completed season in the results archive, "
+              "most recent first (driver_standings_all.parquet / "
+              "constructor_standings_all.parquet). '1' is the champion, '2' the "
+              "runner-up; the coloured dot marks each one's team. The current, "
+              "in-progress season is shown live in the tables to the left, so "
+              "it is excluded here."),
+    )
+
+
 def _season_standings_row(fl):
     """Both championship leaderboards side by side — the head of the
-    SEASON tab (drivers left, constructors right)."""
+    SEASON tab (drivers left, constructors right). A compact 'Recent Champions'
+    card fills the gap left beneath the shorter constructor table."""
+    right = [_constructor_standings_widget(fl)]
+    champs = _champions_card()
+    if champs is not None:
+        right.append(champs)
     return dbc.Row([
         dbc.Col(_driver_standings_widget(fl), lg=6),
-        dbc.Col(_constructor_standings_widget(fl), lg=6),
+        dbc.Col(right, lg=6),
     ], className="g-3")
 
 

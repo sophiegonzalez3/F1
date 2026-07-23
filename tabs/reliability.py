@@ -21,6 +21,7 @@ import plotly.graph_objects as go
 from dash import html, dcc
 
 from f1lib.components import card, theme, GFX
+from f1lib.glossary import gloss
 from f1lib.config import HISTORICAL_DIR, TEAM_COLORS, TEXT_MAIN, TEXT_DIM
 
 _RACE_PATH = Path(HISTORICAL_DIR) / "race_results_all.parquet"
@@ -149,9 +150,18 @@ def reliability_card(season: int):
     note = (" This season's archive only records a generic retirement status, "
             "so DNFs show as 'unclassified' rather than split by cause."
             if coarse else "")
+    _total_dnf, _starts = int(piv["dnf"].sum()), int(piv["starts"].sum())
+    _best = piv["finish_rate"].idxmax()
+    _plain = (
+        "Not every car reaches the finish — a crash or a mechanical failure "
+        "ends its race early (a 'DNF', short for Did Not Finish). This season "
+        f"{_total_dnf} of {_starts} car-races ended that way. {_best} have been "
+        "the most reliable, finishing the biggest share of their races — pace "
+        "means nothing if the car doesn't make it home.")
     return card(
-        "Reliability & DNFs",
+        ["Reliability & ", *gloss("dnf", "DNFs")],
         dcc.Graph(figure=_reliability_fig(season), config=GFX),
+        plain=_plain,
         info=("Data: every car-race in the historical results archive for this "
               "season, bucketed by its finishing Status into a classified "
               "finish vs. the reason it failed to finish (mechanical, racing "

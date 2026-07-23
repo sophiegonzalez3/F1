@@ -24,6 +24,7 @@ import dash_bootstrap_components as dbc
 
 import f1lib.state as state
 from f1lib.components import theme, card, kpi, tip, GFX
+from f1lib.glossary import gloss
 from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
 from f1lib.processing import format_lap_time
 from tabs.quali_replay import quali3d_card
@@ -417,6 +418,26 @@ def _grid_children(ql: pd.DataFrame, sess: str, apply_pens: bool = True):
     return [note, grid]
 
 
+def _grid_plain(ql: pd.DataFrame):
+    """Beginner reading of the grid: who took pole and who's on the front row."""
+    per = _quali_classification(ql)
+    if per.empty or "quali_pos" not in per.columns:
+        return None
+    per = per.dropna(subset=["quali_pos"])
+    p1 = per[per["quali_pos"] == 1]
+    if p1.empty:
+        return None
+    pole = p1.iloc[0]["driver"]
+    line = (f"{pole} set the fastest lap in qualifying to take pole position — "
+            "the number-one spot at the front of the grid.")
+    p2 = per[per["quali_pos"] == 2]
+    if not p2.empty:
+        line += (f" {p2.iloc[0]['driver']} lines up alongside on the front row. "
+                 "Starting near the front is a big advantage: clean air ahead "
+                 "and no traffic to fight past.")
+    return line
+
+
 def _grid_card(ql: pd.DataFrame, sess: str):
     body = _grid_children(ql, sess, apply_pens=True)
     if body is None:
@@ -427,7 +448,7 @@ def _grid_card(ql: pd.DataFrame, sess: str):
                    style={"display": "inline-block"}),
         style={"marginBottom": "4px"})
     return card(
-        "Starting Grid",
+        ["Starting ", *gloss("grid", "Grid")],
         [toggle, html.Div(body, id="quali-grid-body")],
         info=("Data: the official qualifying classification, with curated "
               "grid penalties applied on top — PU-pool drops from "
@@ -443,6 +464,7 @@ def _grid_card(ql: pd.DataFrame, sess: str):
               "quali screen and the actual grid can look very different — "
               "this shows the field as it will actually line up, with ▲▼ "
               "deltas vs the quali result."),
+        plain=_grid_plain(ql),
     )
 
 

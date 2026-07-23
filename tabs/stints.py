@@ -17,6 +17,7 @@ from f1lib.components import (
     theme, card, kpi, GFX, TABLE_STYLE, styled_table,
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
 )
+from f1lib.glossary import gloss
 from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS,
     ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
@@ -549,8 +550,19 @@ def tab_stints(fl, fs):
             f.update_layout(height=_h)
 
     # (a) Merged degradation-rate bars
+    _deg_plain = None
+    if not valid_stints.empty and "Stint_Deg_Rate" in valid_stints.columns:
+        _med = (valid_stints.dropna(subset=["Stint_Deg_Rate"])
+                .groupby("Compound")["Stint_Deg_Rate"].median())
+        if not _med.empty:
+            _deg_plain = (
+                "Every tyre slowly loses grip the longer it runs — that's "
+                "'degradation', measured as seconds lost per lap. Of the tyres "
+                f"used here the {str(_med.idxmax()).title()} wears fastest, so "
+                "cars on it fade soonest and have to pit earlier.")
     deg_rate_card = card(
-        "Tyre Degradation Rate — by Compound",
+        ["Tyre ", *gloss("degradation", "Degradation"), " Rate — by ",
+         *gloss("compound", "Compound")],
         _deg_columns(deg_bar_figs, "no valid stint on this compound"),
         info=("Data: degradation rate (s/lap of tyre age) from a linear fit on "
               "each driver's longest valid stint per compound, corrected for "
@@ -560,6 +572,7 @@ def tab_stints(fl, fs):
               "(tyre gains as it ages / holds on), the red half positive. Why: "
               "with fuel and track-grip trends removed, what remains is the tyre "
               "itself — lower/flatter = less degradation."),
+        plain=_deg_plain,
     )
 
     # (b) Merged field degradation curves — one subplot figure, shared legend
@@ -896,7 +909,7 @@ def tab_stints(fl, fs):
         *deg_cards,
         cliff_card,
         offset_card,
-        card("Stint Lap Inspector", stint_inspector,
+        card([*gloss("stint", "Stint"), " Lap Inspector"], stint_inspector,
              info=("Data: the individual laps of any stint, picked from a "
                    "dropdown that pre-ranks each driver's stints by pace — "
                    "times, tyre age, flags and validity per lap. Why: the "

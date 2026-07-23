@@ -30,6 +30,7 @@ import plotly.graph_objects as go
 from dash import html, dcc, dash_table
 
 from f1lib.components import card, theme, GFX
+from f1lib.glossary import gloss
 from f1lib.config import (
     HIST_CIRCUIT_KEY_MAP, COMPOUND_COLORS, TEAM_COLORS,
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
@@ -240,7 +241,7 @@ def pole_evolution_card(circuit_key: str, hist_quali: pd.DataFrame) -> html.Div 
                      ticktext=[str(y) for y in d["season"]])
 
     return card(
-        "Pole-Time Evolution",
+        [*gloss("pole position", "Pole"), "-Time Evolution"],
         dcc.Graph(figure=fig, config=GFX),
         info=("Data: the fastest single qualifying lap (best of Q1/Q2/Q3, any "
               "driver) for every archived season at this circuit, marker "

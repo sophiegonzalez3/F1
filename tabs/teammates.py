@@ -16,6 +16,7 @@ from f1lib.components import (
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
     TEAM_ABBR as _TEAM_ABBR,
 )
+from f1lib.glossary import gloss
 from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS, get_driver_color,
     DARK_BG, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
@@ -680,7 +681,7 @@ def _tab_teammates_inner(fl, fs):
             )
             quali_col_items.append(
                 dbc.Col(card(
-                    "Qualifying Classification Time",
+                    [*gloss("qualifying", "Qualifying"), " Classification Time"],
                     dcc.Graph(figure=qt_fig, config=GFX),
                     info=("Data: the official best quali lap from the "
                           "classification (Q3, else Q2, else Q1). Why: the "
@@ -707,7 +708,7 @@ def _tab_teammates_inner(fl, fs):
             )
             race_col_items.append(
                 dbc.Col(card(
-                    "Pit Stop Duration",
+                    [*gloss("pit stop", "Pit Stop"), " Duration"],
                     dcc.Graph(figure=pit_fig, config=GFX),
                     info=("Data: average pit-lane transit time (PitOut − PitIn) "
                           "per driver across matched stops. Why: mostly a team/"

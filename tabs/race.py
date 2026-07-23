@@ -26,6 +26,7 @@ from f1lib.components import (
     theme, card, kpi, GFX, TABLE_STYLE, styled_table, tip,
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
 )
+from f1lib.glossary import gloss
 from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS,
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
@@ -1181,7 +1182,7 @@ def _pitstops_card(rl: pd.DataFrame, meeting, shown_year) -> object:
     ps = _pitstops_enriched(ps, rl)
     if ps.empty:
         return card(
-            "Pit Stop Performance",
+            [*gloss("pit stop", "Pit Stop"), " Performance"],
             html.P("No pit-stop data available for this race (neither the "
                    "live-timing archive nor Jolpica has it).",
                    style={"color": TEXT_DIM}),
@@ -1224,9 +1225,15 @@ def _pitstops_card(rl: pd.DataFrame, meeting, shown_year) -> object:
          "times aren't recorded there)."),
         style={"color": TEXT_DIM, "fontSize": "0.72rem", "marginBottom": "4px"},
     )
-    return card("Pit Stop Performance",
+    _where = "stationary in the box" if use_stationary else "through the pit lane"
+    _pit_plain = (
+        "A pit stop is where the crew swaps all four tyres in seconds. The "
+        f"quickest here was {best['Driver_Short']}'s at {best[val_col]:.1f}s "
+        f"({_where}). Even a perfect stop costs a car around 20 seconds of race "
+        "time in all, so when to stop is a big strategic call.")
+    return card([*gloss("pit stop", "Pit Stop"), " Performance"],
                 html.Div([kpis, dcc.Graph(figure=fig, config=GFX), note]),
-                info=info)
+                info=info, plain=_pit_plain)
 
 
 # ── Lap-1 & restart analysis ──────────────────────────────────
@@ -1273,6 +1280,45 @@ def _start_restart_stats(rl: pd.DataFrame) -> tuple[pd.DataFrame, list[int]]:
                      "n_restarts": r_n})
     df = pd.DataFrame(rows).dropna(subset=["start_gain"])
     return df.sort_values("start_gain", ascending=False), restarts
+
+
+def _lap1_plain(st: pd.DataFrame):
+    """Beginner reading of the lap-1 chart: who gained most off the line."""
+    if st is None or st.empty or "start_gain" not in st.columns:
+        return None
+    lead = ("The start is a race in itself — cars launch from a standstill and "
+            "scrap for position into the first corner.")
+    top = st.sort_values("start_gain", ascending=False).iloc[0]
+    g = top["start_gain"]
+    if pd.isna(g) or g <= 0:
+        return lead + " Here the field mostly held station off the line."
+    n = int(round(g))
+    return (lead + f" {top['driver']} gained the most here — up {n} "
+            f"place{'s' if n != 1 else ''} by the end of lap 1.")
+
+
+def _strategy_plain(rl: pd.DataFrame):
+    """Beginner reading of the tyre-strategy chart: why cars pit + the most
+    common number of stops."""
+    base = ("In a dry race a driver must use at least two of the three dry tyre "
+            "types, so everyone pits at least once. Softer tyres are quicker but "
+            "wear out sooner; harder ones last longer — so teams trade lap-time "
+            "against pit-stop time.")
+    if rl is None or rl.empty or not {"Driver_Short", "Stint"}.issubset(rl.columns):
+        return base
+    st = (rl.dropna(subset=["Driver_Short", "Stint"])
+          .groupby("Driver_Short")["Stint"].nunique())
+    if st.empty:
+        return base
+    stops = (st - 1).clip(lower=0)
+    m = stops.mode()
+    common = int(m.iloc[0]) if not m.empty else int(round(stops.median()))
+    if common <= 0:
+        return base
+    words = {1: "a one", 2: "a two", 3: "a three", 4: "a four"}
+    w = words.get(common, f"a {common}")
+    plural = "" if common == 1 else "s"
+    return base + f" Most drivers here ran {w}-stop race ({common} pit stop{plural})."
 
 
 def _start_restart_fig(st: pd.DataFrame, restarts: list[int]) -> go.Figure:
@@ -2060,6 +2106,7 @@ def tab_race(sel_drivers=None, sel_teams=None):
                   "restarts are a distinct driver skill the lap-time charts "
                   "never show — some drivers make their season in the first "
                   "500 metres, and a good restart is free overtaking."),
+            plain=_lap1_plain(start_stats),
         ),
         card(
             "Race Trace",
@@ -2089,10 +2136,12 @@ def tab_race(sel_drivers=None, sel_teams=None):
                   "data/tyre_allocations.csv) — SOFT here is not the same tyre as SOFT "
                   "elsewhere. Why: the strategic shape of the race — who ran which "
                   "tyres, stint lengths and stop timing."),
+            plain=_strategy_plain(rl),
         ),
         _pitstops_card(rl, meeting, shown_year),
         card(
-            "Undercut / Overcut Duels",
+            [*gloss("undercut", "Undercut"), " / ", *gloss("overcut", "Overcut"),
+             " Duels"],
             dcc.Graph(figure=uc_fig, config=GFX),
             info=("Data: every pit-cycle duel — two cars within 15 s on track "
                   "whose stops fall within 5 laps of each other. The gap between "

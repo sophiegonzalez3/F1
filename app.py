@@ -158,6 +158,7 @@ from f1lib.components import (
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
     TEAM_ABBR as _TEAM_ABBR,
 )
+from f1lib.glossary import gloss
 
 # ── Shared chart builders & aggregations (figures.py) ────────
 # (team_metrics / tmgaps are imported directly by the tab modules)
@@ -358,10 +359,12 @@ def _section_header(title, intro):
                        "marginBottom": "10px", "fontSize": "1.5rem",
                        "borderBottom": f"2px solid {ACCENT}",
                        "paddingBottom": "10px"}),
-        html.P(intro,
-               style={"color": TEXT_DIM, "fontSize": "0.82rem",
-                      "textAlign": "center", "maxWidth": "780px",
-                      "margin": "0 auto 22px", "lineHeight": "1.5"}),
+        # Div, not P: the intro may splice in gloss() tooltips (which render a
+        # sibling block element) and a <div> inside a <p> is invalid HTML.
+        html.Div(intro,
+                 style={"color": TEXT_DIM, "fontSize": "0.82rem",
+                        "textAlign": "center", "maxWidth": "780px",
+                        "margin": "0 auto 22px", "lineHeight": "1.5"}),
     ])
 
 
@@ -399,21 +402,23 @@ def _render_tab(tab, ss, sd, st):
         return html.Div([
             _section_header(
                 "TEAM COMPARISON AND MOMENTUM",
-                "How the teams stack up against each other across the loaded "
-                "sessions — one-lap and race pace, sector strengths, and which "
-                "way each team's form is trending. Every metric takes the "
-                "stronger of a team's two cars, so this is the "
-                "constructor-vs-constructor view of the field's pecking order "
-                "and who is gaining or losing ground."),
+                ["How the teams stack up against each other across the loaded "
+                 "sessions — ", *gloss("one-lap pace", "one-lap"), " and ",
+                 *gloss("race pace"), ", ", *gloss("sector"), " strengths, and "
+                 "which way each team's form is trending. Every metric takes the "
+                 "stronger of a team's two cars, so this is the ",
+                 *gloss("constructor"), "-vs-constructor view of the field's "
+                 "pecking order and who is gaining or losing ground."]),
             tab_teams(fl_d, fs_d),
             html.Hr(style={"borderColor": GRID_CLR, "margin": "40px 0 28px"}),
             _section_header(
                 "TEAMMATES COMPARISON AND MOMENTUM",
-                "Now zoom inside each garage: the head-to-head duel between the "
-                "two drivers sharing identical machinery. Because the car is a "
-                "constant, these gaps isolate the driver — qualifying pace, race "
-                "pace, and how momentum swings from one side of the garage to "
-                "the other across the weekend."),
+                ["Now zoom inside each garage: the head-to-head duel between the "
+                 "two ", *gloss("teammate", "drivers sharing identical machinery"),
+                 ". Because the car is a constant, these gaps isolate the "
+                 "driver — ", *gloss("qualifying"), " pace, ",
+                 *gloss("race pace"), ", and how momentum swings from one side "
+                 "of the garage to the other across the weekend."]),
             tab_teammates(fl_d, fs_d),
         ])
     if tab=="tab-stints":     return tab_stints(fl_d,fs_d)
@@ -428,30 +433,41 @@ def _render_tab(tab, ss, sd, st):
         return html.Div([
             _section_header(
                 "EVENT UPGRADES",
-                "What each team physically brought to this meeting — the "
-                "FIA Car Presentation breakdown, component by component. The "
-                "season-long 'did it actually work?' analysis lives in the "
-                "SEASON tab."),
+                ["What each team physically brought to this ",
+                 *gloss("grand prix", "meeting"), " — the FIA Car Presentation "
+                 "breakdown, component by component. The season-long 'did it "
+                 "actually work?' analysis lives in the SEASON tab."]),
             upgrade_event_detail(team_rank=_team_champ_rank()),
             html.Hr(style={"borderColor": GRID_CLR, "margin": "40px 0 28px"}),
             _section_header(
-                "PRACTICE CONSTRUCTION & SANDBAGGING",
-                "What the practice sessions are really telling us. Reads the "
-                "mid-weekend picture — long runs, one-lap potential, and the "
-                "'pace in hand' between them — to expose who is sandbagging and "
-                "who has genuinely shown their hand before qualifying. Works "
-                "after FP1/FP2 alone and gains a confirmation layer once "
-                "qualifying loads."),
-            tab_practice(wl),
+                "PRACTICE CONSTRUCTION",
+                ["How the weekend is being built. The ", *gloss("lap time",
+                 "lap-time"), " distributions and one-lap-vs-race-pace matrix "
+                 "show each driver's raw shape and consistency across the "
+                 "sessions loaded, while pace progression tracks how the ",
+                 *gloss("quali sim", "quali-sim"), " order firms up from FP1 to ",
+                 *gloss("qualifying"), ". All from clean, valid laps."]),
+            tab_practice_construction(wl),
+            html.Hr(style={"borderColor": GRID_CLR, "margin": "40px 0 28px"}),
+            _section_header(
+                [*gloss("sandbagging", "SANDBAGGING"), " DETECTOR"],
+                ["Who is holding pace back. Working from clean laps expressed as "
+                 "a ", *gloss("gap to the field"), " — which cancels out track "
+                 "evolution — it reads the 'pace in hand' between ",
+                 *gloss("one-lap pace", "one-lap"), " and race runs, banked time "
+                 "never assembled into a lap, and once qualifying loads how much "
+                 "pace was actually unlocked. Inferential by nature: these are "
+                 "corroborating signals, not verdicts."]),
+            tab_sandbagging(wl),
             html.Hr(style={"borderColor": GRID_CLR, "margin": "40px 0 28px"}),
             _section_header(
                 "WEEKEND PACE PREDICTION",
-                "The model's answer to 'who will be quick?'. Starting from an "
-                "era-aware season-form prior and sharpening after every practice "
-                "session, it projects the qualifying order with uncertainty, "
-                "tracks how that call has moved session to session, and — once "
-                "quali or the race lands — keeps score against what actually "
-                "happened."),
+                ["The model's answer to 'who will be quick?'. Starting from an "
+                 "era-aware season-form prior and sharpening after every ",
+                 *gloss("practice"), " session, it projects the ",
+                 *gloss("qualifying"), " order with uncertainty, tracks how that "
+                 "call has moved session to session, and — once quali or the "
+                 "race lands — keeps score against what actually happened."]),
             tab_brief(sd, st),
         ])
     if tab=="tab-quali":      return tab_quali()
@@ -508,7 +524,7 @@ def render(tab, ss, sd, st):
 from tabs.overview import tab_overview
 from tabs.teams import tab_teams
 from tabs.telemetry import tab_laps, _prewarm_track_maps
-from tabs.practice import tab_practice
+from tabs.practice import tab_practice_construction, tab_sandbagging
 from tabs.stints import tab_stints
 from tabs.teammates import tab_teammates
 

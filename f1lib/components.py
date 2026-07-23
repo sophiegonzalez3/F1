@@ -61,17 +61,42 @@ def tip(children, text, placement="bottom", style=None):
     ]
 
 
-def card(title, children, info=None):
+def plain_line(text):
+    """A newcomer-facing 'In plain terms: …' strip — a plain-English reading of
+    what the card above is actually saying, for someone who can't yet read the
+    chart. Distinct from `info` (the ⓘ hover, which explains the *data* to
+    someone who already speaks F1). `text` may be a string or a children list
+    (so it can splice in gloss() terms). Returns None-safe: pass None → nothing."""
+    if text is None:
+        return None
+    body = text if isinstance(text, list) else [text]
+    return html.Div(
+        [html.Span("In plain terms  ", style={
+            "color": ACCENT, "fontWeight": "700", "fontSize": "0.68rem",
+            "letterSpacing": "1px", "textTransform": "uppercase"}), *body],
+        style={"borderLeft": f"3px solid {ACCENT}", "background": "#0E0E1F",
+               "padding": "8px 12px", "marginTop": "12px", "borderRadius": "4px",
+               "color": TEXT_MAIN, "fontSize": "0.8rem", "lineHeight": "1.45",
+               "fontStyle": "italic"})
+
+
+def card(title, children, info=None, plain=None):
     """A titled card. Pass `info` to show a small ⓘ tooltip in the header
-    explaining what data the graph uses and why it is relevant (hover to read)."""
+    explaining what data the graph uses and why it is relevant (hover to read).
+    Pass `plain` for a beginner-facing 'In plain terms: …' strip below the
+    content — a plain-English reading of what the card shows."""
     header = [html.Span(title, style={"fontWeight": "700", "letterSpacing": "1px", "fontSize": "0.85rem"})]
     if info:
         header += tip(" ⓘ", info, style={
             "cursor": "help", "fontSize": "0.72rem", "opacity": "0.6",
             "userSelect": "none", "marginLeft": "6px"})
+    body = [children]
+    strip = plain_line(plain)
+    if strip is not None:
+        body.append(strip)
     return dbc.Card([
         dbc.CardHeader(header),
-        dbc.CardBody(children),
+        dbc.CardBody(body),
     ], className="mb-3",
        style={"background": CARD_BG, "border": f"1px solid {GRID_CLR}", "borderRadius": "8px"})
 

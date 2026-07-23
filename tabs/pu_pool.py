@@ -23,6 +23,7 @@ import plotly.graph_objects as go
 from dash import html, dcc
 
 from f1lib.components import card, GFX
+from f1lib.glossary import gloss
 from f1lib.config import CARD_BG, TEXT_MAIN, TEXT_DIM, GRID_CLR
 
 _PU_PATH = Path("data/pu_penalties.csv")
@@ -137,8 +138,18 @@ def pu_pool_card(season: int):
     pen_line = (f" {len(took)} driver(s) have taken grid penalties so far."
                 if not took.empty
                 else " No grid penalties taken at the data's cutoff.")
+    _ecols = [e for e, _ in _ELEMENTS]
+    _mr = d.apply(lambda r: max(r[e] / _LIMITS_2026[e] for e in _ecols), axis=1)
+    _closest = d.loc[_mr.idxmax(), "driver"]
+    _plain = (
+        "Modern F1 engines — 'power units' — must last many races on a strict "
+        "parts budget. Go over the season allowance and the driver drops grid "
+        "places as a penalty at the next race. "
+        + (f"{len(took)} driver(s) have already taken one, and {_closest} is "
+           "now closest to the next limit." if not took.empty else
+           f"None have been penalised yet; {_closest} is closest to the limit."))
     return card(
-        "Power-Unit Pool & Penalty Risk",
+        [*gloss("power unit", "Power-Unit"), " Pool & Penalty Risk"],
         html.Div([
             dcc.Graph(figure=_pu_heatmap_fig(season), config=GFX),
             html.P(
@@ -156,4 +167,5 @@ def pu_pool_card(season: int):
               "are closer to a grid penalty (10 places for the first component "
               "over, +5 each after). This is NOT in the results archive, so it "
               "is hand-maintained." + pen_line),
+        plain=_plain,
     )

@@ -16,12 +16,14 @@ from f1lib.components import (
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
     TEAM_ABBR as _TEAM_ABBR,
 )
+from f1lib.glossary import gloss
 from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS, get_driver_color,
     DARK_BG, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     SPEED_PERCENTILE,
 )
 from f1lib.processing import format_lap_time
+from tabs.overview import overview_pace_cards
 
 # mirror the mutable data state (SESSIONS, DRIVERS, telemetry, …) so the
 # moved bodies keep their bare-name reads — repopulated on every reload
@@ -228,28 +230,56 @@ def _sb_quadrant(df, xcol, ycol, xtitle, ytitle, below_note):
     return fig
 
 
-def tab_practice(wl):
+def tab_practice_construction(wl):
+    """PRACTICE CONSTRUCTION — how the weekend is being built: the two headline
+    pace cards (lap-time distribution + driver performance matrix, shared with
+    the TELEMETRY overview) followed by the session-to-session pace progression."""
+    if wl is None or wl.empty:
+        return html.P("No lap data for the current selection.",
+                      style={"color": TEXT_DIM})
+
+    body = list(overview_pace_cards(wl))
+
+    # ── Pace progression across the sessions present ────────────
+    prog = _practice_analysis(wl)["prog_df"]
+    if not prog.empty:
+        order = [s for s in ["Practice 1", "Practice 2", "Practice 3", "Qualifying"]
+                 if s in prog["session"].unique()]
+        fig_p = go.Figure()
+        for t in sorted(prog["Team"].unique()):
+            sub = (prog[prog["Team"] == t].set_index("session")
+                   .reindex(order).reset_index())
+            fig_p.add_trace(go.Scatter(
+                x=sub["session"], y=sub["gap_pct"], mode="lines+markers",
+                name=_abbr(t), connectgaps=True,
+                line=dict(color=TEAM_COLORS.get(t, "#808080"), width=2),
+                marker=dict(size=7),
+                hovertemplate=f"{_abbr(t)} · %{{x}}<br>+%{{y:.2f}}%<extra></extra>"))
+        theme(fig_p, 460, "")
+        fig_p.update_layout(
+            xaxis_title="", yaxis_title="Gap to session-best  (%)  ·  lower = faster",
+            legend=dict(orientation="h", x=0, y=1.12, bgcolor="rgba(0,0,0,0)"),
+            margin=dict(l=60, r=30, t=40, b=30))
+        fig_p.update_yaxes(autorange="reversed")
+        body.append(dbc.Row([dbc.Col(card("PACE PROGRESSION",
+            dcc.Graph(figure=fig_p, config=GFX),
+            info="Each team's best quali-sim lap per session (best valid lap in qualifying), as a gap to that session's fastest. Y-axis inverted so rising lines = relative improvement. Shows the build trajectory across the weekend."), md=12)]))
+
+    return html.Div(body)
+
+
+def tab_sandbagging(wl):
+    """SANDBAGGING DETECTOR — who is holding pace back. Pace-in-hand scoreboard,
+    banked time, the quali confirmation layer and the full evidence table."""
     if wl is None or wl.empty:
         return html.P("No lap data for the current selection.",
                       style={"color": TEXT_DIM})
 
     a = _practice_analysis(wl)
-    tdf, bp, prog = a["team_df"], a["banked_df"], a["prog_df"]
+    tdf, bp = a["team_df"], a["banked_df"]
     has_quali = a["has_quali"]
     phase = ("Full weekend (quali loaded)" if has_quali
              else f"Practice in progress · {a['n_prac_sessions']} session(s) so far")
-
-    intro = html.P([
-        html.B("Practice construction & sandbagging.  "),
-        "Built to work mid-weekend — after FP1/FP2 and after FP3, before qualifying. ",
-        "All metrics use clean laps only (valid; traffic/flag-perturbed laps removed) and "
-        "are expressed as a gap to the field, which cancels out track evolution. ",
-        "The practice-native sandbag signal is ", html.B("pace in hand"),
-        " (one-lap gap minus race-run gap); once qualifying is loaded it is "
-        "confirmed by ", html.B("pace unlocked"), ". Inferential by nature — "
-        "these are corroborating signals, not verdicts.",
-    ], style={"color": TEXT_DIM, "fontSize": "0.8rem", "marginBottom": "14px",
-              "lineHeight": "1.5"})
 
     # ── KPI strip (adapts to phase) ─────────────────────────────
     kpis = []
@@ -279,7 +309,7 @@ def tab_practice(wl):
         "fontWeight": "700", "letterSpacing": "0.5px"}),
         style={"marginBottom": "14px"})
 
-    body = [intro, kpi_row, phase_pill]
+    body = [kpi_row, phase_pill]
 
     # ── Headline: pace in hand + one-lap-vs-long-run quadrant ───
     fig_hand = _sb_div_bar(tdf, "pace_in_hand",
@@ -289,10 +319,12 @@ def tab_practice(wl):
         "below line = one-lap pace in hand")
     head_cols = []
     if fig_hand is not None:
-        head_cols.append(dbc.Col(card("SANDBAG SCOREBOARD · PACE IN HAND",
+        head_cols.append(dbc.Col(card([*gloss("sandbagging", "SANDBAG"),
+            " SCOREBOARD · PACE IN HAND"],
             dcc.Graph(figure=fig_hand, config=GFX),
             info="One-lap gap to field minus race-run gap to field. Positive = the team is relatively further back on a single lap than on long runs, a classic sign of qualifying pace held in reserve. 🚩 = ≥2 sandbag signals."), md=6))
-    head_cols.append(dbc.Col(card("ONE-LAP vs RACE-RUN",
+    head_cols.append(dbc.Col(card([*gloss("one-lap pace", "ONE-LAP"), " vs ",
+        *gloss("race pace", "RACE-RUN")],
         dcc.Graph(figure=fig_olr, config=GFX),
         info="Each team's best practice one-lap gap (x) vs its fuel-corrected race-run gap (y), both relative to the field. Markers below the parity line are stronger on long runs than on one lap — one-lap pace likely in hand."),
         md=6 if fig_hand is not None else 12))
@@ -318,30 +350,6 @@ def tab_practice(wl):
             dcc.Graph(figure=fig_b, config=GFX),
             info="Best assembled practice lap minus the sum of the driver's best sectors. Large values mean the pace was there but never put together on one lap — sometimes deliberate."), md=12)]))
 
-    # ── Pace progression across the sessions present ────────────
-    if not prog.empty:
-        order = [s for s in ["Practice 1", "Practice 2", "Practice 3", "Qualifying"]
-                 if s in prog["session"].unique()]
-        fig_p = go.Figure()
-        for t in sorted(prog["Team"].unique()):
-            sub = (prog[prog["Team"] == t].set_index("session")
-                   .reindex(order).reset_index())
-            fig_p.add_trace(go.Scatter(
-                x=sub["session"], y=sub["gap_pct"], mode="lines+markers",
-                name=_abbr(t), connectgaps=True,
-                line=dict(color=TEAM_COLORS.get(t, "#808080"), width=2),
-                marker=dict(size=7),
-                hovertemplate=f"{_abbr(t)} · %{{x}}<br>+%{{y:.2f}}%<extra></extra>"))
-        theme(fig_p, 460, "")
-        fig_p.update_layout(
-            xaxis_title="", yaxis_title="Gap to session-best  (%)  ·  lower = faster",
-            legend=dict(orientation="h", x=0, y=1.12, bgcolor="rgba(0,0,0,0)"),
-            margin=dict(l=60, r=30, t=40, b=30))
-        fig_p.update_yaxes(autorange="reversed")
-        body.append(dbc.Row([dbc.Col(card("PACE PROGRESSION",
-            dcc.Graph(figure=fig_p, config=GFX),
-            info="Each team's best quali-sim lap per session (best valid lap in qualifying), as a gap to that session's fastest. Y-axis inverted so rising lines = relative improvement. Shows the build trajectory across the weekend."), md=12)]))
-
     # ── Quali confirmation layer (only once qualifying is loaded) ──
     if has_quali:
         fig_sc = _sb_div_bar(tdf, "pace_unlocked",
@@ -354,7 +362,8 @@ def tab_practice(wl):
             conf_cols.append(dbc.Col(card("CONFIRMATION · PACE UNLOCKED",
                 dcc.Graph(figure=fig_sc, config=GFX),
                 info="Practice quali-sim gap% minus qualifying gap%, both vs the field. Positive = the team was relatively further back in practice than in qualifying — hidden pace, now confirmed."), md=6))
-        conf_cols.append(dbc.Col(card("PRACTICE vs QUALIFYING",
+        conf_cols.append(dbc.Col(card([*gloss("practice", "PRACTICE"), " vs ",
+            *gloss("qualifying", "QUALIFYING")],
             dcc.Graph(figure=fig_q, config=GFX),
             info="Each team's best practice quali-sim gap (x) vs its qualifying gap to pole (y). Markers below the parity line qualified relatively better than they ran in practice."),
             md=6 if fig_sc is not None else 12))

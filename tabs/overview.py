@@ -8,6 +8,7 @@ from dash import html, dcc
 
 import f1lib.state as state
 from f1lib.components import theme, card, GFX
+from f1lib.glossary import gloss
 from f1lib.config import TEAM_COLORS, TEXT_MAIN
 from tabs.corner_speed import corner_speed_section
 
@@ -20,7 +21,33 @@ from f1lib.standings import (
 )
 
 
-def tab_overview(fl, fs, ft=None):
+def _laptime_plain(v):
+    """Beginner reading of the lap-time violins: fastest single lap + who was
+    the most consistent. `v` = valid laps (real drivers only)."""
+    if v.empty:
+        return None
+    best = v.groupby("Driver_Short")["LapTime_s"].min()
+    if best.empty:
+        return None
+    line = (f"Each shape is one driver's spread of lap times this session — "
+            f"lower means quicker. {best.idxmin()} set the single fastest lap "
+            "here.")
+    counts = v.groupby("Driver_Short")["LapTime_s"].count()
+    elig = counts[counts >= 5].index
+    if len(elig):
+        std = (v[v["Driver_Short"].isin(elig)]
+               .groupby("Driver_Short")["LapTime_s"].std().dropna())
+        if not std.empty:
+            line += (f" A tightly bunched shape means very repeatable pace; "
+                     f"{std.idxmin()} were the most consistent.")
+    return line
+
+
+def overview_pace_cards(fl):
+    """The two headline pace cards — Lap Time Distribution (per-driver violins)
+    and Driver Performance Matrix (best vs median lap). Returned as a list of
+    cards so they can be reused outside the TELEMETRY overview (e.g. the WEEK
+    END PRED practice-construction section)."""
     v = fl[fl["ValidLap"]]
 
     # Drop FP1 test/rookie drivers (the mandatory young-driver FP1 outings, two
@@ -86,24 +113,29 @@ def tab_overview(fl, fs, ft=None):
     theme(fig_bub, 520)
     fig_bub.update_layout(xaxis_title="Best Lap Time (s)", yaxis_title="Median Lap Time (s)")
 
-    # ── Cornering speed by corner class (real corners + season-fixed bands) ──
-    # Replaces an earlier heatmap that bucketed raw samples by their own speed
-    # (a tautology, and polluted by pit/SC/out-lap samples). corner_speed.py
-    # works from the circuit's actual corners and each driver's apex speed.
-
-    return html.Div([
-        card("Lap Time Distribution",dcc.Graph(figure=fig_vio,config=GFX),
+    return [
+        card([*gloss("lap time", "Lap Time"), " Distribution"],dcc.Graph(figure=fig_vio,config=GFX),
              info=("Data: every valid lap per driver, drawn as a "
                    "horizontal violin coloured by team. Why: shows "
                    "not just how fast a driver is but how consistent — "
                    "a tight violin means repeatable pace, a wide or "
                    "skewed one means scattered laps (traffic, errors, "
-                   "mixed fuel/tyre runs).")),
+                   "mixed fuel/tyre runs)."),
+             plain=_laptime_plain(v)),
         card("Driver Performance Matrix",dcc.Graph(figure=fig_bub,config=GFX),
              info=("Data: each driver plotted by best lap (x) vs median lap (y); "
                    "bubble size = number of valid laps. Why: separates one-lap "
                    "qualifying pace from sustained race pace — bottom-left is fast "
                    "over both, and a big gap between a driver's x and y hints at "
                    "tyre management or traffic issues.")),
+    ]
+
+
+def tab_overview(fl, fs, ft=None):
+    # ── Cornering speed by corner class (real corners + season-fixed bands) ──
+    # Replaces an earlier heatmap that bucketed raw samples by their own speed
+    # (a tautology, and polluted by pit/SC/out-lap samples). corner_speed.py
+    # works from the circuit's actual corners and each driver's apex speed.
+    return html.Div([
         corner_speed_section(fl),
     ])

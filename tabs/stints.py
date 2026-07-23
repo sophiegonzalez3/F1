@@ -161,32 +161,32 @@ def toggle_field_curves_modal(_open_click, _close_click, is_open):
 
 
 @callback(
-    Output("stint-insp-table", "children"),
+    Output("stint-insp-table", "data"),
+    Output("stint-insp-table", "columns"),
+    Output("stint-insp-msg",   "children"),
     Input("stint-insp-driver", "value"),
     Input("stint-insp-key",    "value"),
 )
 def render_stint_table(driver, stint_key):
+    # The table is mounted once (see layout); here we only feed it data/columns
+    # and surface any empty-state text through the sibling message Div.
     if not driver or not stint_key:
-        return html.P("Select a driver and stint key.", style={"color": TEXT_DIM})
+        return [], [], html.P("Select a driver and stint key.", style={"color": TEXT_DIM})
     sub = laps[
         (laps["Driver_Short"] == driver) & (laps["Stint_key"] == stint_key)
     ].sort_values("LapNo")
     if sub.empty:
-        return html.P("No laps found for this selection.", style={"color": TEXT_DIM})
+        return [], [], html.P("No laps found for this selection.", style={"color": TEXT_DIM})
     cols_want  = ["Stint_key", "LapNo", "LapTime_s", "Compound", "TyreAge", "LapInStint"]
     cols_avail = [c for c in cols_want if c in sub.columns]
     sub = sub[cols_avail].copy()
     if "LapTime_s" in sub.columns:
         pos = sub.columns.get_loc("LapTime_s") + 1
         sub.insert(pos, "LapTime", sub["LapTime_s"].apply(format_lap_time))
-    return dash_table.DataTable(
-        data=sub.to_dict("records"),
-        columns=[{"name": c, "id": c} for c in sub.columns],
-        **TABLE_STYLE,
-        style_data_conditional=[
-            {"if": {"filter_query": "{LapInStint} = 1"},
-             "borderLeft": f"3px solid {ACCENT}"},
-        ],
+    return (
+        sub.to_dict("records"),
+        [{"name": c, "id": c} for c in sub.columns],
+        "",
     )
 
 
@@ -895,7 +895,22 @@ def tab_stints(fl, fs):
                 ),
             ], md=9),
         ], className="mb-3"),
-        html.Div(id="stint-insp-table"),
+        html.Div(id="stint-insp-msg",
+                 children=html.P("Select a driver and stint key.",
+                                 style={"color": TEXT_DIM})),
+        # Mounted once and updated via .data/.columns. Swapping a whole
+        # DataTable in and out of a Div's children (the old approach) made the
+        # dash-renderer log "object provided as children / reading 'type'" while
+        # it reconciled the outgoing table's derived_virtual_data.
+        dash_table.DataTable(
+            id="stint-insp-table",
+            data=[], columns=[],
+            **TABLE_STYLE,
+            style_data_conditional=[
+                {"if": {"filter_query": "{LapInStint} = 1"},
+                 "borderLeft": f"3px solid {ACCENT}"},
+            ],
+        ),
     ])
 
     return html.Div([

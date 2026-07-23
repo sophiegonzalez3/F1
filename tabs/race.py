@@ -1800,6 +1800,21 @@ def _team_radio_block(rdf: pd.DataFrame, meeting: str, year,
     ])
 
 
+def _section_header(title: str, subtitle: str) -> html.Div:
+    """Big centred divider between the tab's major sections (mirrors the
+    SEASON tab's section headers so the app reads consistently)."""
+    return html.Div([
+        html.H3(title, style={
+            "color": TEXT_MAIN, "fontWeight": "900", "letterSpacing": "3px",
+            "textAlign": "center", "fontSize": "1.4rem",
+            "borderBottom": f"2px solid {ACCENT}",
+            "paddingBottom": "8px", "marginBottom": "4px"}),
+        html.P(subtitle, style={"color": TEXT_DIM, "fontSize": "0.78rem",
+                                "textAlign": "center",
+                                "marginBottom": "18px"}),
+    ], style={"marginTop": "26px"})
+
+
 def tab_race(sel_drivers=None, sel_teams=None):
     cur = LOADED_SESSION_INFO[0] if LOADED_SESSION_INFO else None
     if not cur:
@@ -2067,9 +2082,18 @@ def tab_race(sel_drivers=None, sel_teams=None):
 
     return html.Div([
         banner,
+        _section_header(
+            "WATCH IT BACK",
+            "play the Grand Prix back — a full 2D/3D replay, then the entire "
+            "field funnelling through the opening lap on one shared clock"),
         replay_card(shown_year, meeting,
                     codes=sorted(rl["Driver_Short"].dropna().unique())),
         race3d_card(shown_year, meeting),
+        _section_header(
+            "HOW THE RACE UNFOLDED",
+            "the shape of the race from lights to flag — pace on every lap, "
+            "the position battles, the start and restarts, the strategist's "
+            "race trace, and how weather and rain moved the field's pace"),
         card(
             "Lap Time Evolution – All Laps (Race)",
             dcc.Graph(figure=evo_fig, config=GFX),
@@ -2122,6 +2146,23 @@ def tab_race(sel_drivers=None, sel_teams=None):
                   "cliffs are visible as slope changes around the pit windows."),
         ),
         card(
+            "Weather & Race Pace",
+            dcc.Graph(figure=wx_fig, config=GFX)
+            if wx_fig.data else
+            html.P("No weather data available for this race.", style={"color": TEXT_DIM}),
+            info=("Data: track and air temperature per lap (averaged across cars), "
+                  "stacked above the field's median lap time, on a shared lap axis; "
+                  "rain periods are shaded blue. Why: reading conditions straight down "
+                  "onto pace shows how the weather shaped the race — a cooling track, "
+                  "a rain shower or the grip swing that triggered the pit cascade."),
+        ),
+        *([wet_card] if wet_card is not None else []),
+        _section_header(
+            "STRATEGY & PIT STOPS",
+            "who ran which tyres and when, how fast the crews worked, who won "
+            "the pit-lane duels — and a what-if optimiser that re-runs the "
+            "strategy from the race's own numbers"),
+        card(
             "Race Tyre Strategy",
             html.Div([
                 _allocation_chips(shown_year, meeting) or html.Div(),
@@ -2156,18 +2197,10 @@ def tab_race(sel_drivers=None, sel_teams=None):
                   "the corner)."),
         ),
         sim_card,
-        card(
-            "Weather & Race Pace",
-            dcc.Graph(figure=wx_fig, config=GFX)
-            if wx_fig.data else
-            html.P("No weather data available for this race.", style={"color": TEXT_DIM}),
-            info=("Data: track and air temperature per lap (averaged across cars), "
-                  "stacked above the field's median lap time, on a shared lap axis; "
-                  "rain periods are shaded blue. Why: reading conditions straight down "
-                  "onto pace shows how the weather shaped the race — a cooling track, "
-                  "a rain shower or the grip swing that triggered the pit cascade."),
-        ),
-        *([wet_card] if wet_card is not None else []),
+        _section_header(
+            "RADIO & RACE CONTROL",
+            "everything said to and about the drivers — FIA race-control "
+            "messages on the lap axis, and the actual transcribed team radio"),
         radio_card,
         team_radio_card,
     ])

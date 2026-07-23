@@ -90,7 +90,12 @@ def card(title, children, info=None, plain=None):
         header += tip(" ⓘ", info, style={
             "cursor": "help", "fontSize": "0.72rem", "opacity": "0.6",
             "userSelect": "none", "marginLeft": "6px"})
-    body = [children]
+    # Normalise children to a flat list. Wrapping a list-valued `children`
+    # in another list (the old `[children]`) produced `[[...]]`, which Dash
+    # rejects as "children is a list of lists" — and appending the `plain`
+    # strip made it a genuine mixed list-of-lists that fails to render (the
+    # QUALI grid card hit exactly this: a list body *and* a plain= reading).
+    body = list(children) if isinstance(children, (list, tuple)) else [children]
     strip = plain_line(plain)
     if strip is not None:
         body.append(strip)

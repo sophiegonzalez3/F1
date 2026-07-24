@@ -22,9 +22,9 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import html, dcc
 
-from f1lib.components import card, GFX
+from f1lib.components import card, tip, GFX
 from f1lib.glossary import gloss
-from f1lib.config import CARD_BG, TEXT_MAIN, TEXT_DIM, GRID_CLR
+from f1lib.config import CARD_BG, TEXT_MAIN, TEXT_DIM, GRID_CLR, ACCENT
 
 _PU_PATH = Path("data/pu_penalties.csv")
 _PU_COLS = ["season", "driver", "team", "pu_supplier",
@@ -34,6 +34,64 @@ _ELEMENTS = [("ice", "ICE"), ("tc", "Turbo"), ("mguk", "MGU-K"),
              ("es", "ES"), ("ce", "CE"), ("ex", "EX")]
 # 2026 per-season allowance per element (one bonus unit vs. the 2027 baseline).
 _LIMITS_2026 = {"ice": 4, "tc": 4, "mguk": 3, "es": 3, "ce": 3, "ex": 4}
+
+# Plain-English "what is it / roughly what does it cost" per element, for the
+# hoverable legend under the heatmap. Costs are rough order-of-magnitude
+# figures — the FIA caps a customer's full-season PU supply near €15m, and
+# individual element prices aren't published, so treat these as ballparks.
+_ELEMENT_INFO = {
+    "ice": ("Internal Combustion Engine",
+            "The 1.6-litre V6 turbo petrol engine itself — the heart of the "
+            "power unit, now running on 100% sustainable fuel. It's the single "
+            "most expensive and most heavily developed element. "
+            "Rough cost: ~€8–10m to develop a spec; the priciest unit in the pool."),
+    "tc": ("Turbocharger",
+           "Forces compressed air into the engine for more power. In the 2026 "
+           "rules it's a single turbo with no heat-recovery motor (the old "
+           "MGU-H is gone). Rough cost: ~€1–2m."),
+    "mguk": ("Motor Generator Unit – Kinetic",
+             "The hybrid electric motor: recovers braking energy and redeploys "
+             "it as a boost. Under 2026 rules it's much bigger — up to ~350 kW "
+             "(~470 hp), roughly half the car's total power. "
+             "Rough cost: ~€1–3m."),
+    "es": ("Energy Store",
+           "The battery pack that stores the energy the MGU-K recovers, ready "
+           "to fire back out on the straights. Rough cost: ~€1m."),
+    "ce": ("Control Electronics",
+           "The brains — ECU and power electronics that manage the engine and "
+           "the hybrid system. Rough cost: ~€0.5–1m."),
+    "ex": ("Exhaust",
+           "The exhaust system routing spent gases out and feeding the turbo. "
+           "Cheapest element, but still on a strict allowance. "
+           "Rough cost: ~€0.1–0.3m."),
+}
+
+
+def _pu_legend() -> html.Div:
+    """A row of hoverable chips explaining each PU element and its rough cost.
+    Plotly can't attach tooltips to axis labels, so the explanations live here
+    instead — using tip() so they work in every browser, including touch."""
+    chips = []
+    for e, lbl in _ELEMENTS:
+        name, text = _ELEMENT_INFO[e]
+        chips.extend(tip(
+            lbl,
+            [html.Strong(name), html.Br(), text],
+            style={
+                "display": "inline-block", "cursor": "help",
+                "background": "#12233d", "color": TEXT_MAIN,
+                "border": f"1px solid {GRID_CLR}", "borderRadius": "4px",
+                "padding": "2px 9px", "margin": "0 6px 6px 0",
+                "fontSize": "0.72rem", "fontWeight": "700",
+                "letterSpacing": "0.5px",
+            }))
+    return html.Div([
+        html.Span("What each part is  ", style={
+            "color": ACCENT, "fontWeight": "700", "fontSize": "0.66rem",
+            "letterSpacing": "1px", "textTransform": "uppercase",
+            "marginRight": "8px"}),
+        *chips,
+    ], style={"marginTop": "8px", "lineHeight": "1.9"})
 
 _PU_CACHE: dict = {"mtime": None, "df": pd.DataFrame(columns=_PU_COLS)}
 
@@ -152,6 +210,7 @@ def pu_pool_card(season: int):
         [*gloss("power unit", "Power-Unit"), " Pool & Penalty Risk"],
         html.Div([
             dcc.Graph(figure=_pu_heatmap_fig(season), config=GFX),
+            _pu_legend(),
             html.P(
                 ["Curated from ", html.Code("data/pu_penalties.csv"),
                  f" (Formula1.com component audit, current to {as_of}). "

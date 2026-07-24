@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from dash import html, dcc, dash_table
+import dash_bootstrap_components as dbc
 
 from f1lib.components import card, theme, GFX, abbr
 from f1lib.config import (
@@ -200,61 +201,244 @@ def lap1_league_card(season: int, min_races: int = 3) -> html.Div | None:
 
 
 # ─────────────────────────────────────────────────────────────
-# Points by power-unit maker
+# The engine championship — points, reliability & straight-line
+# speed grouped by power-unit manufacturer (2026+ PU era)
 # ─────────────────────────────────────────────────────────────
+# One visual identity per manufacturer, reused across all three panels so a
+# maker keeps the same colour wherever it appears. Distinct hues, legible on
+# the dark #1A1A2E card surface.
+_PU_COLORS = {
+    "Mercedes": "#00D2BE",
+    "Ferrari":  "#E8002D",
+    "Ford":     "#2D63C8",   # Red Bull Powertrains–Ford
+    "Honda":    "#8A94A6",
+    "Audi":     "#E8A020",
+}
 
-def pu_points_card(season: int) -> html.Div | None:
-    if season < 2026:          # facilities.csv maps the current PU era only
+
+def _pu_short(name) -> str:
+    """Collapse a facilities.csv pu_maker string to the short supplier label
+    (matches data/pu_penalties.csv's pu_supplier and data/pu_topspeed.csv)."""
+    n = str(name)
+    for k in ("Ford", "Mercedes", "Ferrari", "Honda", "Audi"):
+        if k in n:
+            return k
+    if "Red Bull Powertrains" in n:
+        return "Ford"
+    return n.strip()
+
+
+_TOPSPEED_PATH = Path("data/pu_topspeed.csv")
+_TOPSPEED_CACHE: dict = {"mtime": None, "df": pd.DataFrame()}
+
+
+def topspeed_df() -> pd.DataFrame:
+    """Per-team straight-line-speed index (scripts/compute_pu_topspeed.py),
+    re-read when the CSV's mtime changes."""
+    try:
+        mtime = _TOPSPEED_PATH.stat().st_mtime if _TOPSPEED_PATH.exists() else None
+    except OSError:
+        mtime = None
+    if mtime != _TOPSPEED_CACHE["mtime"]:
+        try:
+            _TOPSPEED_CACHE["df"] = (pd.read_csv(_TOPSPEED_PATH)
+                                     if mtime else pd.DataFrame())
+        except Exception:
+            _TOPSPEED_CACHE["df"] = pd.DataFrame()
+        _TOPSPEED_CACHE["mtime"] = mtime
+    return _TOPSPEED_CACHE["df"]
+
+
+def _eng_hbar(makers: list[str], values: list[float], colors: list[str],
+              text: list[str], title: str, xtitle: str, hovertmpl: str,
+              customdata=None, diverging: bool = False,
+              xpad: float = 1.25) -> go.Figure:
+    """A horizontal bar panel with a fixed maker order (best at top) shared
+    across the three engine-championship charts."""
+    fig = go.Figure(go.Bar(
+        y=makers, x=values, orientation="h",
+        marker=dict(color=colors, line=dict(color="#000", width=0.5)),
+        text=text, textposition="outside", textfont=dict(size=10),
+        customdata=customdata,
+        hovertemplate=hovertmpl,
+    ))
+    theme(fig, max(260, 46 * len(makers) + 120), title)
+    vmax = max((abs(v) for v in values if v == v), default=1) or 1
+    if diverging:
+        fig.update_xaxes(title_text=xtitle, range=[-vmax * xpad, vmax * xpad],
+                         zeroline=True, zerolinecolor=TEXT_DIM, zerolinewidth=1)
+    else:
+        fig.update_xaxes(title_text=xtitle, range=[0, vmax * xpad])
+    fig.update_yaxes(title_text=None, tickfont=dict(size=11),
+                     autorange="reversed")          # first list item on top
+    fig.update_layout(margin=dict(l=78, r=44, t=50, b=44), showlegend=False,
+                      bargap=0.32)
+    return fig
+
+
+def engine_championship_card(season: int) -> html.Div | None:
+    """The engine championship, three ways: points normalised by how many cars
+    each manufacturer supplies, power-unit reliability (element consumption +
+    grid penalties), and a computed straight-line-speed index. 2026+ only —
+    facilities.csv describes the current PU era. None if the data is missing."""
+    if season < 2026:
         return None
     try:
         from f1lib.standings import HIST_STANDINGS
         from tabs.infrastructure import facilities_df
+        from tabs.pu_pool import pu_df
     except Exception:
         return None
-    st = HIST_STANDINGS
-    fac = facilities_df()
+    st, fac = HIST_STANDINGS, facilities_df()
     if st.empty or fac.empty or "pu_maker" not in fac.columns:
         return None
     s = st[st["season"] == season]
     if s.empty:
         return None
+
+    team2maker = {str(r.team): _pu_short(r.pu_maker) for r in fac.itertuples()}
+
+    # ── Panel A · points per car (fleet-size normalised) ──────────
     last = (s.sort_values("round_number").groupby("TeamName")
             .agg(points=("cumulative_points", "last")).reset_index())
-    pu_map = {str(r.team): str(r.pu_maker) for r in fac.itertuples()}
-    last["pu"] = last["TeamName"].map(pu_map)
-    last = last.dropna(subset=["pu"])
+    last["maker"] = last["TeamName"].map(team2maker)
+    last = last.dropna(subset=["maker"])
     if last.empty:
         return None
-    g = (last.groupby("pu")
-         .agg(points=("points", "sum"),
-              teams=("TeamName", lambda t: ", ".join(abbr(x) for x in t)))
-         .sort_values("points", ascending=True).reset_index())
+    pts = (last.groupby("maker")
+           .agg(points=("points", "sum"),
+                n_teams=("TeamName", "nunique"),
+                teams=("TeamName", lambda t: ", ".join(abbr(x) for x in sorted(t))))
+           .reset_index())
+    pts["cars"] = pts["n_teams"] * 2
+    pts["ppc"] = pts["points"] / pts["cars"]
+    pts = pts.sort_values("ppc", ascending=False)
+    order = pts["maker"].tolist()                  # master order for all panels
 
-    fig = go.Figure(go.Bar(
-        y=g["pu"], x=g["points"], orientation="h",
-        marker=dict(color=ACCENT, line=dict(color="#000", width=0.5)),
-        text=[f"{p:.0f}" for p in g["points"]], textposition="outside",
-        textfont=dict(size=10),
-        customdata=g["teams"],
-        hovertemplate=("<b>%{y}</b><br>%{x:.0f} pts<br>Teams: %{customdata}"
-                       "<extra></extra>"),
-    ))
-    theme(fig, max(300, 40 * len(g) + 120))
-    fig.update_xaxes(title_text="Combined constructor points",
-                     range=[0, float(g["points"].max()) * 1.25])
-    fig.update_yaxes(title_text=None, tickfont=dict(size=11))
-    fig.update_layout(margin=dict(l=150, r=40, t=50, b=44), showlegend=False,
-                      bargap=0.35)
+    def _reindex(df: pd.DataFrame, key: str) -> pd.DataFrame:
+        return df.set_index(key).reindex(order)
+
+    pa = _reindex(pts, "maker")
+    colors = [_PU_COLORS.get(m, ACCENT) for m in order]
+    fig_pts = _eng_hbar(
+        order, pa["ppc"].tolist(), colors,
+        [f"{v:.0f}" if v >= 10 else f"{v:.1f}" for v in pa["ppc"]],
+        "Championship points per car",
+        "Constructor points ÷ cars supplied",
+        ("<b>%{y}</b><br>%{x:.0f} pts per car<br>"
+         "%{customdata[0]:.0f} total pts · %{customdata[1]:.0f} cars"
+         "<br>Teams: %{customdata[2]}<extra></extra>"),
+        customdata=np.stack([pa["points"], pa["cars"], pa["teams"]], axis=-1),
+    )
+
+    # ── Panel B · PU reliability — element consumption + penalties ─
+    pu = pu_df(season)
+    fig_rel, rel_note = None, ""
+    ecols = ["ice", "tc", "mguk", "es", "ce", "ex"]
+    if not pu.empty and set(ecols).issubset(pu.columns):
+        pu = pu.copy()
+        pu["maker"] = pu["pu_supplier"].map(_pu_short)
+        pu["elems"] = pu[ecols].sum(axis=1)
+        rel = (pu.groupby("maker")
+               .agg(elems_car=("elems", "mean"), ice_car=("ice", "mean"),
+                    penalties=("penalties_places", "sum"),
+                    cars=("driver", "nunique")).reset_index())
+        rb = _reindex(rel, "maker")
+        # Colour ramps amber→red with the ICE units burned per car (allowance
+        # is 4 ICE for the whole 2026 season): more engines = rougher campaign.
+        def _relclr(ice):
+            if ice != ice:
+                return "#3a3a4a"
+            if ice >= 4.5:
+                return "#e66767"
+            if ice >= 3.5:
+                return "#fab219"
+            return "#0ca30c"
+        fig_rel = _eng_hbar(
+            order, rb["elems_car"].tolist(),
+            [_relclr(v) for v in rb["ice_car"]],
+            [f"{int(p)} pl" if p == p and p > 0 else "" for p in rb["penalties"]],
+            "PU reliability — parts burned",
+            "Total PU elements used per car",
+            ("<b>%{y}</b><br>%{x:.1f} PU elements per car<br>"
+             "avg %{customdata[0]:.1f} engines (ICE) per car · "
+             "%{customdata[1]:.0f} cars<br>"
+             "%{customdata[2]:.0f} grid-penalty places taken<extra></extra>"),
+            customdata=np.stack([rb["ice_car"], rb["cars"], rb["penalties"]],
+                                axis=-1),
+        )
+        rel_note = (" The 2026 results archive only records a generic "
+                    "retirement status, so specific PU failures can't be split "
+                    "out of it — the reliability panel instead reads the FIA "
+                    "component audit (data/pu_penalties.csv): a maker whose "
+                    "cars have burned through more power-unit elements, and "
+                    "taken more grid-penalty places, has had the rougher "
+                    "reliability campaign.")
+
+    # ── Panel C · computed straight-line-speed index ──────────────
+    ts = topspeed_df()
+    fig_spd, spd_note = None, ""
+    if not ts.empty and "quali_idx" in ts.columns:
+        t = ts[ts["season"] == season].copy()
+        if not t.empty:
+            t["maker"] = t["pu_maker"].map(_pu_short).fillna(t["pu_maker"])
+            spd = (t.groupby("maker")
+                   .agg(idx=("quali_idx", "mean"), qraw=("quali_raw", "mean"),
+                        rraw=("race_raw", "mean"),
+                        teams=("team", lambda x: ", ".join(abbr(v) for v in sorted(x))))
+                   .reset_index())
+            sb = _reindex(spd, "maker")
+            fig_spd = _eng_hbar(
+                order, sb["idx"].tolist(),
+                ["#3987e5" if v == v and v >= 0 else "#e66767" for v in sb["idx"]],
+                [f"{v:+.1f}" for v in sb["idx"]],
+                "Straight-line speed index",
+                "km/h vs the field at the speed trap (quali)",
+                ("<b>%{y}</b><br>%{x:+.1f} km/h vs field average<br>"
+                 "avg quali trap %{customdata[0]:.0f} km/h · "
+                 "race %{customdata[1]:.0f} km/h<br>Teams: %{customdata[2]}"
+                 "<extra></extra>"),
+                customdata=np.stack([sb["qraw"], sb["rraw"], sb["teams"]], axis=-1),
+                diverging=True, xpad=1.3,
+            )
+            spd_note = (" The straight-line index is computed from every car's "
+                        "speed-trap reading (Speed_ST) each qualifying session, "
+                        "centred on the field so circuit differences cancel — a "
+                        "tentative proxy for deployed power that also reflects a "
+                        "car's drag level, not the engine alone.")
+
+    # ── Assemble ──────────────────────────────────────────────────
+    cols = [dbc.Col(dcc.Graph(figure=fig_pts, config=GFX), lg=4, md=6)]
+    if fig_rel is not None:
+        cols.append(dbc.Col(dcc.Graph(figure=fig_rel, config=GFX), lg=4, md=6))
+    if fig_spd is not None:
+        cols.append(dbc.Col(dcc.Graph(figure=fig_spd, config=GFX), lg=4, md=12))
+
+    leader = order[0]
+    intro = html.P(
+        ["A power unit isn't one team's story — in 2026 five manufacturers "
+         "supply the grid in very different numbers (Mercedes power eight cars, "
+         "Honda just two), so a raw points total flatters the big suppliers. "
+         "This reads the engine race three fairer ways: championship points ",
+         html.Strong("per car"), " supplied, power-unit ",
+         html.Strong("reliability"), ", and a computed ",
+         html.Strong("straight-line speed"), " index. On points per car, ",
+         html.Strong(leader), " lead the field."],
+        style={"color": TEXT_DIM, "fontSize": "0.78rem", "marginBottom": "10px"})
 
     return card(
         "The Engine Championship",
-        dcc.Graph(figure=fig, config=GFX),
-        info=("Data: each customer team's constructor points summed by its "
-              "power-unit supplier (facilities.csv), for the loaded season "
-              "(2026+ only — the supplier map describes the current PU "
-              "era). Why: 2026's all-new power units made the engine the "
-              "biggest single differentiator — this shows which supplier's "
-              "camp is winning the era, beyond any one team's chassis."),
+        html.Div([intro, dbc.Row(cols, className="g-2")]),
+        info=("Data: three views of the power-unit battle for the loaded "
+              "season (2026+, the current PU era). (1) Points per car — each "
+              "team's constructor points (standings archive) grouped by its "
+              "supplier (facilities.csv) and divided by the number of cars that "
+              "supplier fields, so an eight-car and a two-car maker compare "
+              "fairly." + rel_note + spd_note +
+              " Why: the raw 'sum the points by engine' table rewards whoever "
+              "supplies the most teams; normalising by fleet size, and adding "
+              "reliability and measured straight-line pace, shows which power "
+              "unit is actually best."),
     )
 
 

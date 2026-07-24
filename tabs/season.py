@@ -30,7 +30,7 @@ from tabs.pu_pool import pu_pool_card
 from tabs.driver_market import driver_market_card
 from tabs.season_ops import (
     chaos_timeline_card, pit_league_card, lap1_league_card,
-    pu_points_card, affinity_card, testing_card, penalties_card,
+    engine_championship_card, affinity_card, testing_card, penalties_card,
 )
 from tabs.season_intro import season_intro_block
 
@@ -408,8 +408,8 @@ def _season_content(season: int) -> html.Div:
                       pit_league_card(season), lap1_league_card(season),
                       testing_card(season),
                       reliability_card(season), penalties_card(season),
-                      pu_pool_card(season), pu_points_card(season),
-                      driver_market_card(season)) if c is not None])
+                      pu_pool_card(season), engine_championship_card(season))
+         if c is not None])
 
 
 def _section_header(title: str, subtitle: str) -> html.Div:
@@ -500,6 +500,13 @@ def tab_season(standings=None, upgrades=None) -> html.Div:
                         "turned into a long-term form lever"),
         hr_section(),
     ]
+    # Driver market (contracts, pay & discipline) closes out HR & PERSONNEL —
+    # the driver side of the grid's people story. Latest season, like the rest
+    # of this static section.
+    if yrs:
+        dm_card = driver_market_card(max(yrs))
+        if dm_card is not None:
+            parts.append(dm_card)
     parts += [
         _section_header("INFRASTRUCTURE & GOVERNANCE",
                         "where each team designs its car — factory and "

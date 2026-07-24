@@ -241,7 +241,36 @@ def newcomer_primer():
         "Teams use the practice hours to dial in wings, suspension and ",
         *gloss("compound", "tyres"), " against the clock before it counts."],
         style={"color": TEXT_DIM, "fontSize": "0.82rem", "lineHeight": "1.5"})
-    weekend = html.Div([weekend_flow, weekend_note])
+    weekend_story = html.Div([
+        "Why the order matters: at ", _b("Monaco"), " the streets are so narrow "
+        "that overtaking is almost impossible, so the grid set on Saturday "
+        "tends to be the finishing order on Sunday — a brilliant qualifying lap "
+        "there can be worth more than raw race pace. Elsewhere a surprise wet "
+        "qualifying can drop a slower car onto ",
+        *gloss("pole position", "pole"), " and turn the whole weekend on its "
+        "head."],
+        style={"color": TEXT_DIM, "fontSize": "0.82rem", "lineHeight": "1.5",
+               "marginTop": "6px"})
+    weekend_arc = html.Div([
+        "But most weekends a result is ", _b("built, not fixed"), " — and it can "
+        "swing hard between Friday and Sunday. At the ",
+        _b("2018 German Grand Prix"), ", Lewis Hamilton's car broke down in ",
+        *gloss("qualifying", "Q1"), " with a hydraulic failure; he qualified "
+        "only ", _b("14th"), " and his weekend looked wrecked. His title rival "
+        "Sebastian Vettel, meanwhile, put it on ", *gloss("pole position", "pole"),
+        " at his home race and drove away at the front. Then late rain came: "
+        "Hamilton, carving through the field, had reached the top five when "
+        "Vettel — still leading — slid into the barriers and out of the race. "
+        "Hamilton took the lead and ", _b("won from 14th"), ", turning a "
+        "qualifying disaster into victory, while Vettel turned pole into "
+        "nothing. Same track, same rain — ", _b("opposite fortunes"),
+        ", decided by how each side built its weekend and held its nerve when it "
+        "mattered. That whole arc — practice pace, a Saturday setback, a Sunday "
+        "rescued or thrown away — is what the ", _b("WEEK END PRED"), ", ",
+        _b("QUALI"), " and ", _b("RACE"), " tabs let you watch unfold."],
+        style={"color": TEXT_DIM, "fontSize": "0.82rem", "lineHeight": "1.5",
+               "marginTop": "8px"})
+    weekend = html.Div([weekend_flow, weekend_note, weekend_story, weekend_arc])
 
     tab_intro = html.Div(
         ["Nine tabs, running from the big picture down to the finest detail — "
@@ -293,7 +322,20 @@ def newcomer_primer():
             *gloss("degradation", "tyre wear"), ", where to spend the budget. A "
             "well-timed strategy beats a faster car. If you only care who "
             "crosses the line first, that's the surface — the depth underneath "
-            "is what everything here measures."]),
+            "is what everything here measures.",
+            html.Div([
+                "It can decide championships outright. At the ",
+                _b("2010 season finale in Abu Dhabi"), ", Fernando Alonso "
+                "arrived leading the title and only had to finish near the "
+                "front. Ferrari pitted him early to cover a rival, but the fresh "
+                "tyres dropped him into a queue behind the much slower Renault "
+                "of Vitaly Petrov — whom he could not pass for the rest of the "
+                "race. He finished 7th and lost the championship to Sebastian "
+                "Vettel by four points, beaten not on speed but on a single "
+                "strategy call.",
+            ], style={"marginTop": "8px", "color": TEXT_DIM,
+                      "fontSize": "0.82rem", "lineHeight": "1.5"}),
+        ]),
         _mini("How you win", [
             "There are ", _b("two titles"), " each year: the ",
             *gloss("wdc", "Drivers' Championship"), " for the best driver and "
@@ -305,6 +347,20 @@ def newcomer_primer():
             "for the top eight. Totals build up across all ~24 races, so the "
             "champion is ", _b("whoever is most consistently fast over the "
             "whole season"), " — not just whoever wins the most.",
+            html.Div([
+                "History proves it. In ", _b("2025"), " the driver who won the ",
+                _b("most"), " races — Max Verstappen, with eight — didn't take "
+                "the title: ", _b("Lando Norris"), " did, on seven wins but "
+                "steadier scoring, pipping Verstappen by just ", _b("2 points"),
+                " and his own McLaren team-mate Oscar Piastri (also seven wins) "
+                "by thirteen. Go back further and ", _b("no one has ever been "
+                "champion without winning a single race"), ", but the title has "
+                "twice been taken on just one win: Mike Hawthorn in 1958 beat "
+                "Stirling Moss — who won four races to Hawthorn's one — by a "
+                "single point on relentless podium finishes, and Keke Rosberg "
+                "won 1982 the same way.",
+            ], style={"marginTop": "8px", "color": TEXT_DIM,
+                      "fontSize": "0.82rem", "lineHeight": "1.5"}),
             html.Div([
                 "And there's a hard edge to it: ",
                 _b("finish eleventh or lower and you score nothing"),
@@ -318,9 +374,14 @@ def newcomer_primer():
                 "can be worth ", _b("gambling everything on one bold strategy"),
                 ", or simply banking on chaos — a wet track, a ",
                 *gloss("safety car"), ", a first-lap tangle ahead. One lucky "
-                "afternoon can rewrite a season, like Alpine's shock double "
-                "podium in wet Brazil 2024, which hauled them up the "
-                "constructors' table in a single race.",
+                "afternoon can rewrite a season: at a wet, chaotic São Paulo — "
+                "one of the closing races of 2024, in a year when the very same "
+                "two Alpine drivers had dramatically crashed into each other at "
+                "Monaco — Esteban Ocon and Pierre Gasly came home ",
+                _b("2nd and 3rd"), ". That shock double podium lifted the team "
+                "from ", _b("9th in the constructors' championship to 6th"),
+                " in a single afternoon (14 points to 49), leapfrogging Haas, "
+                "RB and Williams at a stroke.",
             ], style={"marginTop": "8px"}),
         ]),
         _mini("Two cars per team — and a delicate rivalry", [
@@ -334,13 +395,36 @@ def newcomer_primer():
             "other's closest yardstick, and who gets priority on upgrades, "
             "pit-stop order or strategy can decide a career. The ",
             _b("TEAM & TEAMATE"), " and ", _b("DUEL"),
-            " tabs are built around these intra-team battles."]),
+            " tabs are built around these intra-team battles.",
+            html.Div([
+                "When it turns sour it can define an era. ",
+                _b("Ayrton Senna and Alain Prost"), ", team-mates at McLaren in "
+                "1988–89, grew so bitter they collided at the Japanese Grand "
+                "Prix two years running — each time settling the World "
+                "Championship in the gravel. Mercedes' ",
+                _b("Lewis Hamilton and Nico Rosberg"), ", friends since "
+                "childhood, did much the same in 2014–16, trading paint until "
+                "Rosberg edged the 2016 title and abruptly retired five days "
+                "later.",
+            ], style={"marginTop": "8px", "color": TEXT_DIM,
+                      "fontSize": "0.82rem", "lineHeight": "1.5"}),
+        ]),
         _mini("Why tyres matter so much", [
             "Every car must make at least one ", *gloss("pit stop"),
             " to change ", *gloss("tyre allocation", "tyres"), ". Softer ",
             *gloss("compound", "tyres"), " are faster but wear out sooner, so "
             "deciding when to stop — the ", *gloss("undercut"),
-            " and ", *gloss("overcut"), " — is a huge part of race strategy."]),
+            " and ", *gloss("overcut"), " — is a huge part of race strategy.",
+            html.Div([
+                "You can win without overtaking on track at all. In ",
+                _b("Spain 2021"), ", Max Verstappen led most of the race, but "
+                "Mercedes gambled on a second pit stop to fit Lewis Hamilton "
+                "fresh tyres. On far newer rubber Hamilton hunted him down over "
+                "the final stint and breezed past with a few laps to go — "
+                "Verstappen's worn tyres had nothing left to answer with.",
+            ], style={"marginTop": "8px", "color": TEXT_DIM,
+                      "fontSize": "0.82rem", "lineHeight": "1.5"}),
+        ]),
         _mini("The tabs — what each one is for", tabs_block),
         html.Div(how, style={"color": TEXT_DIM, "fontSize": "0.8rem",
                              "lineHeight": "1.5", "borderTop":

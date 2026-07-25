@@ -268,11 +268,9 @@ def _zone_pace_table(laps_df: pd.DataFrame, fracs: np.ndarray, season, event) ->
 
 # ── server-side context ───────────────────────────────────────
 def _track_map_for(season, event):
-    from tabs.telemetry import _get_track_map
-    try:
-        return _get_track_map()(season, event, "Q")
-    except Exception:
-        return None
+    from tabs.telemetry import _geometry_track_map
+    # Best loaded session (incl. practice), so the zone map works mid-weekend.
+    return _geometry_track_map(season, event)
 
 
 def _allowed(sessions, drivers, teams) -> tuple:

@@ -1,30 +1,38 @@
 """Run the whole post-race data refresh in one go.
 
 Prerequisite: the race weekend's sessions are cached under data/sessions/
-(load the event in the app's Data tab first — this script computes, it does
-not fetch sessions).
+(run `scripts/during_weekend.py`, or load the event in the app's Data tab —
+this script computes from the cache, it does not fetch sessions).
 
 Steps, in dependency order:
 
-  1. f1lib.fetch_historical_results    results/quali/sprint archive + standings
-  2. scripts/compute_team_pace.py      per-event pace table (needs the archive)
-  3. scripts/compute_race_stats.py     SC rates, overtakes, pit league, ...
-  4. scripts/compute_atr.py            ATR sliding scale (needs standings)
-  5. compute_mistakes.py               micro-mistake archive (telemetry, slow)
+  1. scripts/fetch_pitstops.py         real pit stops (race stats needs them)
+  2. f1lib.fetch_historical_results    results/quali/sprint archive + standings
+  3. scripts/compute_team_pace.py      per-event team pace table (needs the archive)
+  4. f1lib.driver_ratings              per-event DRIVER pace table (BRIEF/DUEL)
+  5. scripts/compute_race_stats.py     SC rates, overtakes, pit league, ...
+  6. scripts/compute_atr.py            ATR sliding scale (needs standings)
+  7. scripts/compute_pu_topspeed.py    straight-line-speed / PU index (sessions)
+  8. compute_mistakes.py               micro-mistake archive (telemetry, slow)
 
-Stops at the first failing step. Not covered here (interactive / optional):
-the `radio-review` skill, and `build_quali_scenes.py <season> "<Meeting>"`.
+Stops at the first failing step; every step is idempotent, so fix and re-run.
+Not covered here (needs a human or a browser): the `radio-review` skill, the
+hand-curated CSVs, and `build_quali_scenes.py <season> "<Meeting>"` — the
+closing checklist lists them.
 
 Usage
 -----
     .venv/Scripts/python scripts/after_race.py
     .venv/Scripts/python scripts/after_race.py --skip-mistakes   # fast pass
+    .venv/Scripts/python scripts/after_race.py --skip pitstops --skip mistakes
+    .venv/Scripts/python scripts/after_race.py --list
 """
 from __future__ import annotations
 
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
+import argparse
 import subprocess
 import sys
 import time
@@ -32,35 +40,77 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-STEPS: list[tuple[str, list[str]]] = [
-    ("results archive",   [sys.executable, "-m", "f1lib.fetch_historical_results"]),
-    ("team pace table",   [sys.executable, "scripts/compute_team_pace.py"]),
-    ("race stats",        [sys.executable, "scripts/compute_race_stats.py"]),
-    ("ATR sliding scale", [sys.executable, "scripts/compute_atr.py"]),
-    ("micro-mistakes",    [sys.executable, "compute_mistakes.py"]),
+# (key, human name, command). The key is what --skip takes.
+STEPS: list[tuple[str, str, list[str]]] = [
+    ("pitstops",  "pit stops",
+     [sys.executable, "scripts/fetch_pitstops.py"]),
+    ("archive",   "results archive",
+     [sys.executable, "-m", "f1lib.fetch_historical_results"]),
+    ("teampace",  "team pace table",
+     [sys.executable, "scripts/compute_team_pace.py"]),
+    ("driverpace", "driver pace table",
+     [sys.executable, "-m", "f1lib.driver_ratings"]),
+    ("racestats", "race stats",
+     [sys.executable, "scripts/compute_race_stats.py"]),
+    ("atr",       "ATR sliding scale",
+     [sys.executable, "scripts/compute_atr.py"]),
+    ("topspeed",  "PU top-speed index",
+     [sys.executable, "scripts/compute_pu_topspeed.py"]),
+    ("mistakes",  "micro-mistakes",
+     [sys.executable, "compute_mistakes.py"]),
+]
+
+FOLLOW_UPS = [
+    "radio review    /radio-review <Meeting>   (fetch the audio SOON - mp3s are",
+    "                purged upstream after a few weeks)",
+    'quali 3D scene  python scripts/build_quali_scenes.py <season> "<Meeting>"',
+    "curated CSVs    python scripts/during_weekend.py --check-only",
+    "                (tyre allocation, upgrades, PU + gearbox pools, penalties)",
 ]
 
 
 def main() -> int:
-    steps = STEPS
-    if "--skip-mistakes" in sys.argv:
-        steps = [s for s in steps if s[0] != "micro-mistakes"]
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--skip", action="append", default=[], metavar="KEY",
+                    help="skip a step by key (repeatable); see --list")
+    ap.add_argument("--skip-mistakes", action="store_true",
+                    help="alias for --skip mistakes")
+    ap.add_argument("--list", action="store_true", help="print the steps and exit")
+    args = ap.parse_args()
+
+    if args.list:
+        for key, name, cmd in STEPS:
+            print(f"  {key:<11} {name:<20} {' '.join(cmd[1:])}")
+        return 0
+
+    skip = {s.lower() for s in args.skip}
+    if args.skip_mistakes:
+        skip.add("mistakes")
+    unknown = skip - {k for k, _, _ in STEPS}
+    if unknown:
+        print(f"Unknown --skip key(s): {', '.join(sorted(unknown))}. "
+              "Run with --list to see them.")
+        return 2
+
+    steps = [s for s in STEPS if s[0] not in skip]
 
     t0 = time.time()
-    for i, (name, cmd) in enumerate(steps, 1):
+    for i, (key, name, cmd) in enumerate(steps, 1):
         print(f"\n=== [{i}/{len(steps)}] {name}: {' '.join(cmd[1:])} ===",
               flush=True)
         t = time.time()
         rc = subprocess.run(cmd, cwd=ROOT).returncode
         if rc != 0:
-            print(f"\nFAILED at step {i} ({name}, exit {rc}) — later steps "
-                  "not run. Fix and re-run; every step is idempotent.")
+            print(f"\nFAILED at step {i} ({name}, exit {rc}) - later steps "
+                  "not run. Fix and re-run; every step is idempotent "
+                  f"(or skip it: --skip {key}).")
             return rc
         print(f"=== {name} done in {time.time() - t:.0f}s ===", flush=True)
 
     print(f"\nAll {len(steps)} steps done in {(time.time() - t0) / 60:.1f} min.")
-    print("Remember (not automated): the radio-review skill, and optionally")
-    print('  build_quali_scenes.py <season> "<Meeting>" for the 3D replay.')
+    print("\nStill to do by hand:")
+    for line in FOLLOW_UPS:
+        print(f"  {line}")
     return 0
 
 

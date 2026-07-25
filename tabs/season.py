@@ -27,6 +27,7 @@ from tabs.hr import hr_section
 from tabs.infrastructure import infrastructure_section
 from tabs.reliability import reliability_card
 from tabs.pu_pool import pu_pool_card
+from tabs.gearbox_pool import gearbox_pool_card
 from tabs.driver_market import driver_market_card
 from tabs.season_ops import (
     chaos_timeline_card, pit_league_card, lap1_league_card,
@@ -408,7 +409,8 @@ def _season_content(season: int) -> html.Div:
                       pit_league_card(season), lap1_league_card(season),
                       testing_card(season),
                       reliability_card(season), penalties_card(season),
-                      pu_pool_card(season), engine_championship_card(season))
+                      pu_pool_card(season), gearbox_pool_card(season),
+                      engine_championship_card(season))
          if c is not None])
 
 

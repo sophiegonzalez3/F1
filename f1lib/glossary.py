@@ -53,6 +53,9 @@ GLOSSARY: dict[str, str] = {
         "engine with electric-recovery motors. Often shortened to 'PU'.",
     "power unit penalty": "A grid-place drop given when a team fits more engine "
         "parts than the season allowance — an aging-engine tax, not misbehaviour.",
+    "gearbox": "The transmission that sends engine power to the rear wheels. "
+        "Like the engine it's rationed: each driver gets a fixed number per "
+        "season, and fitting extra ones brings a grid penalty.",
 
     # — Timing & pace —
     "lap time": "How long a driver takes to complete one full lap of the "

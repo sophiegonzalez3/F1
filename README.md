@@ -90,25 +90,24 @@ sessions — no restart needed.
 ## Updating for a new race weekend
 
 When a new Grand Prix rolls out, this is the end-to-end checklist to fold it into
-the dashboard. Steps 1–3 are all you need for the core tabs to work; 4–6 refresh
-the derived analytics and the hand-maintained datasets. Run every command from
+the dashboard. Two runners do the mechanical work — one during the weekend, one
+after the race — and the rest is the hand-maintained data. Run every command from
 the repo root inside the venv.
 
-**During the weekend (optional, progressive):** after each practice session you
-can re-load the event in the **Data** tab — the BRIEF tab's pace prediction
-sharpens as FP1 → FP2 → FP3 data comes in.
+1. **During the weekend**, after each session (FP1 → FP2 → FP3 → Sprint → Quali):
 
-1. **Cache the sessions.** Launch the app (`python app.py`), open the **Data**
-   tab, pick the season + the new event, and load it. This fetches and caches
-   every available session (practice / qualifying / sprint / race) to
-   `data/sessions/`. Pit stops (`data/pitstops/`) and team radio load on demand
-   the first time you open the **Race** tab.
+   ```bash
+   python scripts/during_weekend.py            # defaults to the latest event that has run
+   ```
 
-2. **Review the team radio.** Run the `radio-review` skill for the meeting (fetch
-   → transcribe → hand-review). It writes reviewed transcripts and marks the
-   meeting `reviewed=True`. See `.claude/skills/radio-review/SKILL.md`.
+   It caches every session that has run to `data/sessions/`, warms the circuit's
+   track map, tops up `season_calendar.csv`, and prints which hand-curated CSVs
+   still need this event. The BRIEF tab's pace prediction sharpens with each
+   session added. (Loading the event in the app's **Data** tab does the same
+   caching, interactively.)
 
-3. **Add the hand-maintained data** (from external sources):
+2. **Add the hand-maintained data** the checklist asks for — the two that are
+   per-event:
    - `data/tyre_allocations.csv` — the event's Pirelli C-compound nomination
      (soft/medium/hard → C1–C5), from the Pirelli press release. Feeds the
      "SOFT C5" chips on the strategy cards.
@@ -117,12 +116,23 @@ sharpens as FP1 → FP2 → FP3 data comes in.
      map team names to `TEAM_COLORS` keys). The UPGRADES tab hot-reloads on
      file mtime, so no restart is needed.
 
-4. **Rebuild the derived tables** (after the race is cached):
+   Every curated file, its source and its cadence is documented in
+   [`read_local.md`](read_local.md).
+
+3. **After the race is cached**, rebuild the derived tables:
+
    ```bash
-   python scripts/after_race.py   # results archive → team pace → race stats → ATR → mistakes
+   python scripts/after_race.py   # pit stops → results archive → team pace → driver pace → race stats → ATR → PU top-speed → mistakes
    ```
-   (`scripts/compute_circuit_characteristics.py` stays separate — only needed
-   for a new circuit or fresh telemetry coverage.)
+
+   Stops at the first failure; every step is idempotent, and `--skip <key>`
+   drops one. (`scripts/compute_circuit_characteristics.py` and
+   `compute_corner_classes.py` stay separate — new circuit / once a season.)
+
+4. **Review the team radio** — soon, the mp3s are purged upstream after a few
+   weeks. Run the `radio-review` skill for the meeting (fetch → transcribe →
+   hand-review); it writes reviewed transcripts and marks the meeting
+   `reviewed=True`. See `.claude/skills/radio-review/SKILL.md`.
 
 5. **Pre-bake the Quali 3D replay** (optional — makes the QUALI 3D view load
    instantly for the new circuit):
@@ -143,7 +153,8 @@ See [`scripts/README.md`](scripts/README.md) for the full per-script reference.
 
 | Path | What it is |
 |------|------------|
-| [app.py](app.py) | The Dash app — UI, tabs, and callbacks. Entry point. The only `.py` at the repo root. |
+| [app.py](app.py) | The Dash app — UI, tabs, and callbacks. Entry point. |
+| [compute_mistakes.py](compute_mistakes.py) | The micro-mistake scan (last step of `after_race.py`); at the root because it predates `scripts/`. |
 | `f1lib/` | The library the app imports (see key modules below). |
 | `tabs/` | Tab modules split out of app.py (overview, teams, practice, teammates, season, qualifying, upgrades, fingerprints); see `tabs/__init__.py` for the migration recipe. New tabs start here. |
 | `scripts/` | Standalone maintenance / data-update jobs you run by hand — see [`scripts/README.md`](scripts/README.md). |
@@ -189,6 +200,13 @@ lives in `f1lib/` because the app imports it too, so it runs as a module.
 ```bash
 # Pull historical race/quali/sprint results + standings for the configured seasons
 python -m f1lib.fetch_historical_results
+
+# Rebuild the per-event DRIVER pace table (teammate-relative driver ratings the
+# BRIEF prediction and the DUEL/race forecast read)
+python -m f1lib.driver_ratings
+
+# Fetch real pit-stop times for every cached race that's missing them
+python scripts/fetch_pitstops.py                  # add --dry-run to preview
 
 # Rebuild older session caches so telemetry includes X/Y track position
 # (needed for the racing-line view on sessions cached before that feature)

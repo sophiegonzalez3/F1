@@ -199,6 +199,65 @@ def _session_meeting_season(session_name) -> tuple[int | None, str | None]:
     return None, None
 
 
+# Preference order for the session whose fastest lap defines the circuit
+# geometry. Corner positions are identical across every session of an event —
+# we only want the cleanest available lap for the line. The key point is that
+# this list reaches PRACTICE sessions: mid-weekend, before Qualifying has run,
+# they are the only sessions loaded, and the cards that need the track map
+# (cornering-speed, racing line, zone map) must still work. (label, FastF1 id.)
+_GEOMETRY_SESSION_PREF: list[tuple[str, str]] = [
+    ("Qualifying",        "Q"),
+    ("Sprint Qualifying", "SQ"),
+    ("Sprint Shootout",   "SQ"),
+    ("Race",              "R"),
+    ("Sprint",            "Sprint"),
+    ("Practice 3",        "FP3"),
+    ("Practice 2",        "FP2"),
+    ("Practice 1",        "FP1"),
+]
+
+
+def _geometry_session_ids(season, event) -> list[str]:
+    """FastF1 session ids to try for this event's circuit geometry, cleanest
+    lap first, restricted to sessions actually loaded — so mid-weekend we never
+    fire a doomed fetch for a Qualifying that hasn't happened. Falls back to the
+    historical ('Q', 'R') when nothing matches the loaded set (e.g. a completed
+    event loaded before this info list was populated)."""
+    loaded: set[str] = set()
+    for info in LOADED_SESSION_INFO:
+        try:
+            same = (int(info.get("SEASON")) == int(season)
+                    and str(info.get("MEETING")) == str(event))
+        except (TypeError, ValueError):
+            same = False
+        if same:
+            loaded.add(str(info.get("SESSION")))
+    ids: list[str] = []
+    for label, sid in _GEOMETRY_SESSION_PREF:
+        if label in loaded and sid not in ids:
+            ids.append(sid)
+    return ids or ["Q", "R"]
+
+
+def _geometry_track_map(season, event) -> dict | None:
+    """Track map (corner geometry + a clean fastest lap) for the event, from the
+    best AVAILABLE loaded session. Replaces hardcoded get_track_map(..., "Q")
+    calls so the geometry cards light up on practice-only weekends. Returns None
+    if no loaded session yields geometry."""
+    getter = _get_track_map()
+    if getter is None or not season or not event:
+        return None
+    for sid in _geometry_session_ids(season, event):
+        try:
+            tm = getter(season, event, sid)
+        except Exception:
+            tm = None
+        if (tm and tm.get("line") is not None and not tm["line"].empty
+                and tm.get("corners") is not None and not tm["corners"].empty):
+            return tm
+    return None
+
+
 def _corner_fractions_for(season, event) -> pd.DataFrame:
     """Corner fractional positions for a specific circuit. Uses the app's track-map
     cache and, if that circuit isn't cached yet, fetches it once via get_track_map
@@ -210,17 +269,9 @@ def _corner_fractions_for(season, event) -> pd.DataFrame:
     if key in _CORNER_FRAC_CACHE:
         return _CORNER_FRAC_CACHE[key]
     out = pd.DataFrame()
-    for sid in ("Q", "R"):           # quali gives the cleanest lap; race as fallback
-        try:
-            tm = _get_track_map()(season, event, sid)
-        except Exception as exc:
-            logging.warning("corner markers: track map fetch failed for %s %s (%s): %s",
-                            season, event, sid, exc)
-            tm = None
-        if tm and tm.get("corners") is not None and not tm["corners"].empty:
-            out = _corner_fractions_from_geometry(tm.get("line"), tm["corners"])
-            if not out.empty:
-                break
+    tm = _geometry_track_map(season, event)   # cleanest loaded session, incl. practice
+    if tm and tm.get("corners") is not None and not tm["corners"].empty:
+        out = _corner_fractions_from_geometry(tm.get("line"), tm["corners"])
     _CORNER_FRAC_CACHE[key] = out
     return out
 
@@ -688,10 +739,7 @@ def _racing_line_fig(specs):
         return _empty_channel_fig("No position data found for the selected lap(s).")
 
     season, event = _session_meeting_season(marker_session)
-    try:
-        tm = _get_track_map()(season, event, "Q")
-    except Exception:
-        tm = None
+    tm = _geometry_track_map(season, event)
     ang = (tm["rotation"] / 180.0 * np.pi) if tm else 0.0
     single = len(lines) == 1
 

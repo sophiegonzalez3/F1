@@ -199,7 +199,7 @@ def _build(sessions) -> dict | None:
     per-corner class + per-driver apex table. Memoised on data generation +
     the session selection, so the class-selector callback never rebuilds it."""
     from tabs.telemetry import (
-        _best_lap_telemetry_frame, _get_track_map, _session_meeting_season, _rotate,
+        _best_lap_telemetry_frame, _geometry_track_map, _session_meeting_season, _rotate,
     )
 
     fl = _sessions_frame(sessions)
@@ -210,12 +210,8 @@ def _build(sessions) -> dict | None:
         return _MEMO[key]
 
     season, event = _session_meeting_season(fl["session_name"].iloc[0])
-    try:
-        tm = _get_track_map()(season, event, "Q")
-    except Exception:
-        tm = None
-    if (not tm or tm.get("line") is None or tm["line"].empty
-            or tm.get("corners") is None or tm["corners"].empty):
+    tm = _geometry_track_map(season, event)   # cleanest loaded session, incl. practice
+    if tm is None:
         return None
 
     line, corners = tm["line"], tm["corners"]

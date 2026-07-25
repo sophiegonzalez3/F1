@@ -213,6 +213,7 @@ def checklist(season: int, meeting: str) -> None:
     _line("data/pu_penalties.csv", rnd is not None and pu_r is not None and pu_r >= rnd,
           f"pool is as-of R{pu_r}, event is {rlabel}",
           "FIA new-PU-elements decision document for this event")
+    _verify_pu_counts(season, meeting)
 
     gb_r = _as_of_round(_read(GEARBOX), season)
     _line("data/gearbox_penalties.csv",
@@ -220,6 +221,34 @@ def checklist(season: int, meeting: str) -> None:
           f"pool is as-of R{gb_r}, event is {rlabel}",
           "no public per-driver gearbox RNC table exists (checked 2026-07-25) - "
           "the file is a labelled placeholder, so this line stays TODO by design")
+
+
+def _verify_pu_counts(season: int, meeting: str) -> None:
+    """Diff the PU pool against the FIA's cumulative table for this event.
+
+    The as_of line above only compares a round *label*, which cannot see wrong
+    numbers underneath it — on 2026-07-25 the file read "R10" while Lawson's and
+    Stroll's rows were still R9. This checks the counts themselves.
+
+    Advisory: the table is published early on the Friday, so before then (and
+    offline) there is simply nothing to compare against and we say so.
+    """
+    try:
+        from scripts.check_pu_table import check
+        with contextlib.redirect_stdout(io.StringIO()):   # it echoes the URL
+            fia, diffs = check(season, meeting, PU_POOL)
+    except Exception as exc:                 # not published yet, offline, format change
+        reason = getattr(exc, "code", None) or type(exc).__name__
+        print(f"         -> FIA table not checked ({reason}); it is published "
+              "early on the Friday")
+        return
+    if not diffs:
+        print(f"         -> FIA table: counts match for all {len(fia)} drivers")
+        return
+    print(f"         -> FIA table: {len(diffs)} count(s) disagree - "
+          f'run  python scripts/check_pu_table.py --event "{meeting}"')
+    for drv, col, have, want, _ in sorted(diffs)[:6]:
+        print(f"            {drv} {col}: {have} -> {want}")
 
 
 def _line(name: str, ok: bool, detail: str, source: str) -> None:

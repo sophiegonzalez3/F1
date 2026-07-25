@@ -44,7 +44,7 @@ slower cadence (yearly / on-symptom).
 
 | Script | What it does | Run it when |
 |---|---|---|
-| `during_weekend.py` | Headless equivalent of picking the event in the app's Data tab: caches every session of the event that has run, warms `data/track_maps/`, refreshes `season_calendar.csv` if the season is missing, then prints which hand-curated CSVs still need this event. Works at any point of a sprint or conventional weekend. Args: `[season] ["Meeting"]` (exact FastF1 name), `--check-only`, `--no-track-map`. | After each session of a live weekend (FP1 → FP2 → FP3 → Sprint → Quali). Re-running is cheap; the BRIEF pace prediction sharpens each time. |
+| `during_weekend.py` | Headless equivalent of picking the event in the app's Data tab: caches every session of the event that has run, warms `data/track_maps/`, refreshes `season_calendar.csv` if the season is missing, then prints which hand-curated CSVs still need this event — including a live diff of the PU pool against the FIA's cumulative table (via `check_pu_table.py`), which catches stale counts hiding under a current-looking `as_of`. Works at any point of a sprint or conventional weekend. Args: `[season] ["Meeting"]` (exact FastF1 name), `--check-only`, `--no-track-map`. | After each session of a live weekend (FP1 → FP2 → FP3 → Sprint → Quali). Re-running is cheap; the BRIEF pace prediction sharpens each time. |
 | `after_race.py` | Runs the whole post-race chain in dependency order, stopping at the first failure, then prints the by-hand follow-ups. Args: `--skip <key>` (repeatable), `--skip-mistakes`, `--list`. | Once the Race is cached. Radio review, curated CSVs and quali-scene baking stay manual — it reminds you. |
 
 ## Fetch / backfill raw data
@@ -72,6 +72,12 @@ slower cadence (yearly / on-symptom).
 `compute_mistakes.py` (repo root) writes `data/mistakes_all.parquet` +
 `mistakes_pressure_all.parquet`; it is the slow last step of `after_race.py`
 and needs a cached track map for the circuit — which `during_weekend.py` warms.
+
+## Validate curated data
+
+| Script | What it does | Run it when |
+|---|---|---|
+| `check_pu_table.py` | Diffs `data/pu_penalties.csv` against the FIA Technical Delegate's cumulative PU-element PDF, re-mapping the FIA's column order onto ours by name. `--write` applies the element counts; `penalties_places`, `penalty_event` and `as_of` stay manual. Args: `--event "<Meeting>"`, `--season`, `--pdf`, `--write`. Exits 1 on any mismatch. | `during_weekend.py` calls it automatically. Run it directly to fix what that reports, or after hand-editing the pool. |
 
 ## Validate models (backtests)
 

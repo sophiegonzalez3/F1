@@ -254,7 +254,7 @@ def _grid_penalties(season: int, meeting: str) -> dict[str, dict]:
     """Curated grid drops for this meeting, keyed by driver short code:
     {driver: {"places": int, "bog": bool, "reasons": [str]}}.
     Sources: data/pu_penalties.csv (PU-pool penalties, matched on the event
-    named in its as_of column) and data/team_penalties.csv (sporting
+    named in its penalty_event column) and data/team_penalties.csv (sporting
     'Grid penalty' rows for the event, cancelled ones excluded)."""
     out: dict[str, dict] = {}
 
@@ -270,7 +270,12 @@ def _grid_penalties(season: int, meeting: str) -> dict[str, dict]:
                                                errors="coerce").fillna(0)
         pu = pu[(pu["season"] == int(season)) & (pu["penalties_places"] > 0)]
         for _, r in pu.iterrows():
-            ev = re.sub(r"^\s*R\d+\s*", "", str(r.get("as_of", ""))).strip().lower()
+            # penalty_event names the race the drops were served at; as_of only
+            # says how fresh the file is, and the two diverge whenever the pool
+            # is refreshed from a later event's cumulative table. Fall back to
+            # as_of for files written before the columns were split.
+            ev = str(r.get("penalty_event") or r.get("as_of", ""))
+            ev = re.sub(r"^\s*R\d+\s*", "", ev).strip().lower()
             if ev and (ev in m or m in ev):
                 add(r["driver"], r["penalties_places"],
                     f"PU pool: {int(r['penalties_places'])} places over allocation")
@@ -452,7 +457,8 @@ def _grid_card(ql: pd.DataFrame, sess: str):
         [toggle, html.Div(body, id="quali-grid-body")],
         info=("Data: the official qualifying classification, with curated "
               "grid penalties applied on top — PU-pool drops from "
-              "data/pu_penalties.csv (when its as_of names this event) and "
+              "data/pu_penalties.csv (when its penalty_event names this "
+              "event) and "
               "sporting 'Grid penalty' rows from data/team_penalties.csv. "
               "Penalised drivers slot in behind the car already holding "
               "their target slot; more than 15 places (or an explicit "

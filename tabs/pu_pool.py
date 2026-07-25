@@ -11,7 +11,8 @@ is to a grid penalty (10 places for the first component over the allowance, +5
 for each after; >15 places = back of grid).
 
 2026 season allowance (incl. the one-off 'bonus' unit): ICE 4, Turbo 4, MGU-K 3,
-Energy Store 3, Control Electronics 3, Exhaust 4. Update the CSV as rounds pass.
+Energy Store 3, Control Electronics 3, Exhaust 4, PU Ancillaries 6. Update the
+CSV as rounds pass.
 """
 from __future__ import annotations
 
@@ -28,12 +29,13 @@ from f1lib.config import CARD_BG, TEXT_MAIN, TEXT_DIM, GRID_CLR, ACCENT
 
 _PU_PATH = Path("data/pu_penalties.csv")
 _PU_COLS = ["season", "driver", "team", "pu_supplier",
-            "ice", "tc", "mguk", "es", "ce", "ex",
-            "penalties_places", "as_of", "source"]
+            "ice", "tc", "mguk", "es", "ce", "ex", "anc",
+            "penalties_places", "penalty_event", "as_of", "source"]
 _ELEMENTS = [("ice", "ICE"), ("tc", "Turbo"), ("mguk", "MGU-K"),
-             ("es", "ES"), ("ce", "CE"), ("ex", "EX")]
+             ("es", "ES"), ("ce", "CE"), ("ex", "EX"), ("anc", "ANC")]
 # 2026 per-season allowance per element (one bonus unit vs. the 2027 baseline).
-_LIMITS_2026 = {"ice": 4, "tc": 4, "mguk": 3, "es": 3, "ce": 3, "ex": 4}
+_LIMITS_2026 = {"ice": 4, "tc": 4, "mguk": 3, "es": 3, "ce": 3, "ex": 4,
+                "anc": 6}
 
 # Plain-English "what is it / roughly what does it cost" per element, for the
 # hoverable legend under the heatmap. Costs are rough order-of-magnitude
@@ -64,6 +66,14 @@ _ELEMENT_INFO = {
            "The exhaust system routing spent gases out and feeding the turbo. "
            "Cheapest element, but still on a strict allowance. "
            "Rough cost: ~€0.1–0.3m."),
+    "anc": ("Power Unit ANCillary component",
+            "New for 2026: the supporting hardware wrapped around the engine — "
+            "the oil, water, fuel and hydraulic pumps, the power-unit wiring "
+            "loom and sensors, and the coolers that keep everything in range. "
+            "Individually humble parts, but any one of them failing stops the "
+            "car. Swapped more often than anything else, and carries the most "
+            "generous allowance of the seven elements (6). "
+            "Rough cost: ~€0.3–0.8m a set."),
 }
 
 
@@ -109,7 +119,8 @@ def _load_pu() -> pd.DataFrame:
                 df[e] = pd.to_numeric(df[e], errors="coerce")
             df["penalties_places"] = pd.to_numeric(
                 df["penalties_places"], errors="coerce").fillna(0).astype(int)
-            for c in ("driver", "team", "pu_supplier", "as_of", "source"):
+            for c in ("driver", "team", "pu_supplier",
+                      "penalty_event", "as_of", "source"):
                 df[c] = df[c].fillna("").astype(str).str.strip()
             return df[_PU_COLS].dropna(subset=[e for e, _ in _ELEMENTS])
         except Exception as _exc:
@@ -222,7 +233,7 @@ def pu_pool_card(season: int):
         ]),
         info=("Data: curated data/pu_penalties.csv — per-driver power-unit "
               "element usage vs. the 2026 season allowance (ICE 4, Turbo 4, "
-              "MGU-K 3, ES 3, CE 3, EX 4). Colour = used/limit, so redder rows "
+              "MGU-K 3, ES 3, CE 3, EX 4, ANC 6). Colour = used/limit, so redder rows "
               "are closer to a grid penalty (10 places for the first component "
               "over, +5 each after). This is NOT in the results archive, so it "
               "is hand-maintained." + pen_line),

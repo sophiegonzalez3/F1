@@ -468,6 +468,17 @@ def load_session(
         if not df.empty:
             _tag(df, session, season, meeting, sess_name)
 
+    # ── Normalize to the cache schema ─────────────────────────
+    # A cache re-load yields timedeltas as float seconds (_save_df converts
+    # on write, but on a copy), while a live fetch returns raw timedelta64
+    # columns. Convert here so fresh and cached sessions concat to the same
+    # dtypes — a mixed concat collapses Sector1/2/3Time etc. to object and
+    # breaks groupby aggs downstream (e.g. the WEEK END PRED banked-sectors
+    # table).
+    for df in (laps, telemetry, weather, track_status, race_control, results):
+        for col in df.select_dtypes(include=["timedelta64[ns]"]).columns:
+            df[col] = df[col].dt.total_seconds()
+
     # ── 3. Persist to Parquet ─────────────────────────────────
     print(f"  [saving]     laps ({len(laps):,} rows)…", flush=True)
     _save_df(laps, paths["laps"])

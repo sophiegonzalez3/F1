@@ -132,7 +132,19 @@ def _practice_analysis(wl):
 
     # ── Banked time: best assembled lap vs sum of best sectors (practice) ──
     if not prac.empty:
-        bp = (prac.groupby(["Driver_Short", "Team"])
+        # Sector columns are float seconds from the parquet cache, but a
+        # server that live-fetched part of the weekend can hold timedeltas
+        # or a mixed object column — coerce to seconds before aggregating.
+        bp_src = prac[["Driver_Short", "Team", "LapTime_s"]].copy()
+        for col in ("Sector1Time", "Sector2Time", "Sector3Time"):
+            s = prac[col] if col in prac.columns else pd.Series(np.nan, index=prac.index)
+            if pd.api.types.is_timedelta64_dtype(s):
+                s = s.dt.total_seconds()
+            elif s.dtype == object:
+                s = s.map(lambda v: v.total_seconds()
+                          if isinstance(v, pd.Timedelta) else v)
+            bp_src[col] = pd.to_numeric(s, errors="coerce")
+        bp = (bp_src.groupby(["Driver_Short", "Team"])
               .agg(s1=("Sector1Time", "min"), s2=("Sector2Time", "min"),
                    s3=("Sector3Time", "min"), actual=("LapTime_s", "min"))
               .reset_index())

@@ -84,11 +84,13 @@ def update_stint_key_options(driver, ss, st):
     ss = ss or SESSIONS
     st = st or TEAMS
 
+    _fb_col = (stints["Fallback_Stint"] if "Fallback_Stint" in stints.columns
+               else False)
     drv_stints = stints[
         (stints["Driver_Short"] == driver)
         & stints["session_name"].isin(ss)
         & stints["Team"].isin(st)
-        & stints["Valid_Stint"]
+        & (stints["Valid_Stint"] | _fb_col)
     ].copy()
 
     if drv_stints.empty:
@@ -114,8 +116,10 @@ def update_stint_key_options(driver, ss, st):
         pace_fmt = format_lap_time(row.get("Stint_Rep_Lap", float("nan")))
         laps_n   = int(row.get("Stint_Laps_Count", 0))
         sess     = str(row.get("session_name", "")).split("_")[0]
+        fb_tag   = ("  ⚠ fallback" if bool(row.get("Fallback_Stint", False))
+                    else "")
         opts.append({
-            "label": f"{label}  {icon}{compound}  {pace_fmt}  ({laps_n} laps, {sess})",
+            "label": f"{label}  {icon}{compound}  {pace_fmt}  ({laps_n} laps, {sess}){fb_tag}",
             "value": key,
         })
 
@@ -192,23 +196,32 @@ def render_stint_table(driver, stint_key):
 
 def _best_stint_laps(fl, stints_df):
     """Return laps that belong to the best valid stint per driver x compound
-    (session-agnostic: Stint_Rank_Across_Sessions == 1).
+    (session-agnostic: Stint_Rank_Across_Sessions == 1), plus — where a
+    driver x compound has NO valid stint at all — the laps of its flagged
+    Fallback_Stint (longest stint of ≥5 clean laps), marked _fallback=True
+    so callers can render them visibly second-class.
     Falls back to all valid laps if stints_df is empty or ranking unavailable.
 
     Note: analyze_stints() does not carry Stint_key, so we match on the
     three component columns (session_name, Driver_Short, Stint) instead.
     """
     if stints_df is None or stints_df.empty or "Stint_Rank_Across_Sessions" not in stints_df.columns:
-        return fl[fl["ValidLap"]].copy()
+        out = fl[fl["ValidLap"]].copy()
+        out["_fallback"] = False
+        return out
 
-    best = stints_df[
-        stints_df["Valid_Stint"] & (stints_df["Stint_Rank_Across_Sessions"] == 1)
-    ][["session_name", "Driver_Short", "Stint"]].drop_duplicates()
+    fb = (stints_df["Fallback_Stint"]
+          if "Fallback_Stint" in stints_df.columns else False)
+    sel = stints_df[
+        (stints_df["Valid_Stint"]
+         & (stints_df["Stint_Rank_Across_Sessions"] == 1)) | fb
+    ][["session_name", "Driver_Short", "Stint", "Valid_Stint"]].drop_duplicates()
+    sel["_fallback"] = ~sel.pop("Valid_Stint")
 
     # Build a merge key on the laps side then filter
     fl_valid = fl[fl["ValidLap"]].copy()
     merged = fl_valid.merge(
-        best.assign(_keep=True),
+        sel.assign(_keep=True),
         on=["session_name", "Driver_Short", "Stint"],
         how="left",
     )
@@ -258,7 +271,10 @@ def tab_stints(fl, fs):
     v_note = html.P(
         "ℹ️  Each violin uses only laps from the single best valid stint "
         "per driver × compound across all selected sessions "
-        "(Stint_Rank_Across_Sessions = 1).",
+        "(Stint_Rank_Across_Sessions = 1). Hollow violins marked ✱ are "
+        "FALLBACK stints: the driver had no stint reaching this compound's "
+        "lap minimum, so their longest run of ≥5 clean laps stands in — "
+        "read those with care.",
         style={"color": TEXT_DIM, "fontSize": "0.75rem", "marginBottom": "6px",
                "fontStyle": "italic"},
     )
@@ -287,31 +303,38 @@ def tab_stints(fl, fs):
                 df_drv = df_team[df_team["Driver_Short"] == driver]
                 if df_drv.empty:
                     continue
+                is_fb = bool(df_drv.get("_fallback", pd.Series(False)).any())
                 lap_count = len(df_drv)
                 ymax      = df_drv["LapTime_s"].max()
                 ymin      = df_drv["LapTime_s"].min()
                 margin    = (ymax - ymin) * 0.2 if ymax != ymin else 0.5
                 side      = "negative" if i == 0 else "positive"
                 pointpos  = -0.8      if i == 0 else 0.8
+                # Fallback stints render visibly second-class: hollow body
+                # (no fill), open-cross points, dimmed trace.
                 fig_v.add_trace(go.Violin(
                     x=[team] * lap_count,
                     y=df_drv["LapTime_s"],
                     legendgroup=driver,
                     scalegroup=team,
-                    name=driver,
+                    name=driver + (" ✱" if is_fb else ""),
                     side=side,
                     pointpos=pointpos,
                     line_color=clr,
-                    fillcolor=rgba,
+                    fillcolor="rgba(0,0,0,0)" if is_fb else rgba,
+                    opacity=0.6 if is_fb else 1.0,
+                    marker=dict(symbol="x-thin-open" if is_fb else "circle"),
                     meanline_visible=True,
                     points="all",
                     jitter=0.05,
                     scalemode="count",
                     showlegend=True,
+                    hovertext=(f"{driver} — FALLBACK stint (below the "
+                               "compound's valid-lap minimum)") if is_fb else None,
                 ))
                 anns.append(dict(
                     x=team, y=ymax + margin / 2,
-                    text=f"{driver} ({lap_count})",
+                    text=f"{driver} ({lap_count}{'✱' if is_fb else ''})",
                     showarrow=False,
                     xshift=-25 if side == "negative" else 25,
                     yshift=10,
@@ -330,7 +353,10 @@ def tab_stints(fl, fs):
             html.Div([v_note, dcc.Graph(figure=fig_v, config=GFX)]),
             info=(f"Data: lap times from each driver's single best valid {compound} "
                   "stint across all selected sessions (split-violin per teammate "
-                  "pair, point count shown). Why: compares teams on equal tyre, "
+                  "pair, point count shown). Drivers with no valid stint on this "
+                  "compound contribute their longest ≥5-clean-lap run instead, "
+                  "drawn hollow with ✱ and x-shaped points — a flagged fallback, "
+                  "not a valid stint. Why: compares teams on equal tyre, "
                   "showing both typical pace (the body) and consistency (the spread)."),
         ))
 
@@ -342,6 +368,14 @@ def tab_stints(fl, fs):
     #       • field_cur_data – pooled field degradation curve inputs
     #       • field_dev_figs – per-driver deg vs the field curve
     valid_stints = fs[fs["Valid_Stint"]].copy() if not fs.empty else pd.DataFrame()
+    # valid + flagged fallbacks — the deg-rate bars accept a driver's fallback
+    # stint (hatched) where they have no valid stint on that compound
+    if not fs.empty and "Fallback_Stint" in fs.columns:
+        usable_stints = fs[fs["Valid_Stint"] | fs["Fallback_Stint"]].copy()
+    else:
+        usable_stints = valid_stints.copy()
+        if not usable_stints.empty:
+            usable_stints["Fallback_Stint"] = False
 
     # Cliff detection across all compounds (feeds the dedicated Cliff card).
     cliffs_df = detect_stint_cliffs(fl)
@@ -352,8 +386,8 @@ def tab_stints(fl, fs):
 
     for compound in COMPOUNDS:
         comp_stints = (
-            valid_stints[valid_stints["Compound"] == compound].copy()
-            if not valid_stints.empty else pd.DataFrame()
+            usable_stints[usable_stints["Compound"] == compound].copy()
+            if not usable_stints.empty else pd.DataFrame()
         )
 
         # --- (a) Deg rate bar: longest valid stint per driver ---
@@ -426,6 +460,13 @@ def tab_stints(fl, fs):
                 0.0, None,
             )
 
+            # Fallback stints (no valid stint for that driver on this
+            # compound) get a hatched texture so they read as second-class.
+            _fb = (df_deg["Fallback_Stint"].fillna(False).astype(bool)
+                   if "Fallback_Stint" in df_deg.columns
+                   else pd.Series(False, index=df_deg.index))
+            df_deg["FbTag"] = np.where(
+                _fb, "<br>⚠ FALLBACK stint — below the compound's valid minimum", "")
             fig_bar = go.Figure(go.Bar(
                 y=df_deg["Driver_Short"],
                 x=df_deg["Stint_Deg_Rate"],
@@ -433,6 +474,11 @@ def tab_stints(fl, fs):
                 marker=dict(
                     color=df_deg["Color"],
                     line=dict(color=GRID_CLR, width=0.5),
+                    pattern=dict(
+                        shape=["/" if f else "" for f in _fb],
+                        fgcolor="rgba(13,13,13,0.65)",
+                        size=5, solidity=0.4,
+                    ),
                 ),
                 error_x=dict(
                     type="data",
@@ -441,13 +487,15 @@ def tab_stints(fl, fs):
                     thickness=1.2, width=4,
                 ) if _has_se else None,
                 customdata=df_deg[["Team", "DegFmt", "CIFmt", "R2Fmt",
-                                   "Stint_Laps_Count", "session_name"]].values,
+                                   "Stint_Laps_Count", "session_name",
+                                   "FbTag"]].values,
                 hovertemplate=(
                     "<b>%{y}</b>  Team: %{customdata[0]}<br>"
                     "Deg rate: %{customdata[1]} %{customdata[2]} s/lap (95% CI)<br>"
                     "%{customdata[3]}<br>"
                     "Laps in stint: %{customdata[4]}<br>"
-                    "Session: %{customdata[5]}<extra></extra>"
+                    "Session: %{customdata[5]}"
+                    "%{customdata[6]}<extra></extra>"
                 ),
                 text=df_deg["DegFmt"],
                 textposition="outside",
@@ -563,12 +611,15 @@ def tab_stints(fl, fs):
     deg_rate_card = card(
         ["Tyre ", *gloss("degradation", "Degradation"), " Rate — by ",
          *gloss("compound", "Compound")],
-        _deg_columns(deg_bar_figs, "no valid stint on this compound"),
+        _deg_columns(deg_bar_figs, "no stint of ≥5 clean laps on this compound"),
         info=("Data: degradation rate (s/lap of tyre age) from a linear fit on "
               "each driver's longest valid stint per compound, corrected for "
               "fuel burn AND field-wide track evolution; whiskers = 95% "
               "confidence interval of the fitted slope. Bars are coloured by "
-              "team and sorted worst→best. The green half is negative "
+              "team and sorted worst→best. Hatched bars are FALLBACK stints: "
+              "the driver had no stint reaching this compound's lap minimum, "
+              "so their longest ≥5-clean-lap run stands in — treat those fits "
+              "as indicative only. The green half is negative "
               "(tyre gains as it ages / holds on), the red half positive. Why: "
               "with fuel and track-grip trends removed, what remains is the tyre "
               "itself — lower/flatter = less degradation."),

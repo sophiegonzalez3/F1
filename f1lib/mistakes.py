@@ -38,6 +38,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from f1lib.circuits import circuit_id
+
 logger = logging.getLogger(__name__)
 
 TRACK_MAPS_DIR = Path("data/track_maps")
@@ -87,28 +89,66 @@ def corner_fractions_from_geometry(line: pd.DataFrame,
     return pd.DataFrame(rows).sort_values("frac").reset_index(drop=True)
 
 
+def _parse_map_name(path: Path) -> tuple[int, str] | None:
+    """(season, event slug) parsed out of a track-map filename, or None.
+
+    Names look like `2026_barcelona_grand_prix_Q_corners.parquet` — season,
+    event slug, session code, optional kind suffix.
+    """
+    stem = path.stem
+    for tail in ("_corners", "_marshal"):
+        if stem.endswith(tail):
+            stem = stem[: -len(tail)]
+    head, _, rest = stem.partition("_")
+    if not head.isdigit() or "_" not in rest:
+        return None
+    return int(head), rest.rsplit("_", 1)[0]      # drop the session code
+
+
+def _same_circuit_maps(event_name: str, season: int | None,
+                       pattern: str) -> list[tuple[int, Path]]:
+    """Cached maps for the *same physical circuit*, newest last.
+
+    The old code globbed by event slug and fell back to the newest hit,
+    on the assumption that geometry is stable across seasons for one name.
+    That assumption dies whenever a race moves: the 2026 Spanish GP is the
+    Madring, so a missing 2026 map would have silently served Barcelona's
+    2025 corners, and the 2026 Bahrain GP at Sepang would serve Sakhir's.
+    Matching on circuit_id instead blocks that, and as a bonus lets one
+    circuit's maps be shared across its aliases — Silverstone's 70th
+    Anniversary map is usable for the British GP, and Barcelona's 2026
+    "Barcelona Grand Prix" map for the pre-2026 "Spanish Grand Prix".
+    """
+    target = circuit_id(event_name, season)
+    out: list[tuple[int, Path]] = []
+    for p in TRACK_MAPS_DIR.glob(pattern):
+        parsed = _parse_map_name(p)
+        if parsed is None:
+            continue
+        f_season, f_slug = parsed
+        if circuit_id(f_slug, f_season) == target:
+            out.append((f_season, p))
+    return sorted(out)
+
+
 def load_corner_fractions(event_name: str,
                           season: int | None = None) -> pd.DataFrame:
     """Corner fractions for a circuit from the on-disk track-map cache.
-    Prefers the requested season's map, falls back to the latest cached one
-    for the same circuit slug (geometry is stable across seasons)."""
-    slug = track_map_slug(event_name)
-    cands = sorted(TRACK_MAPS_DIR.glob(f"*_{slug}_*_corners.parquet"))
+
+    Prefers the requested season's map and otherwise falls back to the newest
+    map *of the same physical circuit* — never to a different venue that
+    happens to share the event name (see `_same_circuit_maps`).
+    """
+    cands = _same_circuit_maps(event_name, season, "*_corners.parquet")
     if not cands:
         return pd.DataFrame()
 
-    def _season_of(p: Path) -> int:
-        try:
-            return int(p.name.split("_", 1)[0])
-        except ValueError:
-            return 0
-
     pick = None
     if season is not None:
-        same = [p for p in cands if _season_of(p) == int(season)]
+        same = [p for s, p in cands if s == int(season)]
         pick = same[-1] if same else None
     if pick is None:
-        pick = max(cands, key=_season_of)
+        pick = cands[-1][1]
     line_path = Path(str(pick).replace("_corners.parquet", ".parquet"))
     if not line_path.exists():
         return pd.DataFrame()
@@ -124,24 +164,17 @@ def load_corner_fractions(event_name: str,
 def load_track_line(event_name: str, season: int | None = None) -> pd.DataFrame:
     """The cached racing line (X/Y/speed/drs/sector) for map plotting, with a
     'frac' column (fractional distance along the lap)."""
-    slug = track_map_slug(event_name)
-    cands = sorted(TRACK_MAPS_DIR.glob(f"*_{slug}_*.parquet"))
-    cands = [p for p in cands if not p.name.endswith("_corners.parquet")]
+    cands = [(s, p) for s, p in _same_circuit_maps(event_name, season, "*.parquet")
+             if not p.name.endswith(("_corners.parquet", "_marshal.parquet"))]
     if not cands:
         return pd.DataFrame()
 
-    def _season_of(p: Path) -> int:
-        try:
-            return int(p.name.split("_", 1)[0])
-        except ValueError:
-            return 0
-
     pick = None
     if season is not None:
-        same = [p for p in cands if _season_of(p) == int(season)]
+        same = [p for s, p in cands if s == int(season)]
         pick = same[-1] if same else None
     if pick is None:
-        pick = max(cands, key=_season_of)
+        pick = cands[-1][1]
     try:
         line = pd.read_parquet(pick)
     except Exception:

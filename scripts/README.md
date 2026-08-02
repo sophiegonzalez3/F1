@@ -5,6 +5,23 @@ in the running dashboard (`app.py` / `tabs/`) imports these — they only read a
 write files under `data/`. Shared library code lives in `f1lib/`; these scripts
 import it.
 
+**File ownership rule.** Every file under `data/` is either *script-owned* or
+*hand-curated*, never both:
+
+- **Script-owned** — the outputs listed in the tables below (`race_stats.csv`,
+  `team_pace_by_event.csv`, `atr_allowance.csv`, `season_calendar.csv`, …).
+  Never hand-edit these; fix the input data or the script and re-run it —
+  a re-run silently overwrites any manual change.
+- **Hand-curated** — the CSVs with a per-row `source` column
+  (`tyre_allocations.csv`, `upgrades.csv`, `pu_penalties.csv`,
+  `team_penalties.csv`, `driver_info.csv`, …). No script here rebuilds them;
+  `during_weekend.py` only *reports* which ones are missing the current event.
+  The one partial exception: `check_pu_table.py --write` refreshes the PU
+  element counts in `pu_penalties.csv` from the FIA PDF (penalty columns stay
+  manual). The full list, sources and cadences live in
+  [`read_local.md`](../read_local.md); the root README's
+  [`data/` contents](../README.md#data-contents) section has the same split.
+
 > **Onboarding a new race weekend?** Follow the ordered checklist in the root
 > [README → "Updating for a new race weekend"](../README.md#updating-for-a-new-race-weekend),
 > and see [`read_local.md`](../read_local.md) for the full cadence calendar plus

@@ -178,15 +178,56 @@ Key modules inside `f1lib/`:
 
 ### `data/` contents
 
-- `sessions/` — per-session Parquet (laps, telemetry, weather, results, race control).
-- `historical_results/` — race/quali/sprint results and championship standings (2021→present).
+Every file in `data/` is one of three kinds. Knowing which is which tells you
+whether to edit it, regenerate it, or leave it alone.
+
+**Hand-curated CSVs** — edited by hand, one verified `source` per row; no
+script ever rebuilds them (sources and update cadences per file are documented
+in `read_local.md`):
+
+| File | Feeds |
+|---|---|
+| `tyre_allocations.csv` | Pirelli C-compound nomination per event (soft/medium/hard → C1–C5) — the "SOFT C5" chips on the strategy cards |
+| `upgrades.csv` | SEASON upgrade board, from the FIA "Car Presentation Submissions" PDFs |
+| `pu_penalties.csv` | SEASON PU component pool (`scripts/check_pu_table.py --write` can refresh the element counts from the FIA PDF; penalties stay manual) |
+| `gearbox_penalties.csv` | SEASON gearbox pool — **still a labelled placeholder seed** |
+| `team_penalties.csv` | SEASON stewards' ledger |
+| `driver_info.csv` | SEASON driver market (penalty points, salaries, contracts) |
+| `staff_moves.csv`, `team_staff.csv`, `dept_split_representative.csv` | SEASON HR section |
+| `pirelli_ratings.csv` | TRACK "Pirelli's view" card |
+| `circuit_characteristics.csv` | TRACK profile radar + altitude pill (hand-scored 1–4) |
+| `testing_mileage.csv` | SEASON pre-season testing card |
+| `team_finance.csv`, `budget_cap_compliance.csv` | SEASON finance cards |
+| `facilities.csv`, `technical_directives.csv` | SEASON facilities / TD cards |
+
+**Script-owned files** — do **not** hand-edit; regenerate with the owning
+script (most run automatically as steps of `scripts/after_race.py`):
+
+| File | Owning script |
+|---|---|
+| `race_stats.csv`, `track_limits.csv`, `lap1_league.csv`, `pit_league.csv` | `scripts/compute_race_stats.py` |
+| `team_pace_by_event.csv` | `scripts/compute_team_pace.py` |
+| `driver_pace_by_event.csv` | `python -m f1lib.driver_ratings` |
+| `atr_allowance.csv` | `scripts/compute_atr.py` |
+| `pu_topspeed.csv` | `scripts/compute_pu_topspeed.py` |
+| `mistakes_all.parquet`, `mistakes_pressure_all.parquet`, `mistakes/` | `compute_mistakes.py` |
+| `season_calendar.csv` | `scripts/fetch_calendar.py` (topped up by `during_weekend.py`) |
+| `circuit_characteristics_computed.csv` | `scripts/compute_circuit_characteristics.py` — overlays the manual CSV at startup |
+| `corner_speed_classes.json` | `scripts/compute_corner_classes.py` (once a season, deliberately fixed) |
+| `backtest_pace_model.csv` | `scripts/backtest_pace_model.py` |
+| `historical_results/` | `python -m f1lib.fetch_historical_results` |
+| `pitstops/` | `scripts/fetch_pitstops.py` |
+
+**Fetched/derived caches** — written on demand by the app or the weekend
+runner; never edited, safe to regenerate:
+
+- `sessions/` — per-session Parquet (laps, telemetry, weather, results, race control); `sessions_lite/` — practice laps only, for the pace model.
 - `radio/` — downloaded team-radio mp3s plus their transcripts.
-- `pitstops/` — real per-stop pit data (live-timing PitStopSeries → true stationary times; Jolpica fallback → pit-lane durations).
-- `track_maps/`, `circuit_characteristics.csv` — circuit reference data.
-- `circuit_characteristics_computed.csv` — telemetry-measured circuit scores (speed, full-throttle %, lateral load, tyre deg); overlays the manual CSV at startup. Regenerate with `scripts/compute_circuit_characteristics.py`.
-- `upgrades.csv` — car-upgrade log sourced from FIA Car Presentation PDFs.
-- `tyre_allocations.csv` — Pirelli C-compound nomination per event (soft/medium/hard → C1–C5), hand-maintained from Pirelli press releases. Feeds the "SOFT C5" chips on the strategy cards.
-- `team_pace_by_event.csv` — per (season, round, team): qualifying gap to pole, corrected race-pace gap, points. Built by `scripts/compute_team_pace.py`; powers the SEASON tab and the Upgrade Impact analysis.
+- `track_maps/` — cached circuit geometry (warmed by `during_weekend.py`).
+- `replays/`, `track_scenes/`, `zone_pace/` — replay payloads, 3D scene geometry, zone-dominance grids.
+
+The app re-reads CSVs on file-modification time, so editing a hand-curated
+file or re-running a script needs **no app restart**.
 
 ---
 

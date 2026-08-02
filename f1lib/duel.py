@@ -26,6 +26,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from f1lib.circuits import add_circuit_id, circuit_id, french_key
+
 logger = logging.getLogger(__name__)
 
 HIST = Path("data/historical_results")
@@ -186,11 +188,28 @@ def _quali_best(row) -> float:
     return min(vals) if vals else float("nan")
 
 
-def h2h_record(a: str, b: str, circuit_key: str | None = None,
+def _filter_circuit(df: pd.DataFrame, circuit: str | None,
+                    event_col: str = "event_name") -> pd.DataFrame:
+    """Restrict an archive frame to one physical circuit.
+
+    Filtering on the old `circuit_key` (the slugified event name) pooled every
+    venue that ever shared a name — Barcelona with the 2026 Madring, Sakhir
+    with the 2026 Sepang round — and split every venue that changed name, so
+    Interlagos' "Brazilian" years never met its "São Paulo" ones. Resolving
+    each row's (event, season) to a circuit_id fixes both directions.
+    """
+    if not circuit or df.empty or event_col not in df.columns:
+        return df
+    d = add_circuit_id(df, event_col=event_col)
+    return d[d["circuit_id"] == circuit]
+
+
+def h2h_record(a: str, b: str, circuit: str | None = None,
                seasons: tuple[int, ...] | None = None) -> dict:
     """Meetings where both drivers appear: who finished / qualified ahead.
     DNFs excluded from the race count (a retirement is reliability, not pace);
-    they're reported separately. Filter to one circuit with `circuit_key`."""
+    they're reported separately. Pass a `circuit` id (f1lib.circuits) to filter
+    to one physical track — not an event slug, which conflates venues."""
     out = {"race_n": 0, "race_a": 0, "quali_n": 0, "quali_a": 0,
            "a_dnfs": 0, "b_dnfs": 0, "rows": []}
     rp, qp = HIST / "race_results_all.parquet", HIST / "quali_results_all.parquet"
@@ -199,8 +218,7 @@ def h2h_record(a: str, b: str, circuit_key: str | None = None,
     r = pd.read_parquet(rp)
     if seasons:
         r = r[r["season"].isin(seasons)]
-    if circuit_key:
-        r = r[r["circuit_key"] == circuit_key]
+    r = _filter_circuit(r, circuit)
     s = r["Status"].astype(str)
     finished = s.str.startswith("Finished") | s.str.match(r"^\+\d") \
         | s.str.contains("Lap", na=False)
@@ -230,8 +248,7 @@ def h2h_record(a: str, b: str, circuit_key: str | None = None,
         q = pd.read_parquet(qp)
         if seasons:
             q = q[q["season"].isin(seasons)]
-        if circuit_key:
-            q = q[q["circuit_key"] == circuit_key]
+        q = _filter_circuit(q, circuit)
         for (season, rnd), g in q.groupby(["season", "round_number"]):
             qa = g[g["Abbreviation"] == a]
             qb = g[g["Abbreviation"] == b]
@@ -245,14 +262,14 @@ def h2h_record(a: str, b: str, circuit_key: str | None = None,
     return out
 
 
-def circuit_results(a: str, b: str, circuit_key: str) -> pd.DataFrame:
-    """Season-by-season grid → finish for both drivers at one circuit."""
+def circuit_results(a: str, b: str, circuit: str) -> pd.DataFrame:
+    """Season-by-season grid → finish for both drivers at one physical circuit."""
     rp = HIST / "race_results_all.parquet"
-    if not rp.exists() or not circuit_key:
+    if not rp.exists() or not circuit:
         return pd.DataFrame()
     r = pd.read_parquet(rp)
-    r = r[(r["circuit_key"] == circuit_key)
-          & (r["Abbreviation"].isin([a, b]))]
+    r = _filter_circuit(r, circuit)
+    r = r[r["Abbreviation"].isin([a, b])]
     if r.empty:
         return pd.DataFrame()
     rows = []
@@ -278,16 +295,18 @@ def circuit_results(a: str, b: str, circuit_key: str) -> pd.DataFrame:
 # 3. Situational profiles
 # ─────────────────────────────────────────────────────────────
 
-def circuit_key_fr(circuit_key: str | None) -> str | None:
-    """Bridge the archive circuit key (slugified event name) to the French
-    slug used by race_stats.csv / lap1_league.csv / circuit_characteristics."""
+def circuit_key_fr(circuit_key: str | None,
+                   season: int | None = None) -> str | None:
+    """Bridge an event to the French slug used by race_stats.csv /
+    lap1_league.csv / circuit_characteristics.
+
+    Pass `season` whenever you have it: without it a relocated race resolves to
+    the venue it uses *normally*, so the 2026 Madrid round would answer
+    `espagne` and pick up Barcelona's rows.
+    """
     if not circuit_key:
         return None
-    from f1lib.config import HIST_CIRCUIT_KEY_MAP
-    for fr, keys in HIST_CIRCUIT_KEY_MAP.items():
-        if circuit_key in keys:
-            return fr
-    return None
+    return french_key(circuit_key, season)
 
 def lap1_profile(a: str, b: str, circuit_key: str | None = None) -> dict:
     """Lap-1 position-change habits from the measured lap-1 league."""
@@ -437,11 +456,13 @@ def corner_type_profile(a: str, b: str) -> pd.DataFrame:
     if d.empty:
         return pd.DataFrame()
 
-    def _classify(ck: str) -> dict[str, str]:
-        # the archive circuit_key IS the slugified event name, so it doubles
-        # as the track-map lookup key
-        fracs = load_corner_fractions(ck)
-        line = load_track_line(ck)
+    def _classify(meeting: str, season: int | None) -> dict[str, str]:
+        # Look the map up by the meeting AND its season: the same event name
+        # can be two different tracks (2026 Spanish GP is the Madring, not
+        # Barcelona), so a season-less lookup would classify one venue's
+        # corners with the other's speeds.
+        fracs = load_corner_fractions(meeting, season)
+        line = load_track_line(meeting, season)
         if fracs.empty or line.empty or "Speed" not in line.columns:
             return {}
         lf = line["frac"].to_numpy(float)
@@ -455,10 +476,15 @@ def corner_type_profile(a: str, b: str) -> pd.DataFrame:
                 if np.isfinite(v) else ""
         return out
 
-    types = {ck: _classify(ck) for ck in d["circuit_key"].dropna().unique()}
-    d = d.copy()
-    d["ctype"] = [types.get(ck, {}).get(str(c), "")
-                  for ck, c in zip(d["circuit_key"], d["corner"])]
+    # One classification per physical circuit, resolved from a real (meeting,
+    # season) pair belonging to it so the map lookup can't cross venues.
+    d = add_circuit_id(d.copy(), event_col="meeting")
+    reps = (d.dropna(subset=["circuit_id"])
+            .groupby("circuit_id")[["meeting", "season"]].last())
+    types = {cid: _classify(str(row["meeting"]), row["season"])
+             for cid, row in reps.iterrows()}
+    d["ctype"] = [types.get(cid, {}).get(str(c), "")
+                  for cid, c in zip(d["circuit_id"], d["corner"])]
     d = d[d["ctype"] != ""]
     if d.empty:
         return pd.DataFrame()
@@ -561,13 +587,21 @@ def tag_attack_corners(deltas: pd.DataFrame,
 # Mistake-cache readers (written by compute_mistakes.py)
 # ─────────────────────────────────────────────────────────────
 
-def load_mistakes(circuit_key: str | None = None,
+def load_mistakes(circuit: str | None = None,
                   drivers: list[str] | None = None) -> pd.DataFrame:
+    """Micro-mistake rows, optionally for one physical circuit.
+
+    `circuit` is a circuit_id, not an event slug. The archive is pooled by
+    corner number across every session ever recorded at a track, so filtering
+    on the event name would have averaged the Madring's corner 5 into
+    Barcelona's — two unrelated corners that happen to share a race name.
+    The id is resolved per row from (season, meeting), so the same call also
+    picks up a circuit's other names.
+    """
     if not MISTAKES_ALL.exists():
         return pd.DataFrame()
     d = pd.read_parquet(MISTAKES_ALL)
-    if circuit_key:
-        d = d[d["circuit_key"] == circuit_key]
+    d = _filter_circuit(d, circuit, event_col="meeting")
     if drivers:
         d = d[d["Driver_Short"].isin(drivers)]
     return d
@@ -596,10 +630,11 @@ def pressure_summary(a: str, b: str) -> pd.DataFrame:
     return g.reset_index()
 
 
-def mistake_map(circuit_key: str, driver: str) -> pd.DataFrame:
-    """Per-corner mistake profile for one driver at one circuit, pooled across
-    every archived session there. Adds a per-lap rate and the total time cost."""
-    d = load_mistakes(circuit_key, [driver])
+def mistake_map(circuit: str, driver: str) -> pd.DataFrame:
+    """Per-corner mistake profile for one driver at one physical circuit, pooled
+    across every archived session there (`circuit` is a circuit_id — see
+    `load_mistakes`). Adds a per-lap rate and the total time cost."""
+    d = load_mistakes(circuit, [driver])
     if d.empty:
         return pd.DataFrame()
     g = (d.groupby("corner", as_index=False)

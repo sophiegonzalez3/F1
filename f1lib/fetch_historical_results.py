@@ -54,6 +54,10 @@ Optional flags:
     --force-reload   Ignore existing parquet files and re-fetch everything
     --seasons 2021 2022 2024    Override the default season list
     --out-dir path/to/dir       Override the default output directory
+    --verify         Audit the archive for rounds that hold no classified
+                     results and exit non-zero if any are found. Local only —
+                     no network — so it is cheap to run as a gate. See
+                     _has_usable_results for what it is looking for.
 
 Dependencies: fastf1, pandas, pyarrow
 """
@@ -105,16 +109,60 @@ def _slugify(text: str) -> str:
     return text.strip("_")
 
 
+# The column every archive consumer keys on. See _has_usable_results.
+_POSITION_COL = "Position"
+
+
+def _has_usable_results(df: pd.DataFrame) -> bool:
+    """True when *df* carries at least one real classified position.
+
+    FastF1 sometimes returns a results table with DriverNumber, Abbreviation and
+    TeamName populated but Position/Points/GridPosition entirely NaN. Such a
+    frame is not *empty*, so it used to pass straight through `_safe_df`, get
+    written, and then be served by the cache-hit branch forever — a plain
+    re-run could never repair it, because the only cache guard caught parquets
+    that fail to *read*.
+
+    That rot is silent and expensive: everything downstream keys on Position —
+    the consolidated `*_results_all` files, the driver/constructor standings
+    built from them, and `data/atr_allowance.csv`, whose half-year windows come
+    off those standings. A frame with rows but no classification is therefore
+    worse than no frame at all, since it displaces real results. Twenty-one
+    files across 2023–2026 were found rotted this way on 2026-08-02 (2026
+    Antonelli read 204 points against an official 219; 2024 showed Ferrari as
+    constructors' champion instead of McLaren).
+    """
+    if df is None or df.empty:
+        return False
+    if _POSITION_COL not in df.columns:
+        return False
+    return bool(df[_POSITION_COL].notna().any())
+
+
 def _safe_df(session) -> pd.DataFrame:
-    """Return session.results as a plain DataFrame, or empty if unavailable."""
+    """Return session.results as a plain DataFrame, or empty if unusable.
+
+    "Unusable" covers both a missing/empty results table and one that has rows
+    but no classified position (see `_has_usable_results`). Callers treat an
+    empty frame as "no results returned" and skip the round, which is what we
+    want: skipping leaves the round to be picked up by a later run, whereas
+    writing the frame poisons the archive permanently.
+    """
     try:
         res = session.results
         if res is None or (hasattr(res, "empty") and res.empty):
             return pd.DataFrame()
-        return pd.DataFrame(res).copy()
+        df = pd.DataFrame(res).copy()
     except Exception as exc:
         log.warning("    session.results unavailable: %s", exc)
         return pd.DataFrame()
+
+    if not _has_usable_results(df):
+        log.warning("    results table has %d row(s) but no classified %s "
+                    "— discarding rather than caching it",
+                    len(df), _POSITION_COL)
+        return pd.DataFrame()
+    return df
 
 
 def _normalise_results(df: pd.DataFrame) -> pd.DataFrame:
@@ -285,15 +333,23 @@ def fetch_season(
         for session_type, sub_dir, frame_list in sessions:
             out_path = out_dir / sub_dir / f"{year}_{round_num:02d}_{slug}.parquet"
 
-            # Skip if already fetched and not force-reloading
+            # Skip if already fetched and not force-reloading. A cached file
+            # only counts as a hit if it actually holds results — one that is
+            # readable but unclassified is rot, not data, so it re-fetches like
+            # a corrupt parquet instead of being served (and re-served) forever.
             if not force_reload and out_path.exists():
                 try:
                     cached = pd.read_parquet(out_path)
-                    frame_list.append(cached)
-                    log.info("    [%s] cache hit – %d rows", session_type, len(cached))
-                    continue
                 except Exception:
                     log.warning("    [%s] corrupt cache – will re-fetch", session_type)
+                else:
+                    if _has_usable_results(cached):
+                        frame_list.append(cached)
+                        log.info("    [%s] cache hit – %d rows", session_type, len(cached))
+                        continue
+                    log.warning("    [%s] cached parquet has %d row(s) but no "
+                                "classified %s – will re-fetch",
+                                session_type, len(cached), _POSITION_COL)
 
             # Fetch from FastF1
             try:
@@ -333,6 +389,66 @@ def fetch_season(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Audit
+# ─────────────────────────────────────────────────────────────────────────────
+
+def verify_archive(out_dir: Path) -> list[Path]:
+    """Report per-round archive parquets that hold no classified results.
+
+    Surfaces the rot described in `_has_usable_results` directly, instead of
+    leaving it to be noticed downstream as wrong championship points. Reads
+    only local files — no network, no fastf1 — so it is safe to run as a gate.
+
+    Returns the offending paths (empty when the archive is clean).
+    """
+    bad: list[Path] = []
+    checked = 0
+
+    for sub in ("race", "quali", "sprint"):
+        for path in sorted((out_dir / sub).glob("*.parquet")):
+            checked += 1
+            try:
+                df = pd.read_parquet(path)
+            except Exception as exc:
+                log.error("  UNREADABLE  %s/%s  (%s)", sub, path.name, exc)
+                bad.append(path)
+                continue
+            if not _has_usable_results(df):
+                log.error("  NO RESULTS  %s/%s  (%d row(s), 0 classified)",
+                          sub, path.name, len(df))
+                bad.append(path)
+
+    log.info("Checked %d archive file(s) under %s — %d unusable.",
+             checked, out_dir.resolve(), len(bad))
+
+    # Circuit identity is the other way this archive goes quietly wrong: a race
+    # that changes venue keeps its name, so anything keyed on the event slug
+    # pools two tracks. season_calendar.csv knows the locations, so ask it.
+    try:
+        from f1lib.circuits import audit_calendar
+        cal_problems = audit_calendar(
+            Path(HISTORICAL_DIR).parent / "season_calendar.csv")
+    except Exception as exc:                       # never let the audit crash
+        log.warning("  circuit-identity audit skipped: %s", exc)
+        cal_problems = []
+    for p in cal_problems:
+        log.error("  CIRCUIT     %s", p)
+    if cal_problems:
+        bad.append(Path("season_calendar.csv"))    # make the exit code fail
+    else:
+        log.info("Circuit identity: every relocated event is registered.")
+    if bad:
+        log.info("")
+        log.info("Repair: delete the files listed above, then re-run this "
+                 "module with no flags (every other round is a cache hit, so "
+                 "only the deleted ones are re-fetched). Afterwards rebuild "
+                 "the derived tables that read the standings:")
+        log.info("  python scripts/after_race.py --skip pitstops "
+                 "--skip archive --skip mistakes")
+    return bad
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -352,7 +468,17 @@ def main(argv: list[str] | None = None) -> None:
         "--force-reload", action="store_true",
         help="Re-fetch even when a cached parquet already exists",
     )
+    parser.add_argument(
+        "--verify", action="store_true",
+        help="Audit the existing archive for rounds with no classified "
+             "results and exit non-zero if any are found (local only — no "
+             "fetching, no network)",
+    )
     args = parser.parse_args(argv)
+
+    # Audit runs before the fastf1 import so it works offline.
+    if args.verify:
+        sys.exit(1 if verify_archive(args.out_dir) else 0)
 
     try:
         import fastf1

@@ -80,6 +80,102 @@ def test_tyre_allocations_schema():
     assert (s > h).all()
 
 
+# ── results-archive integrity ────────────────────────────────
+#
+# Regression cover for the silent rot found 2026-08-02: FastF1 can return a
+# results table with driver/team names filled but Position/Points/GridPosition
+# entirely NaN. Such a frame is not empty, so it used to be written and then
+# cache-hit forever, quietly corrupting the championship standings (and the ATR
+# table derived from them). See _has_usable_results.
+
+def _named_but_unclassified() -> pd.DataFrame:
+    """The poisoned shape: real drivers, no classification at all."""
+    return pd.DataFrame({
+        "DriverNumber": ["63", "16", "44"],
+        "Abbreviation": ["RUS", "LEC", "HAM"],
+        "TeamName":     ["Mercedes", "Ferrari", "Ferrari"],
+        "Position":     [np.nan, np.nan, np.nan],
+        "Points":       [np.nan, np.nan, np.nan],
+        "GridPosition": [np.nan, np.nan, np.nan],
+    })
+
+
+def _classified() -> pd.DataFrame:
+    df = _named_but_unclassified()
+    df["Position"] = [1.0, 2.0, 3.0]
+    df["Points"]   = [25.0, 18.0, 15.0]
+    df["GridPosition"] = [1.0, 3.0, 2.0]
+    return df
+
+
+@pytest.mark.parametrize("frame,expected", [
+    (_classified(),                True),
+    (_named_but_unclassified(),    False),   # the bug
+    (pd.DataFrame(),               False),
+    (_classified().drop(columns=["Position"]), False),
+])
+def test_has_usable_results(frame, expected):
+    from f1lib.fetch_historical_results import _has_usable_results
+    assert _has_usable_results(frame) is expected
+
+
+def test_has_usable_results_keeps_partial_classification():
+    """A DNF/DNS leaves some positions blank — that frame is still real data."""
+    from f1lib.fetch_historical_results import _has_usable_results
+    df = _classified()
+    df.loc[2, ["Position", "Points"]] = np.nan
+    assert _has_usable_results(df) is True
+
+
+class _StubSession:
+    def __init__(self, results):
+        self.results = results
+
+
+def test_safe_df_discards_unclassified_frame():
+    """The whole point: this must not reach _write_parquet."""
+    from f1lib.fetch_historical_results import _safe_df
+    assert _safe_df(_StubSession(_named_but_unclassified())).empty
+
+
+@pytest.mark.parametrize("results", [None, pd.DataFrame()])
+def test_safe_df_handles_missing_results(results):
+    from f1lib.fetch_historical_results import _safe_df
+    assert _safe_df(_StubSession(results)).empty
+
+
+def test_safe_df_passes_real_results_through():
+    from f1lib.fetch_historical_results import _safe_df
+    got = _safe_df(_StubSession(_classified()))
+    assert len(got) == 3 and got["Position"].notna().all()
+
+
+def test_verify_archive_flags_only_the_rotted_file(tmp_path):
+    from f1lib.fetch_historical_results import verify_archive
+    for sub in ("race", "quali", "sprint"):
+        (tmp_path / sub).mkdir(parents=True)
+    good = tmp_path / "race" / "2026_01_australian_grand_prix.parquet"
+    bad  = tmp_path / "race" / "2026_08_austrian_grand_prix.parquet"
+    _classified().to_parquet(good, index=False)
+    _named_but_unclassified().to_parquet(bad, index=False)
+
+    assert verify_archive(tmp_path) == [bad]
+
+
+def test_verify_archive_clean_when_empty(tmp_path):
+    from f1lib.fetch_historical_results import verify_archive
+    assert verify_archive(tmp_path) == []
+
+
+def test_bundled_archive_has_no_unclassified_rounds():
+    """Tripwire on the real archive, so the rot can't creep back in unnoticed."""
+    from f1lib.fetch_historical_results import verify_archive
+    archive = ROOT / "data" / "historical_results"
+    if not archive.exists():
+        pytest.skip("results archive not fetched yet")
+    assert verify_archive(archive) == []
+
+
 def test_circuit_characteristics_computed_schema():
     p = ROOT / "data" / "circuit_characteristics_computed.csv"
     if not p.exists():

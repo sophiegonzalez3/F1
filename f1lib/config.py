@@ -49,6 +49,13 @@ MIN_LAPS_SOFT   = 5
 MIN_LAPS_MEDIUM = 8
 MIN_LAPS_HARD   = 10
 
+# When a driver has NO valid stint on a compound (thin practice running),
+# their single longest stint with at least this many clean laps is kept as a
+# clearly-flagged FALLBACK (Fallback_Stint in analyze_stints) — whatever the
+# compound's own minimum above. Rendered with a distinct texture, never mixed
+# silently with valid stints.
+FALLBACK_MIN_LAPS = 5
+
 OUTLIER_THRESHOLD  = 1.25   # Laps >25% slower than median excluded
 FUEL_CORRECTION    = 0.035  # Seconds per lap per kg of fuel
 RACE_FUEL_KG       = 105.0  # Starting fuel load for a Grand Prix distance
@@ -93,7 +100,15 @@ RADIO_WHISPER_MODEL = "medium.en"
 # ─────────────────────────────────────────────
 # circuit_characteristics.csv uses French slugs (e.g. "monaco", "etats_unis")
 # while event names slugify to English (e.g. "monaco_grand_prix"). This map
-# bridges the two; used by app.py and compute_circuit_characteristics.py.
+# bridges the two.
+#
+# SEASON-BLIND — do not use it to decide which circuit an event ran at. It maps
+# both "spanish_grand_prix" and "barcelona_grand_prix" to "espagne", which is
+# right for 2019-2025 and wrong for 2026, when the Spanish GP moved to the
+# Madring. Use f1lib.circuits.french_key(event, season), which resolves through
+# the circuit registry and returns None when a venue has no reference row
+# rather than lending it a neighbour's. This dict remains only as the fallback
+# french_key() consults for events with no registry rule.
 HIST_CIRCUIT_KEY_MAP: dict[str, list[str]] = {
     "abu_dhabi":       ["abu_dhabi_grand_prix"],
     "arabie_saoudite": ["saudi_arabian_grand_prix"],

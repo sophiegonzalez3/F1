@@ -43,6 +43,7 @@ from f1lib.config import (
 from f1lib.pace_model import PaceModel
 from f1lib.race_forecast import RaceForecaster
 import f1lib.duel as duel
+from f1lib.circuits import circuit_id
 from f1lib.mistakes import (
     load_corner_fractions, load_track_line,
     corner_features_for_session, aggregate_mistakes,
@@ -91,7 +92,12 @@ def _forecaster() -> RaceForecaster | None:
 # ─────────────────────────────────────────────────────────────
 
 def _event_context() -> dict | None:
-    """(season, round, event, circuit_key archive + French) of the loaded meeting."""
+    """(season, round, event, circuit ids) of the loaded meeting.
+
+    `cid` is the physical-circuit id and is what every pooled-across-seasons
+    lookup must use — `ck` (the slugified event name) cannot tell the Madring
+    from Barcelona, or Sepang from Sakhir, because they share a race name.
+    """
     season, rnd, event = _loaded_meeting_season_round()
     if season is None or not event:
         return None
@@ -101,7 +107,8 @@ def _event_context() -> dict | None:
         if not sub.empty:
             ck = str(sub["circuit_key"].iloc[0])
     return {"season": int(season), "round": rnd, "event": event,
-            "ck": ck, "ck_fr": duel.circuit_key_fr(ck)}
+            "ck": ck, "cid": circuit_id(event, season),
+            "ck_fr": duel.circuit_key_fr(event, season)}
 
 
 def _roster() -> pd.DataFrame:
@@ -153,7 +160,17 @@ def _predictions(ctx: dict) -> dict | None:
         return _PRED_CACHE[key]
     out = None
     try:
-        stages = _model().predict_weekend(ctx["season"], ctx["event"])
+        # Same quali-informed update as the BRIEF tab: once qualifying is
+        # loaded, its real gaps sharpen the long-run (race) prediction. The
+        # one-lap latent is untouched by it, so qpred stays outcome-blind.
+        q_gap = pd.Series(dtype=float)
+        if (state.laps is not None and not state.laps.empty
+                and "session" in state.laps.columns):
+            q_gap = _model().actual_quali_gap(
+                state.laps[state.laps["session"] == "Qualifying"])
+        stages = _model().predict_weekend(
+            ctx["season"], ctx["event"],
+            quali_gap=q_gap if not q_gap.empty else None)
         final = stages[list(stages)[-1]]
         roster = _roster()
         as_of = (ctx["season"], ctx["round"]) if ctx["round"] else None
@@ -595,10 +612,10 @@ def _verdict_section(res: dict, a: str, b: str, ca: str, grid_known: bool,
 
 def _h2h_section(ctx, a, b, ca, cb):
     h_all = duel.h2h_record(a, b)
-    h_circ = duel.h2h_record(a, b, circuit_key=ctx["ck"]) if ctx["ck"] else \
+    h_circ = duel.h2h_record(a, b, circuit=ctx["cid"]) if ctx["cid"] else \
         {"race_n": 0, "race_a": 0, "quali_n": 0, "quali_a": 0,
          "a_dnfs": 0, "b_dnfs": 0}
-    cres = duel.circuit_results(a, b, ctx["ck"]) if ctx["ck"] else pd.DataFrame()
+    cres = duel.circuit_results(a, b, ctx["cid"]) if ctx["cid"] else pd.DataFrame()
     rows = []
     for _, r in cres.iterrows():
         def _f(v):
@@ -740,8 +757,8 @@ def _attack_section(ctx, a, b, ca, cb):
 
 
 def _mistake_section(ctx, a, b, ca, cb):
-    mm_b = duel.mistake_map(ctx["ck"], b) if ctx["ck"] else pd.DataFrame()
-    mm_a = duel.mistake_map(ctx["ck"], a) if ctx["ck"] else pd.DataFrame()
+    mm_b = duel.mistake_map(ctx["cid"], b) if ctx["cid"] else pd.DataFrame()
+    mm_a = duel.mistake_map(ctx["cid"], a) if ctx["cid"] else pd.DataFrame()
     press = duel.pressure_summary(a, b)
     live = pd.DataFrame()
     try:
@@ -754,7 +771,7 @@ def _mistake_section(ctx, a, b, ca, cb):
     line = load_track_line(ctx["event"], ctx["season"])
     fracs = load_corner_fractions(ctx["event"], ctx["season"])
     if not mm_b.empty and not line.empty and not fracs.empty:
-        n_sess = duel.load_mistakes(ctx["ck"], [b])
+        n_sess = duel.load_mistakes(ctx["cid"], [b])
         n_sess = n_sess[["season", "session"]].drop_duplicates().shape[0]
         laps_total = int(mm_b["n_laps"].max()) if len(mm_b) else 0
         top = mm_b.head(3)

@@ -31,6 +31,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from f1lib.circuits import circuit_id
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
@@ -50,7 +52,12 @@ HIST_RACE = Path("data/historical_results/race_results_all.parquet")
 
 
 def _circuit_key_map() -> dict[str, str]:
-    """event_name → circuit_key from the historical results archive."""
+    """event_name → circuit_key from the historical results archive.
+
+    Kept for the legacy `circuit_key` column only. It maps a name to ONE key
+    for all time, which is precisely why it must not be used to decide which
+    physical track a session belongs to — see `circuit_id` below.
+    """
     if not HIST_RACE.exists():
         return {}
     r = pd.read_parquet(HIST_RACE, columns=["event_name", "circuit_key"])
@@ -111,7 +118,12 @@ def _process_one(item: dict, ck_map: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
     agg.insert(0, "season", season)
     agg.insert(1, "meeting", meeting)
     agg.insert(2, "circuit_key", ck_map.get(meeting, ""))
-    agg.insert(3, "session", item["session"])
+    # The identity that survives a race changing venue. circuit_key above is
+    # the slugified event name and cannot separate the 2026 Madrid "Spanish
+    # Grand Prix" from Barcelona's, nor the Sepang-hosted "Bahrain Grand Prix"
+    # from Sakhir's — corner numbers would be pooled across unrelated tracks.
+    agg.insert(3, "circuit_id", circuit_id(meeting, season))
+    agg.insert(4, "session", item["session"])
 
     press = pd.DataFrame()
     if item["session"] in ("Race", "Sprint"):
@@ -120,7 +132,8 @@ def _process_one(item: dict, ck_map: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
             press.insert(0, "season", season)
             press.insert(1, "meeting", meeting)
             press.insert(2, "circuit_key", ck_map.get(meeting, ""))
-            press.insert(3, "session", item["session"])
+            press.insert(3, "circuit_id", circuit_id(meeting, season))
+            press.insert(4, "session", item["session"])
     return agg, press
 
 

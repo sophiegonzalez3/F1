@@ -43,6 +43,7 @@ from tabs.circuit_stats import (
     measured_weekend_card, pole_evolution_card, tyre_allocation_card,
     pirelli_card,
 )
+from f1lib.circuits import circuit_id, circuit_label
 from f1lib.standings import (
     HIST_RACE, HIST_QUALI, HIST_STANDINGS,
     _loaded_event, _loaded_circuit_key, _slugify_event,
@@ -995,6 +996,25 @@ def tab_track_info() -> html.Div:
     loaded_key  = _loaded_circuit_key()
     default_key = loaded_key if loaded_key else (options[0]["value"] if options else None)
 
+    # A circuit with no reference row must not silently borrow another's. The
+    # 2026 Spanish GP is the Madring, not Barcelona, and the 2026 Bahrain GP is
+    # at Sepang — both resolve to no reference key at all. Rather than opening
+    # on an unrelated circuit with no explanation, say what happened.
+    _loaded_season, _loaded_ev = _loaded_event()
+    unmapped_notice = []
+    if _loaded_ev and not loaded_key:
+        cid = circuit_id(_loaded_ev, _loaded_season)
+        where = f"{_loaded_ev} {_loaded_season}".strip() if _loaded_season else _loaded_ev
+        unmapped_notice = [html.Div(
+            f"No reference data yet for {circuit_label(cid)} — the loaded "
+            f"meeting ({where}) is a new or relocated venue, so the circuit "
+            f"profile, Pirelli view and lap record below belong to the circuit "
+            f"selected above, not to it.",
+            style={"color": "#FFC107", "fontSize": "0.75rem",
+                   "border": "1px solid #FFC107", "borderRadius": "6px",
+                   "padding": "8px 12px", "marginBottom": "12px"},
+        )]
+
     # Historical year options
     avail_years = sorted(set(
         list(HIST_RACE["season"].unique() if "season" in HIST_RACE.columns else []) +
@@ -1010,7 +1030,7 @@ def tab_track_info() -> html.Div:
     if default_year is None:
         default_year = year_opts[0]["value"] if year_opts else None
 
-    return html.Div([
+    return html.Div(unmapped_notice + [
         # ── Selectors row ─────────────────────────────────────
         dbc.Row([
             dbc.Col([

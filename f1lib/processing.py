@@ -45,6 +45,7 @@ from f1lib.config import (
     TRACK_EVO_MIN_LAPS,
     get_min_laps_for_compound,
     MIN_LAPS_MEDIUM,
+    FALLBACK_MIN_LAPS,
 )
 
 logger = logging.getLogger(__name__)
@@ -610,6 +611,10 @@ def analyze_stints(df: pd.DataFrame) -> pd.DataFrame:
     Stint_Rank_No_Compound     – within [session, driver] ignoring compound
     Stint_Rank_Overall         – global, across all drivers/sessions/compounds
     All ranks are NaN for invalid stints.  Rank 1 = fastest.
+
+    Fallback_Stint flags, per [driver, compound] with no valid stint at all,
+    the single longest stint of >= FALLBACK_MIN_LAPS clean laps — a clearly
+    second-class stand-in for thin weekends. Ranks stay NaN for these.
     """
     valid = df[df["ValidLap"]].copy()
 
@@ -662,6 +667,24 @@ def analyze_stints(df: pd.DataFrame) -> pd.DataFrame:
     stint_summary["Valid_Stint"] = (
         stint_summary["Stint_Laps_Count"] >= stint_summary["Min_Laps_Required"]
     )
+
+    # Fallback stints: if (and only if) a driver has NO valid stint on a
+    # compound, keep their single longest stint with >= FALLBACK_MIN_LAPS
+    # clean laps (ties broken by pace), whatever the compound's own minimum.
+    # Valid_Stint semantics and all rank columns are untouched — consumers
+    # that want the fallback opt in via this flag and must render such stints
+    # visibly second-class (the STINTS tab uses a hatched texture).
+    stint_summary["Fallback_Stint"] = False
+    _has_valid = stint_summary.groupby(["Driver_Short", "Compound"])[
+        "Valid_Stint"].transform("any")
+    _eligible = (~stint_summary["Valid_Stint"]) & (~_has_valid) & (
+        stint_summary["Stint_Laps_Count"] >= FALLBACK_MIN_LAPS)
+    if _eligible.any():
+        _pick = (stint_summary[_eligible]
+                 .sort_values(["Stint_Laps_Count", "Stint_Rep_Lap"],
+                              ascending=[False, True])
+                 .drop_duplicates(["Driver_Short", "Compound"]).index)
+        stint_summary.loc[_pick, "Fallback_Stint"] = True
 
     _best_in_session_compound = (
         stint_summary[stint_summary["Valid_Stint"]]
@@ -718,8 +741,9 @@ def analyze_stints(df: pd.DataFrame) -> pd.DataFrame:
     n_total = len(stint_summary)
     n_valid = _v.sum()
     logger.info(
-        "analyze_stints: %d stints total, %d valid (%.0f%%)",
+        "analyze_stints: %d stints total, %d valid (%.0f%%), %d fallback",
         n_total, n_valid, 100 * n_valid / max(n_total, 1),
+        int(stint_summary["Fallback_Stint"].sum()),
     )
     logger.debug(
         "  Avg deg rate by compound:\n%s",

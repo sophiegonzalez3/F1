@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 import f1lib.data_loader as dl
+from f1lib.circuits import french_key
 from f1lib.config import HIST_CIRCUIT_KEY_MAP, THROTTLE_THRESHOLD
 from f1lib.processing import (
     clean_and_enrich_laps, flag_dirty_air, enrich_track_evolution,
@@ -230,9 +231,14 @@ def main() -> int:
         return 1
 
     # circuit → {season → {session → key}}
+    #
+    # Resolved per (meeting, SEASON): a season-blind event→circuit lookup would
+    # file the 2026 Madrid "Spanish Grand Prix" telemetry under `espagne` and
+    # let it overlay Barcelona's hand-scored row. french_key returns None for a
+    # circuit with no reference row, which correctly skips it here.
     by_circuit: dict[str, dict[int, dict[str, str]]] = {}
     for s in sessions:
-        ck = _EVENT_TO_CIRCUIT.get(_slugify(s["meeting"]))
+        ck = french_key(str(s["meeting"]), int(s["season"]))
         if ck is None:
             continue
         by_circuit.setdefault(ck, {}).setdefault(

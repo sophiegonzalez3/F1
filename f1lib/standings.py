@@ -17,6 +17,7 @@ from dash import html
 import dash_bootstrap_components as dbc
 
 import f1lib.state as state
+from f1lib.circuits import french_key
 from f1lib.components import card
 from f1lib.config import (
     HISTORICAL_DIR, HIST_CIRCUIT_KEY_MAP, TEAM_COLORS,
@@ -725,26 +726,20 @@ def _loaded_circuit_key() -> str | None:
     season, event = _loaded_event()
     if not event:
         return None
-    # Prefer the historical circuit_key for this exact event (accent-safe),
-    # then translate it to the Track-Info French slug.
-    hist_ck = None
-    for src in (HIST_RACE, HIST_QUALI):
-        if src.empty or "circuit_key" not in src.columns:
-            continue
-        m = src[src["event_name"].astype(str).str.strip() == str(event).strip()]
-        if not m.empty:
-            hist_ck = str(m["circuit_key"].iloc[0])
-            break
-    if hist_ck is None:
-        hist_ck = _slugify_event(event)
-    fr = _HIST_TO_FR_KEY.get(hist_ck)
+    # Resolve through the circuit registry, which is season-aware: the event
+    # name alone cannot tell the 2026 Madrid "Spanish Grand Prix" from
+    # Barcelona's, and handing Madrid the `espagne` key would show it
+    # Barcelona's profile, Pirelli ratings, lap record and weekend guide.
+    fr = french_key(event, season)
+    if fr is None:
+        # Unregistered event that is already a Track-Info slug (e.g. a new
+        # venue added straight to the reference CSV).
+        fr = _slugify_event(event)
     try:
         import app
         cc = getattr(app, "CIRCUIT_CHARS", pd.DataFrame())
     except Exception:
         cc = pd.DataFrame()
-    if fr is None and not cc.empty and (cc["circuit_key"] == hist_ck).any():
-        fr = hist_ck            # already a Track-Info slug
     if fr and not cc.empty and (cc["circuit_key"] == fr).any():
         return fr
     return None

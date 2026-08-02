@@ -79,6 +79,12 @@ DEFAULTS: dict = {
         ("longrun", "Practice 2"): 0.70,
         ("longrun", "Practice 3"): 0.85,
         ("longrun", "Sprint"): 0.45,
+        # Actual qualifying gaps used as a LONG-RUN measurement (the optional
+        # post-quali stage): the gap itself is measured almost exactly, so
+        # this noise is pure one-lap → race-pace translation error. Matches
+        # the prior's stand-in term (sqrt(longrun_from_onelap_var) ≈ 0.55):
+        # stronger than any practice race sim, weaker than a real Sprint.
+        ("longrun", "Qualifying"): 0.55,
     },
     "default_base_noise": 0.6,
     # ── outcome simulation ──
@@ -268,12 +274,25 @@ class PaceModel:
 
     def predict_weekend(self, season: int, event: str,
                         measurements: pd.DataFrame | None = None,
-                        round_: int | None = None) -> dict[str, pd.DataFrame]:
+                        round_: int | None = None,
+                        quali_gap: pd.Series | None = None
+                        ) -> dict[str, pd.DataFrame]:
         """Stage-by-stage predictions for one event.
 
         measurements: pre-extracted team measurements (pace_features format);
         fetched from the session caches when omitted. Returns an ordered dict
         stage-name → state df (team, kind, mean, var, sd).
+
+        quali_gap: optional actual qualifying gaps per team (% to field mean,
+        as returned by actual_quali_gap on the Qualifying session only). When
+        given, an extra "after Quali" stage is appended in which the real
+        quali result updates the LONG-RUN latent only — qualifying is hard
+        one-lap evidence and translates to race pace with the noise term
+        base_noise[("longrun", "Qualifying")]. The one-lap latent is NEVER
+        touched by it, so every pre-quali stage (and any one-lap ledger
+        scored against qualifying) stays a genuine before-the-fact
+        prediction. Callers that must stay outcome-blind (the backtests)
+        simply omit it.
         """
         round_ = round_ if round_ is not None else self.round_of(season, event)
         if round_ is None:
@@ -306,6 +325,19 @@ class PaceModel:
                     continue
                 state = self.update(state, msess)
                 _snap(f"after {_STAGE_LABEL.get(session, session)}", state)
+        if quali_gap is not None and len(quali_gap) >= 4:
+            g = quali_gap.dropna()
+            mset = pd.DataFrame({
+                "team": [canon(t) for t in g.index],
+                "kind": "longrun",
+                "gap_pct": (g - g.mean()).values,
+                # the quali gap is measured near-exactly; the observation
+                # noise is the kind-translation term in base_noise
+                "se_pct": 0.05,
+                "session": "Qualifying",
+            })
+            state = self._update_with_set(state, mset)
+            _snap("after Quali", state)
         return stages
 
     # ── live outcome (for the prediction ledger) ──────────────

@@ -30,8 +30,10 @@ from f1lib.race_forecast import RaceForecaster
 _KIND_LABEL = {"onelap": "Qualifying (one-lap)", "longrun": "Race (long-run)"}
 _STAGE_SHORT = {"prior": "Prior", "after FP1": "FP1", "after FP2": "FP2",
                 "after FP3": "FP3", "after SprintQuali": "SQ",
-                "after Sprint": "Sprint"}
-# progression x-axis order (whichever stages actually exist this weekend)
+                "after Sprint": "Sprint", "after Quali": "Quali"}
+# progression x-axis order (whichever stages actually exist this weekend).
+# "after Quali" is deliberately absent: it only moves the long-run latent,
+# so drawing it on the ONE-LAP progression would be a flat, misleading step.
 _STAGE_SEQUENCE = ["prior", "after FP1", "after FP2", "after FP3",
                    "after SprintQuali", "after Sprint"]
 
@@ -280,8 +282,16 @@ def tab_brief(sel_drivers=None, sel_teams=None):
     teams_sel = ({canon(t) for t in sel_teams} if sel_teams else None)
     drivers_sel = (set(sel_drivers) if sel_drivers else None)
 
+    # Actual qualifying gaps (Qualifying session only — Sprint Quali is
+    # already a model input) feed the optional post-quali long-run update.
+    laps = state.laps
+    q_gap = pd.Series(dtype=float)
+    if laps is not None and not laps.empty and "session" in laps.columns:
+        q_gap = _model().actual_quali_gap(laps[laps["session"] == "Qualifying"])
+
     try:
-        stages = _model().predict_weekend(season, event)
+        stages = _model().predict_weekend(
+            season, event, quali_gap=q_gap if not q_gap.empty else None)
     except ValueError:
         return html.Div(dbc.Alert(
             [f"No season pace table entry for {season} {event}. Generate it "
@@ -291,7 +301,15 @@ def tab_brief(sel_drivers=None, sel_teams=None):
     stage_names = list(stages)
     final_name = stage_names[-1]
     final = stages[final_name]
-    has_practice = final_name != "prior"
+    # The last outcome-blind snapshot: everything one-lap (predicted quali
+    # order, probabilities, the one-lap ledger) is pinned to THIS stage, so
+    # the quali prediction is guaranteed to be the one made before quali ran.
+    # Only the long-run (race) prediction reads `final`, which may include
+    # the "after Quali" update.
+    pq_names = [n for n in stage_names if n != "after Quali"]
+    pre_quali_name = pq_names[-1]
+    pre_quali = stages[pre_quali_name]
+    has_practice = pre_quali_name != "prior"
 
     def _show_teams(df):
         if teams_sel is None:
@@ -319,7 +337,7 @@ def tab_brief(sel_drivers=None, sel_teams=None):
               "marginBottom": "14px"})
 
     # ── KPI strip ───────────────────────────────────────────────
-    probs = _model().outcome_probs(final, "onelap")
+    probs = _model().outcome_probs(pre_quali, "onelap")
     kpis = []
     if not probs.empty:
         top = probs.iloc[0]
@@ -331,44 +349,57 @@ def tab_brief(sel_drivers=None, sel_teams=None):
             tooltip="Monte-Carlo probability this team has the field's fastest "
                     "one-lap pace, given the model's uncertainty and event-day "
                     "execution noise. Team-level, not driver-level."))
-    # biggest mover since previous stage
-    if len(stage_names) >= 2:
-        prev = stages[stage_names[-2]].set_index(["team", "kind"])["mean"]
-        cur = final.set_index(["team", "kind"])["mean"]
+    # biggest mover since previous PRE-QUALI stage (the quali stage never
+    # moves the one-lap latent, so comparing against it would show 0.00)
+    if len(pq_names) >= 2:
+        prev = stages[pq_names[-2]].set_index(["team", "kind"])["mean"]
+        cur = pre_quali.set_index(["team", "kind"])["mean"]
         d = (cur - prev).dropna()
         d = d[[i for i in d.index if i[1] == "onelap"]]
         if not d.empty:
             mover = d.abs().idxmax()
             delta = d[mover]
-            kpis.append(kpi(f"BIGGEST MOVE · {_STAGE_SHORT.get(final_name, final_name)}",
+            kpis.append(kpi(f"BIGGEST MOVE · {_STAGE_SHORT.get(pre_quali_name, pre_quali_name)}",
                 f"{_abbr(mover[0])} {delta:+.2f}%",
                 color=ACCENT,
                 tooltip=f"Largest change in predicted one-lap gap from "
-                        f"{_STAGE_SHORT.get(stage_names[-2], stage_names[-2])} "
-                        f"to {_STAGE_SHORT.get(final_name, final_name)}. "
+                        f"{_STAGE_SHORT.get(pq_names[-2], pq_names[-2])} "
+                        f"to {_STAGE_SHORT.get(pre_quali_name, pre_quali_name)}. "
                         "Negative = gained pace."))
     stage_pill_txt = ("Pre-weekend prior" if not has_practice
                       else f"Updated through {_STAGE_SHORT.get(final_name, final_name)}")
     kpis.append(kpi("WEEKEND STAGE", stage_pill_txt,
         color=ACCENT if has_practice else TEXT_MAIN,
         tooltip="How far into the weekend the prediction reflects. Each "
-                "practice session with clean pace data sharpens it."))
+                "practice session with clean pace data sharpens it. Once "
+                "qualifying is in, the real quali result sharpens the RACE "
+                "(long-run) prediction only — the qualifying prediction and "
+                "its ledger stay frozen at the last pre-quali session, so "
+                "the model is always scored on what it said beforehand."))
     body = [intro, dbc.Row(kpis, className="mb-2")]
 
     # ── Predicted order (one-lap + long-run) ────────────────────
+    # one-lap from the pre-quali snapshot (a true prediction of qualifying);
+    # long-run from the final stage (sharpened by the real quali result once
+    # it is loaded).
+    pre_quali_show = _show_teams(pre_quali)
     final_show = _show_teams(final)
     body.append(dbc.Row([
         dbc.Col(card(f"PREDICTED ORDER · {_KIND_LABEL['onelap'].upper()}",
-            dcc.Graph(figure=_order_fig(final_show, "onelap"), config=GFX),
-            info="Predicted qualifying pace as a gap to the field mean at the "
-                 "current stage. Whiskers are ±1sd. Team pace = the team's "
-                 "faster driver."), md=6),
+            dcc.Graph(figure=_order_fig(pre_quali_show, "onelap"), config=GFX),
+            info="Predicted qualifying pace as a gap to the field mean, at "
+                 "the last PRE-quali stage — this chart never uses the quali "
+                 "result itself, so it stays an honest prediction. Whiskers "
+                 "are ±1sd. Team pace = the team's faster driver."), md=6),
         dbc.Col(card(f"PREDICTED ORDER · {_KIND_LABEL['longrun'].upper()}",
             dcc.Graph(figure=_order_fig(final_show, "longrun"), config=GFX),
             info="Predicted race pace as a gap to the field mean. Long-run "
                  "practice is a weak, fuel/mode-polluted signal, so this "
                  "leans on season race form more than the one-lap chart — "
-                 "treat its ordering as indicative."), md=6),
+                 "treat its ordering as indicative. Once qualifying is "
+                 "loaded, the real quali gaps sharpen it further (quali is "
+                 "hard evidence of car pace, translated to race pace with "
+                 "extra uncertainty)."), md=6),
     ]))
 
     # ── Progression across the weekend ──────────────────────────
@@ -465,7 +496,7 @@ def tab_brief(sel_drivers=None, sel_teams=None):
     rf = _forecaster()
     if not dpred.empty and rf is not None:
         qpred = _model().driver_predictions(
-            final, roster, "onelap", as_of=(season, round_))
+            pre_quali, roster, "onelap", as_of=(season, round_))
         # real grid once qualifying is loaded, else sample it from the one-lap
         # prediction (so the pre-quali forecast carries grid uncertainty)
         grid = None
@@ -550,12 +581,12 @@ def tab_brief(sel_drivers=None, sel_teams=None):
             ]))
 
     # ── Prediction ledger (once quali / race is loaded) ─────────
-    laps = state.laps
     aq = _model().actual_quali_gap(laps)
     ar = _model().actual_race_gap(laps)
     ledger_cards = []
     if not aq.empty:
-        p = final[final["kind"] == "onelap"].set_index("team")["mean"]
+        # scored against the PRE-quali prediction — guaranteed outcome-blind
+        p = pre_quali[pre_quali["kind"] == "onelap"].set_index("team")["mean"]
         common = [t for t in p.index if t in aq.index]
         if common:
             pv = p[common] - p[common].mean()
@@ -565,13 +596,16 @@ def tab_brief(sel_drivers=None, sel_teams=None):
             rho = spearmanr(pv.values, av.values).correlation
             ledger_cards.append(dbc.Col(card(
                 f"LEDGER · ONE-LAP  (MAE {mae:.2f}% · ρ {rho:.2f})",
-                dcc.Graph(figure=_ledger_fig(final, aq, "onelap", teams_sel),
+                dcc.Graph(figure=_ledger_fig(pre_quali, aq, "onelap", teams_sel),
                           config=GFX),
                 info="Predicted vs actual qualifying gap (both to the field "
-                     "mean). Points on the dashed line were predicted exactly; "
-                     "MAE / ρ in the title are the model's full-field score "
-                     "(the sidebar filter only zooms the view). This is the "
-                     "model keeping score on itself."), md=6))
+                     "mean). The prediction is the PRE-quali one — frozen at "
+                     f"{_STAGE_SHORT.get(pre_quali_name, pre_quali_name)}, "
+                     "before qualifying ran — so this is a genuine "
+                     "before-the-fact score. Points on the dashed line were "
+                     "predicted exactly; MAE / ρ in the title are the model's "
+                     "full-field score (the sidebar filter only zooms the "
+                     "view)."), md=6))
     if not ar.empty:
         p = final[final["kind"] == "longrun"].set_index("team")["mean"]
         common = [t for t in p.index if t in ar.index]

@@ -60,6 +60,7 @@ import pandas as pd
 
 import f1lib.data_loader as dl
 from f1lib.pace_features import canon
+from f1lib.quali_norm import n_sessions, normalised_gap_pct
 from f1lib.processing import (
     clean_and_enrich_laps, flag_dirty_air, flag_perturbed_laps,
     enrich_track_evolution,
@@ -73,10 +74,20 @@ HIST = Path("data/historical_results")
 HALF_LIFE_EVENTS = 30.0   # recency weight: events this far back count half
 MIN_EVENTS = 2            # drivers with fewer events are still fitted but flagged
 RIDGE = 2.0               # shrinks thin driver effects toward 0 (one-off drivers)
-# Input clip: a driver's gap this far from their car's best is almost never
-# pace (Q1 knockout on a scrappy lap, wet/crash, lapped-car median) — it is a
-# session event, and teammate contrast is what we want, so cap it.
-MAX_INPUT_GAP = {"race": 5.0, "quali": 3.0}    # %
+# Input clip: a driver this far SLOWER THAN THEIR OWN CAR's average that
+# weekend is almost never showing pace (a scrappy lap, a wet Q1, a crash, a
+# lapped-car median) — it is a session event, and teammate contrast is what
+# the rating is made of, so cap it.
+#
+# Measured WITHIN the car-event, not against the field. That is what the
+# rule always meant, but it used to be applied to the absolute gap, which
+# silently did something else: against a pole anchor a backmarker sat +3.5%
+# on pure CAR pace, so the old quali cap discarded 14% of rows, most of them
+# perfectly good laps from slow cars, and took their teammate contrasts with
+# them. Within-car deviation is invariant to the baseline, so this survives
+# the switch to a field-median reference. 1.5 sits at the 99th percentile of
+# real teammate deviations (median 0.19, p90 0.57), dropping ~1%.
+MAX_TEAMMATE_DEV = {"race": 1.5, "quali": 1.5}    # %
 _HUBER_K = 1.8            # robust reweight threshold, in residual MADs
 
 
@@ -85,21 +96,55 @@ _HUBER_K = 1.8            # robust reweight threshold, in residual MADs
 # ─────────────────────────────────────────────────────────────
 
 def _quali_driver_gaps() -> pd.DataFrame:
-    """Best qualifying lap per driver as % gap to the event's pole."""
+    """Session-normalised best qualifying lap per driver, as % vs the field
+    median (negative = faster than the median car).
+
+    Why normalised and not the raw gap to pole (audit finding 09): the rating
+    is built ENTIRELY on teammate contrast, and 31% of teammate pairs set
+    their two best laps in different Q-sessions. Q3 runs on the most-rubbered
+    track of the weekend and Q1 on the greenest — worth around a percent a
+    session, which is larger than the driver effects being measured. A pair
+    split Q1-vs-Q3 therefore carried the whole track-evolution offset inside
+    the contrast, and it was booked as driver skill.
+
+    The pole anchor was the smaller half of the problem: the car-event dummy
+    in the fit absorbs any per-event additive shift, so a moving baseline
+    mostly cancels there. What did NOT cancel is the evolution, because it
+    falls between the teammates rather than on the car. Both are fixed here
+    by reusing the team layer's corrector (f1lib.quali_norm) at driver level.
+    """
     q = pd.read_parquet(HIST / "quali_results_all.parquet")
     q["best"] = q[["Q1", "Q2", "Q3"]].min(axis=1)
     q = q.dropna(subset=["best"])
     q["team"] = q["TeamName"].map(canon)
     q["driver"] = q["Abbreviation"]
     rows = []
+    n_norm = n_tot = 0
     for (season, rnd, event), g in q.groupby(
             ["season", "round_number", "event_name"]):
-        pole = g["best"].min()
+        n_tot += 1
+        # one row per driver already, so no reduction within a session
+        gaps = normalised_gap_pct(g, entity="driver", reducer="min")
+        if gaps:
+            n_norm += 1
+        else:
+            # Fall back to the raw best re-centred on the field median — still
+            # better than a pole anchor, just without the session correction.
+            med = float(g["best"].median())
+            gaps = {r["driver"]: round((r["best"] / med - 1) * 100, 3)
+                    for _, r in g.iterrows()}
+        nsess = n_sessions(g, "driver")
         for _, r in g.iterrows():
+            gap = gaps.get(r["driver"])
+            if gap is None:
+                continue
             rows.append({"season": int(season), "round": int(rnd),
                          "event": event, "team": r["team"],
                          "driver": r["driver"], "kind": "quali",
-                         "gap_pct": round((r["best"] / pole - 1) * 100, 3)})
+                         "gap_pct": gap,
+                         "n_sessions": nsess.get(r["driver"], 0)})
+    logger.info("quali driver gaps: session-normalised at %d/%d rounds",
+                n_norm, n_tot)
     return pd.DataFrame(rows)
 
 
@@ -131,7 +176,10 @@ def _race_driver_gaps() -> pd.DataFrame:
         med = med[n >= 10]
         if len(med) < 4:
             continue
-        best = med.min()
+        # Field MEDIAN, not the fastest driver: the minimum of noisy estimates
+        # is itself noisy, so anchoring on it lets one driver's good race move
+        # the scale for everyone. Matches the quali kind and the team table.
+        ref = float(med.median())
         season = int(fl["season"].iloc[0]) if "season" in fl.columns \
             else int(season_s)
         event = fl["meeting"].iloc[0] if "meeting" in fl.columns \
@@ -139,7 +187,7 @@ def _race_driver_gaps() -> pd.DataFrame:
         for (team, drv), t in med.items():
             rows.append({"season": season, "round": np.nan, "event": event,
                          "team": canon(team), "driver": drv, "kind": "race",
-                         "gap_pct": round((t / best - 1) * 100, 3)})
+                         "gap_pct": round((t / ref - 1) * 100, 3)})
         print(f"  [race] {season} {event}: {len(med)} drivers", flush=True)
     return pd.DataFrame(rows)
 
@@ -180,11 +228,23 @@ class DriverRatings:
         Robustified with one Huber reweight pass so a single blown lap or a
         wet Q1 can't dominate a driver's rating."""
         sub = sub.dropna(subset=["gap_pct"]).copy()
-        cap = MAX_INPUT_GAP.get(kind or (sub["kind"].iloc[0] if not sub.empty
-                                         else "race"), 5.0)
-        sub = sub[sub["gap_pct"] <= cap]
+        cap = MAX_TEAMMATE_DEV.get(kind or (sub["kind"].iloc[0] if not sub.empty
+                                            else "race"), 1.5)
         # a car-event with only one driver present contributes nothing to
         # teammate contrast and only adds an unidentified car dummy
+        car_key = (sub["season"].astype(str) + "|" + sub["event"].astype(str)
+                   + "|" + sub["team"].astype(str))
+        sub = sub[car_key.groupby(car_key).transform("size") >= 2]
+        if sub.empty:
+            return pd.DataFrame(columns=["driver", "effect", "se", "n_events"])
+        # Clip against the driver's OWN car that weekend, so a slow car is
+        # never mistaken for a bad session (see MAX_TEAMMATE_DEV). Re-derive
+        # the key after the size filter so the groups line up.
+        car_key = (sub["season"].astype(str) + "|" + sub["event"].astype(str)
+                   + "|" + sub["team"].astype(str))
+        dev = sub["gap_pct"] - sub.groupby(car_key)["gap_pct"].transform("mean")
+        sub = sub[dev <= cap]
+        # dropping a car's slow row can leave it a single driver — re-filter
         car_key = (sub["season"].astype(str) + "|" + sub["event"].astype(str)
                    + "|" + sub["team"].astype(str))
         sub = sub[car_key.groupby(car_key).transform("size") >= 2]

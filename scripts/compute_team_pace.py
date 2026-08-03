@@ -87,6 +87,7 @@ from f1lib.processing import (
     clean_and_enrich_laps, flag_dirty_air, flag_perturbed_laps,
     enrich_track_evolution,
 )
+from f1lib.quali_norm import n_sessions, normalised_gap_pct
 
 OUT_PATH = Path("data/team_pace_by_event.csv")
 HIST = Path("data/historical_results")
@@ -107,100 +108,18 @@ def canon(team: str) -> str:
 # Qualifying gap (results archive — covers every round)
 # ─────────────────────────────────────────────────────────────
 
-# Minimum paired teams for the sandbag-robust offset. Below this the
-# eliminated-team subset is too thin to take a median of, and the estimate
-# falls back to every team present in both sessions.
-_OFFSET_MIN_PAIRS = 3
-
-# Reject the whole fit when any team lands further than this from the field
-# median. The old 15% gate let anything short of a catastrophe through —
-# the largest GENUINE one-lap spread observed (Aston, Spa 2026) was 3.9%,
-# so 8% is double the worst real case and still catches red-flag garbage.
-_MAX_PLAUSIBLE_PCT = 8.0
-
-
 def _session_normalised_pace(g: pd.DataFrame) -> dict[str, float]:
     """Session-normalised one-lap pace for one round, as % vs the field median.
 
-    The Q1→Q3 track evolution is measured from PAIRED team deltas — for each
-    consecutive pair of sessions, the median of (log best in later − log best
-    in earlier) across teams that set a time in both — and every team's laps
-    are corrected onto the final session's track state. The team estimate is
-    its best CORRECTED lap across the sessions it ran.
-
-    Why paired medians and not a team+session OLS (the previous estimator,
-    MS-05): the OLS assumes every team's relative pace is constant across
-    Q1/Q2/Q3, and it is not. Front-runners set a banker on used rubber in Q1
-    and do not push, so their Q1→Q2 "improvement" is track evolution PLUS the
-    sandbag coming off — at Hungary 2026 McLaren gained 1.05% Q1→Q2 against
-    Aston's 0.40%. A session offset averaged over that mixture over-states the
-    evolution, and the excess lands as a pace bonus on exactly the teams
-    measured only in Q1 — the backmarkers whose form is hardest to read.
-    Two defences here:
-
-    * The Q1→Q2 offset is taken from teams ELIMINATED AT THE NEXT CUT when at
-      least _OFFSET_MIN_PAIRS of them exist: a team knocked out in Q2 was flat
-      out in Q1 (to escape it) and in Q2 (fighting elimination), so its delta
-      is track evolution, not sandbag release.
-    * The team estimate is the best corrected lap, not an OLS average over
-      every session the team ran — so a front-runner's Q1 cruise lap no longer
-      drags its own estimate slower either.
+    Thin wrapper over f1lib.quali_norm, which owns the correction (and its
+    reasoning) so the driver-rating layer applies exactly the same one. Here
+    the entity is the TEAM, reduced to the quicker of its two cars per
+    session.
 
     Returns {team: pct_vs_field_median}; negative = faster than the median car.
     Empty dict when the round cannot be normalised (caller falls back).
     """
-    long = []
-    for s in ("Q1", "Q2", "Q3"):
-        if s not in g.columns:
-            continue
-        sub = g[["team", s]].dropna()
-        if sub.empty:
-            continue
-        sub = sub.rename(columns={s: "t"})
-        # a team's best lap in THIS session (two cars, keep the quicker)
-        sub = sub.groupby("team", as_index=False)["t"].min()
-        sub["sess"] = s
-        long.append(sub)
-    if not long:
-        return {}
-    L = pd.concat(long, ignore_index=True)
-    L = L[L["t"] > 0]
-    teams = sorted(L["team"].unique())
-    if len(teams) < 2 or L.empty:
-        return {}
-    L["logt"] = np.log(L["t"].to_numpy(dtype=float))
-
-    # wide[team][sess] = log best; last[team] = latest session the team ran
-    wide: dict[str, dict[str, float]] = {}
-    for row in L.itertuples(index=False):
-        wide.setdefault(row.team, {})[row.sess] = row.logt
-    sessions = [s for s in ("Q1", "Q2", "Q3") if (L["sess"] == s).any()]
-    order = {s: i for i, s in enumerate(sessions)}
-    last = {t: max(d, key=lambda s: order[s]) for t, d in wide.items()}
-
-    # Cumulative log-offset from each session onto the final session's track.
-    cum: dict[str, float] = {sessions[-1]: 0.0}
-    for a, b in reversed(list(zip(sessions, sessions[1:]))):
-        pairs = [t for t in teams if a in wide[t] and b in wide[t]]
-        # Teams whose run ENDED at b pushed flat out in both a and b; teams
-        # that advanced past b may have cruised through a. Only the Q1→Q2
-        # step ever distinguishes the two — every Q2∩Q3 team's last is Q3.
-        fighters = [t for t in pairs if last[t] == b]
-        use = fighters if len(fighters) >= _OFFSET_MIN_PAIRS else pairs
-        if not use:
-            return {}
-        step = float(np.median([wide[t][b] - wide[t][a] for t in use]))
-        cum[a] = step + cum[b]
-
-    # Best corrected lap per team — a sandbag lap is slow even corrected, so
-    # it never wins the min; a ruined final run falls back to the previous
-    # session's corrected time instead of poisoning the estimate.
-    eff = {t: min(wide[t][s] + cum[s] for s in wide[t]) for t in teams}
-    med = float(np.median(list(eff.values())))
-    out = {t: round((float(np.exp(v - med)) - 1) * 100, 3) for t, v in eff.items()}
-    if max(abs(v) for v in out.values()) > _MAX_PLAUSIBLE_PCT:
-        return {}
-    return out
+    return normalised_gap_pct(g, entity="team", reducer="min")
 
 
 def quali_gaps(season: int) -> pd.DataFrame:
@@ -220,11 +139,7 @@ def quali_gaps(season: int) -> pd.DataFrame:
         # Sessions each team set a time in — a single-session team's estimate
         # leans entirely on the measured track-evolution offsets, so charts
         # can flag it (MS-05's minimum ask).
-        n_sess = {}
-        for s in ("Q1", "Q2", "Q3"):
-            if s in g.columns:
-                for team in g.loc[g[s].notna(), "team"].unique():
-                    n_sess[team] = n_sess.get(team, 0) + 1
+        n_sess = n_sessions(g, "team")
         fe = _session_normalised_pace(g)
         if fe:
             n_fe += 1

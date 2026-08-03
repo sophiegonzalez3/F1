@@ -545,7 +545,7 @@ def tab_stints(fl, fs):
                 customdata=dev_s[["Team", "N_Laps"]].values,
                 hovertemplate=(
                     "<b>%{y}</b>  Team: %{customdata[0]}<br>"
-                    "Avg vs field at equal tyre age: %{x:+.3f} s<br>"
+                    "Avg vs field at equal tyre age: %{x:>+.3f} s<br>"
                     "Clean laps used: %{customdata[1]}<extra></extra>"
                 ),
                 text=dev_s["DevFmt"], textposition="outside",
@@ -671,7 +671,7 @@ def tab_stints(fl, fs):
                     hovertemplate=(
                         f"<b>{team}</b> · {comp}<br>"
                         "Tyre age: %{x} laps<br>"
-                        "Δ vs stint start: %{y:+.3f} s<extra></extra>"
+                        "Δ vs stint start: %{y:>+.3f} s<extra></extra>"
                     ),
                 ), row=1, col=j)
             # Field median on top
@@ -683,7 +683,7 @@ def tab_stints(fl, fs):
                 hovertemplate=(
                     f"<b>Field median</b> · {comp}<br>"
                     "Tyre age: %{x} laps<br>"
-                    "Δ vs stint start: %{y:+.3f} s<br>"
+                    "Δ vs stint start: %{y:>+.3f} s<br>"
                     "Stints contributing: %{customdata[0]}<extra></extra>"
                 ),
             ), row=1, col=j)
@@ -796,7 +796,7 @@ def tab_stints(fl, fs):
                 "<b>%{customdata[0]}</b> · %{customdata[1]} "
                 "(%{customdata[2]})<br>"
                 "Plateau: tyre age 0 → %{x:.0f} laps<br>"
-                "Base deg: %{customdata[3]:+.3f} s/lap<extra></extra>"
+                "Base deg: %{customdata[3]:>+.3f} s/lap<extra></extra>"
             ),
         ))
         # Over the cliff: cliff onset → end of the observed stint
@@ -811,7 +811,7 @@ def tab_stints(fl, fs):
                 "<b>%{customdata[0]}</b> · %{customdata[1]} "
                 "(%{customdata[2]})<br>"
                 "Cliff from tyre age %{base:.0f} laps<br>"
-                "Deg: %{customdata[3]:+.3f} → %{customdata[4]:+.3f} s/lap "
+                "Deg: %{customdata[3]:>+.3f} → %{customdata[4]:>+.3f} s/lap "
                 "(+%{customdata[5]:.2f} extra)<br>"
                 "Stint length: %{customdata[6]} laps<extra></extra>"
             ),
@@ -873,9 +873,9 @@ def tab_stints(fl, fs):
             customdata=co[["N_Drivers", "Q25", "Q75"]].values,
             hovertemplate=(
                 "<b>%{x}</b><br>"
-                "Median offset: %{y:+.2f} s/lap (+ = second compound slower)"
-                "<br>Driver spread (IQR): %{customdata[1]:+.2f} … "
-                "%{customdata[2]:+.2f} s<br>"
+                "Median offset: %{y:>+.2f} s/lap (+ = second compound slower)"
+                "<br>Driver spread (IQR): %{customdata[1]:>+.2f} … "
+                "%{customdata[2]:>+.2f} s<br>"
                 "Drivers compared: %{customdata[0]}<extra></extra>"
             ),
             text=co["Offset_s"].apply(lambda v: f"{v:+.2f}s"),

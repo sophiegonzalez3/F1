@@ -19,6 +19,13 @@ Usage
     python scripts/fetch_previous_races.py --dry-run   # only list what would be fetched
     python scripts/fetch_previous_races.py --sessions "Race,Qualifying"
                                                # also backfill other sessions
+    python scripts/fetch_previous_races.py --season 2024
+                                               # only fetch that target season
+
+Note this walks back exactly ONE season per run, so filling a gap two seasons
+deep takes two runs: caching 2026 lets it reach 2025, and only once 2025 is
+cached does 2024 come into range. That is why 2024 sat at 2 of 24 races while
+its results archive was complete — the chain was never turned the third time.
 """
 import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
@@ -36,6 +43,14 @@ if "--sessions" in sys.argv:
     raw = sys.argv[sys.argv.index("--sessions") + 1]
     sessions_to_fetch = [s.strip() for s in raw.split(",") if s.strip()]
 
+# Restrict to one TARGET season (the season-1 being fetched, not the cached
+# one it was derived from). Without it a run to fill 2024 also pulls 2022,
+# because the 2023 cache walks back too — roughly doubling a multi-GB fetch.
+target_seasons: set[int] | None = None
+if "--season" in sys.argv:
+    raw = sys.argv[sys.argv.index("--season") + 1]
+    target_seasons = {int(s) for s in raw.split(",") if s.strip()}
+
 
 def main() -> int:
     cached = dl.list_cached_sessions()
@@ -49,6 +64,7 @@ def main() -> int:
         for season, meeting in meetings
         for sess in sessions_to_fetch
         if not dl.is_cached(str(season - 1), meeting, sess)
+        and (target_seasons is None or (season - 1) in target_seasons)
     ]
     print(f"{len(meetings)} cached meeting(s); {len(todo)} previous-season "
           f"session(s) to fetch ({', '.join(sessions_to_fetch)})\n", flush=True)

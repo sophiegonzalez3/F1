@@ -579,7 +579,7 @@ def _tab_teams_inner2(fl, fs):
                   lower_is_better=True, xlabel="Race Pace (s)"),
             info=("Data: best representative stint pace of the team's stronger driver "
                   "in race/sprint sessions only (fuel-corrected). Why: actual race-day "
-                  "pace, which can differ markedly from one-lap qualifying speed."),
+                  "pace, which can differ markedly from one-lap speed."),
             measure="race",
         )
         left_cards += _maybe_card(

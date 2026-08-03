@@ -206,6 +206,11 @@ def _upgrade_meeting_block(season, meeting, team_rank: dict) -> html.Div:
 # question the FIA documents never answer: did the upgrade actually work?
 
 _WINDOW = 2   # rounds before / after an upgrade averaged for the effect
+# Fewest teams that must have sat a round out for their median to be used as
+# the field control. Below this the control is one or two arbitrary teams —
+# 2026 round 11 had ten of eleven teams upgrading, leaving Alpine as the entire
+# "field". See _effect_rows.
+MIN_CONTROL = 3
 
 
 def _impact_season() -> int | None:
@@ -265,6 +270,24 @@ def _effect_rows(season: int) -> pd.DataFrame:
                    NOTHING that round — track/tyre/weather swings hit
                    everyone, so they cancel out here.
     adj effect   = raw − control  →  what the upgrade itself was worth.
+
+    Two things the board could not previously say about its own numbers, both
+    reported per row so the chart can show them:
+
+    n_control    How many teams the control was actually averaged over. On a
+                 busy round almost nobody sits it out — at 2026 round 11, ten
+                 of eleven teams brought something, so the "field control" was
+                 Alpine, alone. A median of one is not a control, and a row
+                 resting on it deserves to be marked rather than presented at
+                 the same confidence as the rest. Below MIN_CONTROL the field
+                 median of ALL teams is used instead: a poorer control in
+                 principle (it includes upgraders) but a far steadier one than
+                 a single arbitrary team.
+    n_after      How many rounds the "after" window actually covered. The most
+                 recent upgrade always has n_after=1 because nothing has been
+                 raced since, so every fresh package is scored on a single
+                 event against a two-event baseline — and Aston Martin's
+                 headline -2.04 pp at Hungary is exactly that case.
     """
     ups = _upgrade_rounds(season)
     gaps = _gap_series(season)
@@ -273,7 +296,8 @@ def _effect_rows(season: int) -> pd.DataFrame:
     all_teams = gaps.index.get_level_values(0).unique()
     max_round = int(gaps.index.get_level_values(1).max())
 
-    def delta(team, r) -> float:
+    def delta(team, r) -> tuple[float, int]:
+        """(mean-after minus mean-before, number of rounds in the after window)."""
         before = [gaps.get((team, x), np.nan)
                   for x in range(max(1, r - _WINDOW), r)]
         after = [gaps.get((team, x), np.nan)
@@ -281,26 +305,41 @@ def _effect_rows(season: int) -> pd.DataFrame:
         before = [v for v in before if np.isfinite(v)]
         after = [v for v in after if np.isfinite(v)]
         if not before or not after:
-            return np.nan
-        return float(np.mean(after) - np.mean(before))
+            return np.nan, 0
+        return float(np.mean(after) - np.mean(before)), len(after)
 
     rows = []
     for _, u in ups[ups["any_perf"]].iterrows():
         r = int(u["round"])
         if r <= 1:
             continue                       # no baseline before round 1
-        raw = delta(u["team"], r)
+        raw, n_after = delta(u["team"], r)
         if not np.isfinite(raw):
             continue
         upgraded_here = set(ups.loc[ups["round"] == r, "team"])
-        ctrl_vals = [delta(t, r) for t in all_teams if t not in upgraded_here]
-        ctrl_vals = [v for v in ctrl_vals if np.isfinite(v)]
-        control = float(np.median(ctrl_vals)) if ctrl_vals else 0.0
+        ctrl_vals = [d for d, _n in (delta(t, r) for t in all_teams
+                                     if t not in upgraded_here)
+                     if np.isfinite(d)]
+        n_control = len(ctrl_vals)
+        if n_control >= MIN_CONTROL:
+            control = float(np.median(ctrl_vals))
+            basis = "clean"
+        else:
+            # Too few teams sat this round out to average over. Fall back to
+            # the whole field's median move, upgraders included: it understates
+            # the correction (some of that move IS upgrades) but it does not
+            # hand the answer to one arbitrary team.
+            field = [d for d, _n in (delta(t, r) for t in all_teams)
+                     if np.isfinite(d)]
+            control = float(np.median(field)) if field else 0.0
+            basis = "field"
         rows.append({
             "team": u["team"], "round": r, "event": u["event"],
             "n_items": int(u["n_items"]), "components": u["components"],
             "raw": round(raw, 3), "control": round(control, 3),
             "effect": round(raw - control, 3),
+            "n_control": n_control, "control_basis": basis,
+            "n_after": n_after,
         })
     return pd.DataFrame(rows).sort_values("effect")
 
@@ -308,19 +347,44 @@ def _effect_rows(season: int) -> pd.DataFrame:
 def _effect_board_fig(eff: pd.DataFrame, season: int) -> go.Figure:
     labels = [f"{abbr(r.team)} · {event_short(r.event)}"
               for r in eff.itertuples()]
+    # A row is PROVISIONAL when its "after" window is still incomplete (the
+    # newest package has raced once) or when too few teams sat the round out
+    # for a clean control. Hatched rather than hidden: the number is the best
+    # available, it just must not read with the same authority as a settled one.
+    prov = ((eff["n_after"] < _WINDOW)
+            | (eff.get("control_basis", "clean") != "clean")).to_numpy()
+    n_after = eff["n_after"].to_numpy()
+    n_ctrl = eff["n_control"].to_numpy()
+    basis = eff.get("control_basis", pd.Series(["clean"] * len(eff))).to_numpy()
+
     fig = go.Figure(go.Bar(
         y=labels, x=eff["effect"], orientation="h",
-        marker_color=[TEAM_COLORS.get(t, "#808080") for t in eff["team"]],
+        marker=dict(
+            color=[TEAM_COLORS.get(t, "#808080") for t in eff["team"]],
+            line=dict(color="#000", width=0.5),
+            pattern=dict(shape=["/" if p else "" for p in prov],
+                         fgcolor="rgba(13,13,13,0.55)", size=5, solidity=0.35),
+        ),
         customdata=np.stack([eff["components"], eff["raw"], eff["control"],
-                             eff["n_items"]], axis=-1),
+                             eff["n_items"], n_after, n_ctrl, basis], axis=-1),
         hovertemplate=("<b>%{y}</b> (%{customdata[3]} items)<br>"
                        "%{customdata[0]}<br><br>"
-                       "Effect vs field: %{x:+.2f} pp of quali gap<br>"
-                       "(raw %{customdata[1]:+.2f}, field control "
-                       "%{customdata[2]:+.2f})<extra></extra>"),
-        text=[f"{v:+.2f}" for v in eff["effect"]], textposition="outside",
-        textfont=dict(size=10),
+                       "Effect vs field: %{x:>+.2f} pp of quali gap<br>"
+                       "(raw %{customdata[1]:>+.2f}, field control "
+                       "%{customdata[2]:>+.2f})<br>"
+                       "<span style='opacity:.7'>%{customdata[4]} round(s) "
+                       "after · control from %{customdata[5]} team(s), "
+                       "%{customdata[6]}</span><extra></extra>"),
+        text=[f"{v:+.2f}" + ("*" if p else "")
+              for v, p in zip(eff["effect"], prov)],
+        textposition="outside", textfont=dict(size=10),
     ))
+    if prov.any():
+        fig.add_annotation(
+            x=0, y=1.0, xref="paper", yref="paper", yanchor="bottom",
+            xanchor="left", showarrow=False, font=dict(size=9, color=TEXT_DIM),
+            text="* hatched = provisional: one round raced since, "
+                 "or too few teams sat the round out for a clean control")
     fig.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
     theme(fig, max(340, 26 * len(eff) + 110))
     span = float(eff["effect"].abs().max()) if len(eff) else 1.0
@@ -350,13 +414,13 @@ def _team_trend_fig(season: int, team: str) -> go.Figure:
         x=g["round"], y=g[qcol], mode="lines+markers",
         name="One-lap speed", line=dict(color=clr, width=2.5),
         marker=dict(size=7), connectgaps=False,
-        hovertemplate="One-lap speed: %{y:+.2f}% vs median<extra></extra>"))
+        hovertemplate="One-lap speed: %{y:>+.2f}% vs median<extra></extra>"))
     if g[rcol].notna().any():
         fig.add_trace(go.Scatter(
             x=g["round"], y=g[rcol], mode="lines+markers",
             name="Race pace", line=dict(color=clr, width=1.5, dash="dot"),
             marker=dict(size=6, symbol="diamond"), connectgaps=False,
-            hovertemplate="Race pace: %{y:+.2f}% vs median<extra></extra>"))
+            hovertemplate="Race pace: %{y:>+.2f}% vs median<extra></extra>"))
     ymax = float(np.nanmax([g[qcol].max(), g[rcol].max()]))
     for u in ups.itertuples():
         fig.add_vline(x=u.round, line=dict(color="#FFB000", width=1,

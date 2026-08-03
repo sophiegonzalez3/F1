@@ -303,8 +303,22 @@ def clean_and_enrich_laps(df: pd.DataFrame) -> pd.DataFrame:
     #   Sprint : same linear shape at the fallback burn rate (short distance,
     #            car fuelled for the sprint only, so the level is ~right)
     # Practice / Quali: the true load is unknown (teams run different
-    # programmes), so we keep a per-stint model — the level is arbitrary but
-    # the within-stint SLOPE (what degradation fits consume) is correct.
+    # programmes), so the correction is CENTRED on each stint's own midpoint —
+    # only the within-stint slope is applied, and the level cancels.
+    #
+    # It used to anchor on the stint's END, i.e. assume every run finishes with
+    # an empty tank. That silently paid a bonus for running longer: a 25-lap
+    # race sim was credited up to 37.5 kg (1.3 s) at its start where a 10-lap
+    # run got 0.5 s, so its MEDIAN corrected lap came out faster for no reason
+    # but its length. Measured on 2026 Hungary FP2, run length correlated
+    # +0.23 with the size of the correction, spanning 0.15-0.47 s. That fed
+    # straight into practice.py's long-run gap and therefore into the
+    # SANDBAGGING detector, which reads exactly that median.
+    #
+    # Centring makes FuelLoad_kg SIGNED for these sessions — positive early in
+    # the stint (car heavy), negative late (car light) — which is correct for a
+    # correction whose zero point is unknowable. Only the fuel correction
+    # itself consumes the column, so nothing downstream reads it as mass.
     _lap_no = pd.to_numeric(df["LapNo"], errors="coerce")
     _total_laps = _lap_no.groupby(df["session_name"]).transform("max")
 
@@ -324,15 +338,16 @@ def clean_and_enrich_laps(df: pd.DataFrame) -> pd.DataFrame:
         _fuel_kg[_is_race] / _total_laps[_is_race]
     ).clip(upper=3.0)
 
-    _max_lap_in_stint = df.groupby(
+    _mid_lap_in_stint = df.groupby(
         ["session_name", "DriverNo", "Stint"]
-    )["LapInStint"].transform("max")
+    )["LapInStint"].transform("mean")
 
     _fuel_race  = (_total_laps - _lap_no) * _burn
-    _fuel_stint = (_max_lap_in_stint - df["LapInStint"]) * _burn
-    df["FuelLoad_kg"] = (
-        _fuel_race.where(_is_race | _is_sprint, _fuel_stint).clip(lower=0)
-    )
+    _fuel_stint = (_mid_lap_in_stint - df["LapInStint"]) * _burn
+    # clip only the race branch: a real tank never holds negative fuel, but the
+    # centred practice figure is meant to straddle zero.
+    _known = _is_race | _is_sprint
+    df["FuelLoad_kg"] = _fuel_race.clip(lower=0).where(_known, _fuel_stint)
     df["LapTime_FuelCorrected"] = df["LapTime_s"] - (df["FuelLoad_kg"] * FUEL_CORRECTION)
 
     # ── Race driver vs mandated rookie FP1 outing ────────────

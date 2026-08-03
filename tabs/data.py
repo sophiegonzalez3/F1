@@ -148,6 +148,10 @@ def tab_data_quality(fl, fs):
     else:
         perturbed_count = None
         pct_perturbed   = None
+    # Counted off the UNFILTERED laps on purpose: this tab reports what was
+    # loaded, and the sidebar has already removed these from everything else.
+    test_lap_count = (int((~laps["Is_Race_Driver"]).sum())
+                      if "Is_Race_Driver" in laps.columns else 0)
 
     # ── 1. Per-session overview ──────────────────────────────
     per_sess = (
@@ -383,7 +387,18 @@ def tab_data_quality(fl, fs):
         ]),
         *([dbc.Row([
             kpi("PERTURBED LAPS", f"{pct_perturbed:.1f}% ({perturbed_count:,})", "#FFC0CB",
-                tooltip="Laps flagged by flag_perturbed_laps(): either TrackStatus indicates Yellow/SC/VSC/RedFlag, OR a sector time anomaly (>2.5× IQR above 75th pct for that driver/session/compound) was detected. These laps are NOT automatically excluded by ValidLap — filter on Perturbed_Lap=False for clean pace analysis."),
+                tooltip="Laps flagged by flag_perturbed_laps(): either TrackStatus indicates Yellow/SC/VSC/RedFlag, OR a sector time anomaly (>2.5× IQR above 75th pct for that driver/session/compound) was detected. These laps are NOT automatically excluded by ValidLap — filter on Perturbed_Lap=False for clean pace analysis. They ARE excluded from race pace (compute_team_pace.py) and from the degradation fits."),
+            *([kpi("TEST-DRIVER LAPS",
+                   f"{test_lap_count:,} ({', '.join(state.TEST_DRIVERS)})",
+                   "#B47BEA",
+                   tooltip="Laps set by drivers on a mandated rookie FP1 outing "
+                           "(Is_Race_Driver=False, from data/driver_info.csv). "
+                           "They are LOADED and counted here, but excluded from "
+                           "every measurement: practice figures are expressed "
+                           "against the session median, so a handful of these "
+                           "laps shifts every team's number at once. The sidebar "
+                           "switch puts them back.")]
+              if state.TEST_DRIVERS else []),
         ])] if perturbed_count is not None else []),
 
         # ── Pipeline check alerts ─────────────────────────────

@@ -250,7 +250,7 @@ def _order_fig(stage: pd.DataFrame, kind: str) -> go.Figure:
         text=[f"{v:+.1f}%" for v in d["mean"]], textposition="outside",
         textfont=dict(size=9, color=TEXT_MAIN),
         customdata=np.stack([d["team"], d["sd"]], axis=-1),
-        hovertemplate="%{customdata[0]}: %{x:+.2f}%  ±%{customdata[1]:.2f}"
+        hovertemplate="%{customdata[0]}: %{x:>+.2f}%  ±%{customdata[1]:.2f}"
                       "<extra></extra>"))
     theme(fig, max(300, len(d) * 34 + 120), "")
     fig.add_vline(x=0, line_color=TEXT_DIM, line_width=1)
@@ -287,7 +287,7 @@ def _progression_fig(stages: dict[str, pd.DataFrame], kind: str,
         fig.add_trace(go.Scatter(
             x=xs, y=ys, mode="lines+markers", name=_abbr(t),
             line=dict(color=_clr(t), width=2), marker=dict(size=7),
-            hovertemplate=f"{_abbr(t)} · %{{x}}<br>%{{y:+.2f}}%<extra></extra>"))
+            hovertemplate=f"{_abbr(t)} · %{{x}}<br>%{{y:>+.2f}}%<extra></extra>"))
     theme(fig, 440, "")
     fig.update_layout(
         yaxis_title="Predicted gap to field mean (%)",
@@ -313,8 +313,8 @@ def _driver_order_fig(dpred: pd.DataFrame) -> go.Figure:
         text=[f"{v:+.1f}%" for v in d["mean"]], textposition="outside",
         textfont=dict(size=9, color=TEXT_MAIN),
         customdata=np.stack([d["team"], d["effect"], d["sd"]], axis=-1),
-        hovertemplate="%{y} (%{customdata[0]})<br>%{x:+.2f}%  ±%{customdata[2]:.2f}"
-                      "  ·  driver effect %{customdata[1]:+.2f}%<extra></extra>"))
+        hovertemplate="%{y} (%{customdata[0]})<br>%{x:>+.2f}%  ±%{customdata[2]:.2f}"
+                      "  ·  driver effect %{customdata[1]:>+.2f}%<extra></extra>"))
     theme(fig, max(360, len(d) * 22 + 120), "")
     fig.add_vline(x=0, line_color=TEXT_DIM, line_width=1)
     vmax = float(d["mean"].abs().max() or 1) + float(d["sd"].max() or 0)
@@ -380,7 +380,7 @@ def _scatter_ledger(pv: pd.Series, av: pd.Series, colors: dict,
             marker=dict(size=12, color=[colors[k][1] for k in keys],
                         line=dict(width=1, color="#000")),
             customdata=[colors[k][2] for k in keys],
-            hovertemplate="%{customdata}<br>pred %{x:+.2f}%  ·  actual %{y:+.2f}%"
+            hovertemplate="%{customdata}<br>pred %{x:>+.2f}%  ·  actual %{y:>+.2f}%"
                           "<extra></extra>"))
     theme(fig, 440, "")
     fig.update_layout(showlegend=False, xaxis_title=x_title,
@@ -564,7 +564,7 @@ def tab_brief(sel_drivers=None, sel_teams=None):
 
     # ── Progression across the weekend ──────────────────────────
     if has_practice:
-        body.append(dbc.Row([dbc.Col(card("PREDICTION PROGRESSION · ONE-LAP",
+        body.append(dbc.Row([dbc.Col(card("PREDICTION PROGRESSION · ONE-LAP SPEED",
             dcc.Graph(figure=_progression_fig(stages, "onelap", teams_sel),
                       config=GFX),
             info="Each team's predicted one-lap gap at every stage, prior → "
@@ -761,7 +761,7 @@ def tab_brief(sel_drivers=None, sel_teams=None):
             from scipy.stats import spearmanr
             rho = spearmanr(pv.values, av.values).correlation
             ledger_cards.append(dbc.Col(card(
-                f"LEDGER · ONE-LAP  (MAE {mae:.2f}% · ρ {rho:.2f})",
+                f"LEDGER · ONE-LAP SPEED  (MAE {mae:.2f}% · ρ {rho:.2f})",
                 dcc.Graph(figure=_ledger_fig(pre_quali, aq, "onelap", teams_sel),
                           config=GFX),
                 info="Predicted vs actual qualifying gap (both to the field "

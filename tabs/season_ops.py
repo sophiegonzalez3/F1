@@ -176,7 +176,7 @@ def lap1_league_card(season: int, min_races: int = 3) -> html.Div | None:
         textfont=dict(size=9),
         customdata=np.stack([g["team"], g["n"]], axis=-1),
         hovertemplate=("<b>%{y}</b> (%{customdata[0]})<br>"
-                       "Avg lap-1 gain: %{x:+.2f} places over "
+                       "Avg lap-1 gain: %{x:>+.2f} places over "
                        "%{customdata[1]} starts<extra></extra>"),
     ))
     theme(fig, max(380, 18 * len(g) + 120))
@@ -276,6 +276,44 @@ def _eng_hbar(makers: list[str], values: list[float], colors: list[str],
     return fig
 
 
+def _non_contact_dnf_per_car(season: int, pu: pd.DataFrame) -> dict:
+    """maker → retirements per car that contact does NOT explain.
+
+    The archive has recorded a bare "Retired" since 2023, so this cannot say
+    "the engine let go" — it says "the car stopped and nobody hit it", which
+    is the closest the data supports. The incident register
+    (scripts/compute_incidents.py) is what removes the collisions.
+    """
+    from pathlib import Path
+    from f1lib.config import HISTORICAL_DIR
+    from f1lib.incidents import classify_retirement
+
+    p = Path(HISTORICAL_DIR) / "race_results_all.parquet"
+    if not p.exists() or pu.empty:
+        return {}
+    try:
+        r = pd.read_parquet(p)
+    except Exception:
+        return {}
+    r = r[(r["season"] == season) & (r["Status"].astype(str) == "Retired")]
+    if r.empty:
+        return {}
+    maker_of = dict(zip(pu["driver"].astype(str).str.upper(), pu["maker"]))
+    cars = pu.groupby("maker")["driver"].nunique()
+    counts: dict = {}
+    for row in r.itertuples():
+        maker = maker_of.get(str(getattr(row, "Abbreviation", "")).upper())
+        if not maker:
+            continue
+        got = classify_retirement(season, str(getattr(row, "event_name", "")),
+                                  getattr(row, "Abbreviation", None),
+                                  getattr(row, "Laps", None))
+        if got["cause"] == "collision":
+            continue
+        counts[maker] = counts.get(maker, 0) + 1
+    return {m: n / max(int(cars.get(m, 1)), 1) for m, n in counts.items()}
+
+
 def engine_championship_card(season: int) -> html.Div | None:
     """The engine championship, three ways: points normalised by how many cars
     each manufacturer supplies, power-unit reliability (element consumption +
@@ -331,49 +369,98 @@ def engine_championship_card(season: int) -> html.Div | None:
         customdata=np.stack([pa["points"], pa["cars"], pa["teams"]], axis=-1),
     )
 
-    # ── Panel B · PU reliability — element consumption + penalties ─
+    # ── Panel B · PU attrition — what the wear actually COST ──────
+    #
+    # This panel used to plot total elements used per car, which measures the
+    # wrong thing twice over. Element count is a PLANNING decision as much as a
+    # reliability one — a team can take a fresh engine early at a cheap circuit
+    # — and a fleet MEAN dilutes a catastrophe: in 2026 Ferrari's six cars all
+    # sat on an identical 3/3/3/3/3/2 allocation and read WORSE (17.2 elements
+    # per car) than Mercedes (16.6), despite Ferrari taking zero grid penalties
+    # and Mercedes twenty. That is the opposite of the story on track.
+    #
+    # So the bar is now the realised sporting cost — grid places served, per car
+    # supplied — with the pool depth as colour so a maker still on zero is not
+    # painted safe when its next element costs ten places. The element counts
+    # move to the hover, where they belong.
+    from tabs.pu_pool import _LIMITS_2026, _ELEMENTS
+
     pu = pu_df(season)
     fig_rel, rel_note = None, ""
-    ecols = ["ice", "tc", "mguk", "es", "ce", "ex"]
+    # ANC included — pu_pool.py counts seven elements and this panel counted
+    # six, so the same tab disagreed with itself about what a PU element is.
+    ecols = [e for e, _ in _ELEMENTS]
     if not pu.empty and set(ecols).issubset(pu.columns):
         pu = pu.copy()
         pu["maker"] = pu["pu_supplier"].map(_pu_short)
         pu["elems"] = pu[ecols].sum(axis=1)
+        # deepest single element pool this car has eaten, as a share of its
+        # season allowance: 1.0 = exactly at the limit, >1.0 = already over
+        pu["pool"] = pu.apply(
+            lambda r: max(float(r[e]) / _LIMITS_2026[e] for e in ecols), axis=1)
         rel = (pu.groupby("maker")
-               .agg(elems_car=("elems", "mean"), ice_car=("ice", "mean"),
-                    penalties=("penalties_places", "sum"),
+               .agg(places=("penalties_places", "sum"),
+                    worst_car_places=("penalties_places", "max"),
+                    worst_driver=("driver", lambda s: s.iloc[0]),
+                    elems_car=("elems", "mean"), ice_car=("ice", "mean"),
+                    pool=("pool", "max"),
                     cars=("driver", "nunique")).reset_index())
+        # name the car that actually took the worst hit, not the first row
+        worst = (pu.sort_values("penalties_places", ascending=False)
+                   .drop_duplicates("maker").set_index("maker")["driver"])
+        rel["worst_driver"] = rel["maker"].map(worst)
+        rel["places_car"] = rel["places"] / rel["cars"].clip(lower=1)
+        # Retirements NOT explained by contact, per car. Reported in the hover
+        # and deliberately kept OUT of the bar: the archive records a bare
+        # "Retired", so this is "mechanical or unknown" — a gearbox, a
+        # hydraulic leak and a blown ICE are indistinguishable in it. Baking an
+        # unattributable number into a PU index would make the index mean less,
+        # not more.
+        rel["dnf_car"] = rel["maker"].map(_non_contact_dnf_per_car(season, pu))
         rb = _reindex(rel, "maker")
-        # Colour ramps amber→red with the ICE units burned per car (allowance
-        # is 4 ICE for the whole 2026 season): more engines = rougher campaign.
-        def _relclr(ice):
-            if ice != ice:
+
+        # Colour = how deep into the allowance the fleet's worst car has gone.
+        # A maker on zero penalties sitting exactly ON the limit (Ferrari, 2026)
+        # is one component away from a ten-place hit, and green would lie.
+        def _poolclr(pool):
+            if pool != pool:
                 return "#3a3a4a"
-            if ice >= 4.5:
-                return "#e66767"
-            if ice >= 3.5:
-                return "#fab219"
+            if pool > 1.0:
+                return "#e66767"        # already over — penalties taken
+            if pool >= 1.0:
+                return "#fab219"        # at the limit, next one costs
             return "#0ca30c"
         fig_rel = _eng_hbar(
-            order, rb["elems_car"].tolist(),
-            [_relclr(v) for v in rb["ice_car"]],
-            [f"{int(p)} pl" if p == p and p > 0 else "" for p in rb["penalties"]],
-            "PU reliability — parts burned",
-            "Total PU elements used per car",
-            ("<b>%{y}</b><br>%{x:.1f} PU elements per car<br>"
-             "avg %{customdata[0]:.1f} engines (ICE) per car · "
-             "%{customdata[1]:.0f} cars<br>"
-             "%{customdata[2]:.0f} grid-penalty places taken<extra></extra>"),
-            customdata=np.stack([rb["ice_car"], rb["cars"], rb["penalties"]],
-                                axis=-1),
+            order, rb["places_car"].tolist(),
+            [_poolclr(v) for v in rb["pool"]],
+            [f"{v:.1f}" if v == v and v > 0 else "0" for v in rb["places_car"]],
+            "PU attrition — what it cost",
+            "Grid places served per car supplied",
+            ("<b>%{y}</b><br>%{x:.1f} grid places per car "
+             "(%{customdata[0]:.0f} total over %{customdata[1]:.0f} cars)<br>"
+             "worst car: %{customdata[2]} with %{customdata[3]:.0f} places<br>"
+             "deepest element pool: %{customdata[4]:.0%} of the allowance<br>"
+             "%{customdata[7]:.2f} non-contact retirements per car<br>"
+             "<span style='opacity:.7'>%{customdata[5]:.1f} elements per car · "
+             "%{customdata[6]:.1f} engines (ICE)</span><extra></extra>"),
+            customdata=np.stack([rb["places"], rb["cars"], rb["worst_driver"],
+                                 rb["worst_car_places"], rb["pool"],
+                                 rb["elems_car"], rb["ice_car"],
+                                 rb["dnf_car"].fillna(0)], axis=-1),
         )
-        rel_note = (" The 2026 results archive only records a generic "
-                    "retirement status, so specific PU failures can't be split "
-                    "out of it — the reliability panel instead reads the FIA "
-                    "component audit (data/pu_penalties.csv): a maker whose "
-                    "cars have burned through more power-unit elements, and "
-                    "taken more grid-penalty places, has had the rougher "
-                    "reliability campaign.")
+        rel_note = (
+            " The attrition panel reads the FIA component audit "
+            "(data/pu_penalties.csv) and plots the grid places a maker's cars "
+            "have actually SERVED, divided by the number of cars it supplies. "
+            "It deliberately does NOT plot elements consumed: taking a fresh "
+            "engine is a strategy call as much as a breakage, and a fleet mean "
+            "hides a single blown-up car among healthy siblings — on 2026 data "
+            "the element view ranked Ferrari worse than Mercedes despite "
+            "Ferrari serving no penalties and Mercedes twenty. Colour is the "
+            "deepest single element pool any of that maker's cars has eaten: "
+            "green under the allowance, amber exactly at it (the next "
+            "component costs ten places), red already past it. Element and "
+            "engine counts are in the hover.")
 
     # ── Panel C · computed straight-line-speed index ──────────────
     ts = topspeed_df()
@@ -394,7 +481,7 @@ def engine_championship_card(season: int) -> html.Div | None:
                 [f"{v:+.1f}" for v in sb["idx"]],
                 "Straight-line speed index",
                 "km/h vs the field at the speed trap (quali)",
-                ("<b>%{y}</b><br>%{x:+.1f} km/h vs field average<br>"
+                ("<b>%{y}</b><br>%{x:>+.1f} km/h vs field average<br>"
                  "avg quali trap %{customdata[0]:.0f} km/h · "
                  "race %{customdata[1]:.0f} km/h<br>Teams: %{customdata[2]}"
                  "<extra></extra>"),
@@ -658,7 +745,7 @@ def affinity_card(season: int, min_events: int = 2) -> html.Div | None:
         customdata=np.stack([d["team"], d["np"], d["nt"]], axis=-1),
         hovertemplate=("<b>%{customdata[0]}</b><br>"
                        "Technical-track gap minus power-track gap: "
-                       "%{x:+.2f}%<br>(%{customdata[1]} power / "
+                       "%{x:>+.2f}%<br>(%{customdata[1]} power / "
                        "%{customdata[2]} technical events)<extra></extra>"),
     ))
     theme(fig, max(340, 24 * len(d) + 130))

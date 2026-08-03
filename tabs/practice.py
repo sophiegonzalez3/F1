@@ -208,7 +208,7 @@ def _sb_div_bar(df, valcol, xaxis_title, *, suffix="%", decimals=2, flags=True):
         text=[f"{v:+.{decimals}f}{suffix}" for v in d[valcol]],
         textposition="outside", textfont=dict(size=9, color=TEXT_MAIN),
         customdata=d["Team"],
-        hovertemplate="%{customdata}: %{x:+." + str(decimals) + "f}" + suffix + "<extra></extra>"))
+        hovertemplate="%{customdata}: %{x:>+." + str(decimals) + "f}" + suffix + "<extra></extra>"))
     theme(fig, max(240, len(d) * 40 + 110), "")
     fig.add_vline(x=0, line_color=TEXT_DIM, line_width=1)
     vmax = d[valcol].abs().max() or 1
@@ -336,8 +336,8 @@ def tab_sandbagging(wl):
             " SCOREBOARD · PACE IN HAND"],
             dcc.Graph(figure=fig_hand, config=GFX),
             info="One-lap gap to field minus race-run gap to field. Positive = the team is relatively further back on a single lap than on long runs, a classic sign of one-lap speed held in reserve. 🚩 = ≥2 sandbag signals."), md=6))
-    head_cols.append(dbc.Col(card([*gloss("one-lap speed", "ONE-LAP"), " vs ",
-        *gloss("race pace", "RACE-RUN")],
+    head_cols.append(dbc.Col(card([*gloss("one-lap speed", "ONE-LAP SPEED"), " vs ",
+        *gloss("race pace", "RACE-RUN PACE")],
         dcc.Graph(figure=fig_olr, config=GFX),
         info="Each team's best practice one-lap gap (x) vs its fuel-corrected race-run gap (y), both relative to the field. Markers below the parity line are stronger on long runs than on one lap — one-lap speed likely in hand."),
         md=6 if fig_hand is not None else 12))
@@ -390,7 +390,7 @@ def tab_sandbagging(wl):
                 marker_color=[TEAM_COLORS.get(t, "#808080") for t in td["Team"]],
                 text=[f"{v:+.1f}" for v in td["trap_delta"]],
                 textposition="outside", textfont=dict(size=9, color=TEXT_MAIN),
-                customdata=td["Team"], hovertemplate="%{customdata}: %{x:+.1f} km/h<extra></extra>"))
+                customdata=td["Team"], hovertemplate="%{customdata}: %{x:>+.1f} km/h<extra></extra>"))
             theme(fig_t, max(240, len(td) * 40 + 110), "")
             fig_t.add_vline(x=0, line_color=TEXT_DIM, line_width=1)
             _tmax = td["trap_delta"].abs().max() or 1

@@ -28,7 +28,7 @@ from tabs.regulations import regulations_block
 from tabs.finance import finance_block, compliance_card
 from tabs.hr import hr_section
 from tabs.infrastructure import infrastructure_section
-from tabs.reliability import reliability_card
+from tabs.reliability import reliability_card, contact_card
 from tabs.pu_pool import pu_pool_card
 from tabs.gearbox_pool import gearbox_pool_card
 from tabs.driver_market import driver_market_card
@@ -181,7 +181,7 @@ def _character_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
                             line=dict(width=0)),
                 showlegend=False,
                 hovertemplate=(f"<b>{abbr(team)}</b> · first half<br>"
-                               "one-lap %{x:+.2f}% · race %{y:+.2f}%"
+                               "one-lap %{x:>+.2f}% · race %{y:>+.2f}%"
                                "<extra></extra>")))
             fig.add_annotation(x=x1, y=y1, ax=x0, ay=y0, xref="x", yref="y",
                                axref="x", ayref="y", showarrow=True,
@@ -197,8 +197,8 @@ def _character_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
             name=abbr(team), showlegend=False,
             hovertemplate=(f"<b>{abbr(team)}</b>"
                            + (" · second half" if have_arrows else "") +
-                           "<br>one-lap speed: %{x:+.2f}% vs median<br>"
-                           "race pace: %{y:+.2f}% vs median<extra></extra>"),
+                           "<br>one-lap speed: %{x:>+.2f}% vs median<br>"
+                           "race pace: %{y:>+.2f}% vs median<extra></extra>"),
         ))
     fig.add_annotation(x=hi, y=lo + (hi - lo) * 0.06,
                        text="stronger over a stint ↓", showarrow=False,
@@ -215,21 +215,132 @@ def _character_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
 
 # ── Momentum: what changed, not where things stand ───────────
 
-def _momentum_frame(s: pd.DataFrame) -> pd.DataFrame:
-    """Per team: how pace and scoring moved from the season's first half to
-    its second. This is the mid-season-break question in one table.
+# Rounds averaged either side of the comparison. Three is the smallest window
+# that survives one scruffy weekend; it is NOT free — see _momentum_noise().
+MOMENTUM_WINDOW = 3
 
-    Scoring is a SHARE of the points the whole field took that half, not
-    points per round. Sprints are not spread evenly through a season — three
-    of 2026's first four fell in rounds 1-5 — so the pot per round was 12.7%
-    bigger in the early half than the late one. Points-per-round therefore
-    drags every team downwards in the sprint-poor half for pure scheduling
-    reasons, which would read as the entire grid losing momentum at once.
-    A share of the pot normalises that away by construction, and sums to zero
-    across teams, which is what a momentum measure should do.
+
+def _momentum_window(s: pd.DataFrame) -> tuple[list[int], list[int]]:
+    """The two blocks of rounds the card compares: the last W against the W
+    before them.
+
+    NOT a first-half/second-half split. A half-split cannot answer "who is
+    moving NOW": with 11 rounds it averages six of them into the recent number,
+    so a fresh result moves the answer by a sixth and the card is structurally
+    ~3 races behind. That is how Aston Martin's biggest upgrade of the season
+    (Hungary, 16 items, the best single step on the 2026 upgrade board) still
+    left them reading as the grid's biggest loser.
+
+    Shrinks the window rather than refusing when the season is young.
     """
-    early, late = _half_split(s)
-    if not late:
+    rounds = sorted(int(r) for r in s["round"].dropna().unique())
+    w = min(MOMENTUM_WINDOW, len(rounds) // 2)
+    if w < 2:
+        return [], []
+    return rounds[-2 * w:-w], rounds[-w:]
+
+
+def _momentum_noise(s: pd.DataFrame, w: int) -> float:
+    """Smallest |d_pace| worth reading, in pp.
+
+    A team's one-lap speed wanders round to round on setup, traffic and track
+    state. Comparing two w-round means, that wander shows up as sd·sqrt(2/w) of
+    pure noise. Shorter window = more responsive AND noisier, and the card says
+    so instead of letting every dot look meaningful: at 2026's spread the
+    3-round floor is ~0.31 pp against ~0.23 pp for a half-season split.
+    """
+    sd = s.groupby("team")["onelap_speed_pct"].std().dropna()
+    if sd.empty or w < 1:
+        return 0.0
+    return float(sd.median()) * float(np.sqrt(2.0 / w))
+
+
+def _momentum_headline_floor(s: pd.DataFrame, w: int,
+                             alpha: float = 0.05) -> float:
+    """The bar a team must clear to be NAMED as the field's biggest mover.
+
+    Higher than _momentum_noise, for a reason that is easy to miss: that floor
+    is right for reading ONE dot, but the headline sentence reports the EXTREME
+    of the whole grid. Judge the winner of eleven noisy draws against a
+    one-team floor and you name a mover every round whether or not anything
+    happened.
+
+    Bonferroni across the field (two-sided, family-wise alpha), not the
+    expected maximum — the expected max is exceeded by half of all trendless
+    seasons by construction, and this sentence is the plain-English headline a
+    newcomer reads as fact. ~2.8x the single-team floor with eleven teams.
+    """
+    n = int(s["team"].nunique())
+    floor = _momentum_noise(s, w)
+    if n < 2 or floor <= 0:
+        return floor
+    from statistics import NormalDist
+    return floor * float(NormalDist().inv_cdf(1.0 - alpha / (2.0 * n)))
+
+
+def _window_character(s: pd.DataFrame, rounds: list[int]) -> float | None:
+    """Mean circuit speed-character (1 = slow/technical … 3 = power) of a block
+    of rounds, or None when the circuits can't be resolved."""
+    if not rounds:
+        return None
+    try:
+        from tabs.season_ops import _EVENT_TO_CIRCUIT, _slugify
+        chars = pd.read_csv("data/circuit_characteristics.csv",
+                            encoding="utf-8-sig").set_index("circuit_key")
+    except Exception:
+        return None
+    ev = (s[s["round"].isin(rounds)].drop_duplicates("round")["event"])
+    vals = []
+    for e in ev:
+        key = _EVENT_TO_CIRCUIT.get(_slugify(e))
+        if key in chars.index:
+            v = pd.to_numeric(chars.loc[key, "avg_speed_score"], errors="coerce")
+            if pd.notna(v):
+                vals.append(float(v))
+    return float(np.mean(vals)) if vals else None
+
+
+def _momentum_confound_note(s: pd.DataFrame) -> str:
+    """One line naming the calendar confound, when there is one to name.
+
+    The circuit effect is NOT corrected out. A per-team circuit-affinity
+    adjustment was built and measured: fitting each team's slope on the odd
+    rounds and testing it on the even ones REDUCED accuracy in 2024 (-3.6%) and
+    2025 (-13.6%) even with empirical-Bayes shrinkage, and only helped in 2026
+    (+17.1%). Circuit affinity is not a stable enough team property to correct
+    with, so the confound is named here rather than silently removed — a wrong
+    correction is worse than a stated caveat.
+    """
+    early, late = _momentum_window(s)
+    ce, cl = _window_character(s, early), _window_character(s, late)
+    if ce is None or cl is None:
+        return ""
+    swing = cl - ce
+    if abs(swing) < 0.4:
+        return (f"Both blocks average a similar circuit character "
+                f"({ce:.1f} → {cl:.1f} on a 1-3 speed scale), so the comparison "
+                f"is close to like-for-like.")
+    faster = "faster, more power-hungry" if swing > 0 else "slower, more technical"
+    return (f"Heads up: the recent block ran on {faster} circuits than the one "
+            f"before it ({ce:.1f} → {cl:.1f} on a 1-3 speed scale). A car with a "
+            f"strong circuit preference can move here without changing at all.")
+
+
+def _momentum_frame(s: pd.DataFrame) -> pd.DataFrame:
+    """Per team: how one-lap speed and scoring moved over the last W rounds
+    against the W before them.
+
+    Scoring is a SHARE of the points the whole field took in that block, not
+    points per round. Sprints are not spread evenly through a season — three
+    of 2026's first four fell in rounds 1-5 — so the pot per round differs
+    between blocks. Points-per-round therefore drags every team downwards in a
+    sprint-poor block for pure scheduling reasons, which would read as the
+    entire grid losing momentum at once. A share of the pot normalises that
+    away by construction, and sums to zero across teams, which is what a
+    momentum measure should do.
+    """
+    early, late = _momentum_window(s)
+    if not late or not early:
         return pd.DataFrame()
     e, l = s[s["round"].isin(early)], s[s["round"].isin(late)]
     pot_e, pot_l = e["points"].sum(), l["points"].sum()
@@ -255,15 +366,29 @@ def _momentum_frame(s: pd.DataFrame) -> pd.DataFrame:
 
 
 def _momentum_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
-    """Change in one-lap speed against change in points-per-round, first half
-    of the season to second. Quadrants say what kind of change it is."""
+    """Change in one-lap speed against change in points share, over the last W
+    rounds versus the W before. Quadrants say what kind of change it is; the
+    shaded band says when the change is too small to call."""
     d = _momentum_frame(s)
     fig = go.Figure()
     if d.empty:
         theme(fig, height)
         return fig
-    xr = max(float(d["d_pace"].abs().max()) * 1.45, 0.3)
+    early, late = _momentum_window(s)
+    floor = _momentum_noise(s, len(late))
+    xr = max(float(d["d_pace"].abs().max()) * 1.45, floor * 1.6, 0.3)
     yr = max(float(d["d_share"].abs().max()) * 1.45, 1.0)
+
+    # Everything inside ±floor is indistinguishable from a team standing still.
+    # Drawn, not just described: without it every dot looks like a finding, and
+    # on a 3-round window most of them are not.
+    if floor > 0:
+        fig.add_vrect(x0=-floor, x1=floor, fillcolor=TEXT_DIM, opacity=0.09,
+                      line_width=0, layer="below")
+        fig.add_annotation(x=0, y=-yr * 0.99, yanchor="bottom",
+                           text=f"±{floor:.2f} pp — inside the noise floor",
+                           showarrow=False,
+                           font=dict(size=8.5, color=TEXT_DIM))
     fig.add_vline(x=0, line=dict(color=TEXT_DIM, width=1))
     fig.add_hline(y=0, line=dict(color=TEXT_DIM, width=1))
     # quadrant labels — x is NEGATIVE when the car got faster, so "improving"
@@ -286,10 +411,10 @@ def _momentum_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
                          r.ppr_e, r.ppr_l]],
             hovertemplate=(
                 f"<b>{abbr(r.team)}</b><br>"
-                "one-lap speed %{customdata[0]:+.2f}% → %{customdata[1]:+.2f}% "
-                "(%{x:+.2f})<br>"
+                "one-lap speed %{customdata[0]:>+.2f}% → %{customdata[1]:>+.2f}% "
+                "(%{x:>+.2f})<br>"
                 "share of points %{customdata[2]:.1f}% → %{customdata[3]:.1f}% "
-                "(%{y:+.1f}pp)<br>"
+                "(%{y:>+.1f}pp)<br>"
                 "<span style='opacity:.7'>raw %{customdata[4]:.1f} → "
                 "%{customdata[5]:.1f} pts/round</span><extra></extra>"),
         ))
@@ -561,23 +686,93 @@ def _momentum_plain(s: pd.DataFrame):
     d = _momentum_frame(s)
     if d.empty:
         return None
-    riser = d.sort_values("d_pace").iloc[0]          # biggest pace gain
-    faller = d.sort_values("d_pace").iloc[-1]        # biggest pace loss
+    early, late = _momentum_window(s)
+    # Only call a move that clears the FIELD-WIDE bar. The old threshold was a
+    # flat 0.1 pp, well inside the per-team noise floor (~0.31 pp on a 3-round
+    # window in 2026), so this line named a riser and a faller every round
+    # regardless. The per-team floor is not enough either, because this
+    # sentence reports the extreme of eleven teams — see the docstring.
+    floor = _momentum_headline_floor(s, len(late))
+    riser = d.sort_values("d_pace").iloc[0]          # biggest speed gain
+    faller = d.sort_values("d_pace").iloc[-1]        # biggest speed loss
+    span = (f"the last {len(late)} races against the {len(early)} before them")
     bits = []
-    if riser["d_pace"] < -0.1:
+    got_riser = riser["d_pace"] < -floor
+    if got_riser:
         # "pp" not "points": championship points appear in the same sentence
-        bits.append(f"{_fmt_team(riser['team'])} have improved their car the "
-                    f"most since the start of the year, finding "
-                    f"{abs(riser['d_pace']):.2f}pp of lap time")
-    if faller["d_pace"] > 0.1:
-        bits.append(f"{_fmt_team(faller['team'])} have gone the other way, "
-                    f"giving up {faller['d_pace']:.2f}pp")
+        bits.append(f"{_fmt_team(riser['team'])} have found the most lap time "
+                    f"over {span}, {abs(riser['d_pace']):.2f}pp of it")
+    if faller["d_pace"] > floor:
+        # "the other way" only reads as English when a riser was named first
+        lead = ("have gone the other way, giving up" if got_riser
+                else f"have lost the most lap time over {span},")
+        bits.append(f"{_fmt_team(faller['team'])} {lead} "
+                    f"{faller['d_pace']:.2f}pp")
     if not bits:
-        return ("No team has moved much either way — the pecking order set in "
-                "the opening races has largely held.")
+        return (f"Nobody has moved by more than the {floor:.2f}pp this "
+                f"measurement can actually resolve over {span} — the pecking "
+                "order is holding. That is a real answer, not a missing one.")
     return (". ".join(bits) +
             ". Teams on the left of the chart are building; the higher up they "
             "sit, the more of that gain is actually turning into points.")
+
+
+def _momentum_title(s: pd.DataFrame):
+    """Card title carrying the window, so 'who is moving' can never be read as
+    'since the start of the season'."""
+    early, late = _momentum_window(s)
+    if not late:
+        return "Momentum — who is actually moving"
+    def _span(r):
+        return f"R{r[0]}" if len(r) == 1 else f"R{r[0]}–{r[-1]}"
+    return (f"Momentum — who is actually moving  ·  "
+            f"{_span(late)} vs {_span(early)}")
+
+
+def _momentum_footnotes(s: pd.DataFrame):
+    """The two things the scatter cannot say for itself: what the calendar was
+    doing under the comparison, and where the biggest single-round move came
+    from (which is usually an upgrade, and lives on another card)."""
+    notes = []
+    confound = _momentum_confound_note(s)
+    if confound:
+        notes.append(confound)
+
+    # Cross-link: the largest single-round improvement inside the recent block,
+    # matched against the upgrade table. The Momentum dot is an average of
+    # three rounds, so a genuine step change is visible here and nowhere else
+    # on this card.
+    try:
+        from tabs.upgrades import _upgrade_rounds
+        _, late = _momentum_window(s)
+        g = s[s["round"].isin(late)].copy()
+        prev = (s.sort_values("round").groupby("team")["onelap_speed_pct"]
+                .shift(1))
+        g["step"] = g["onelap_speed_pct"] - prev.reindex(g.index)
+        g = g.dropna(subset=["step"])
+        if not g.empty:
+            best = g.loc[g["step"].idxmin()]
+            if best["step"] < -0.5:
+                ups = _upgrade_rounds(int(s["season"].iloc[0]))
+                hit = ups[(ups["team"] == best["team"])
+                          & (ups["round"] == int(best["round"]))]
+                extra = (f" — the round they brought {int(hit['n_items'].iloc[0])} "
+                         f"upgrade item(s); see the Upgrade Impact board"
+                         if not hit.empty else "")
+                notes.append(
+                    f"Biggest single-round step in this window: "
+                    f"{abbr(best['team'])} {best['step']:+.2f} pp at "
+                    f"{event_short(best['event'])}{extra}.")
+    except Exception:
+        pass
+
+    if not notes:
+        return None
+    return html.Div(
+        [html.Div(n, style={"marginBottom": "4px"}) for n in notes],
+        style={"color": TEXT_DIM, "fontSize": "0.74rem", "lineHeight": "1.45",
+               "borderTop": f"1px solid {GRID_CLR}", "paddingTop": "8px",
+               "marginTop": "2px"})
 
 
 def _character_plain(s: pd.DataFrame):
@@ -640,9 +835,17 @@ def _season_content(season: int) -> html.Div:
                    style={"color": TEXT_DIM}),
             measure="race",
             info=("Data: each team's best driver's MEDIAN race lap — fuel- "
-                  "and track-evolution-corrected, valid clean-air laps only "
-                  "(≥10 laps, dirty air excluded) — as % vs the field median. "
-                  "Negative = faster than the median car. A round the laps "
+                  "and track-evolution-corrected — over clean racing laps "
+                  "only: valid, out of dirty air, and NOT under a safety car, "
+                  "VSC or yellow (≥10 such laps required). The caution-lap "
+                  "exclusion matters more than it sounds: leaving those laps "
+                  "in moved a team's figure by up to 0.46 pp in a single "
+                  "event, which is the same size as most of the effects the "
+                  "upgrade board is trying to detect. Fuel correction is "
+                  "era-aware — 2026 cut the race fuel load sharply, so a "
+                  "single constant would over-correct every lap of this "
+                  "season by about half. Expressed as % vs the field median; "
+                  "negative = faster than the median car. A round the laps "
                   "don't support leaves a BREAK in the line rather than an "
                   "interpolated segment. Why: sustained Sunday pace on race "
                   "fuel and wearing tyres — a completely different measure "
@@ -680,28 +883,39 @@ def _season_content(season: int) -> html.Div:
             plain=_character_plain(s),
         ),
         card(
-            "Momentum — who is actually moving",
-            dcc.Graph(figure=_momentum_fig(s), config=GFX),
+            _momentum_title(s),
+            html.Div([
+                dcc.Graph(figure=_momentum_fig(s), config=GFX),
+                _momentum_footnotes(s),
+            ]),
             measure="one-lap",
             info=("Data: each team's average session-normalised ONE-LAP SPEED, "
                   "and its SHARE of all the points the field scored, over the "
-                  "first half of the rounds run so far against the same two "
-                  "numbers over the second half. The dot is the change. Share "
-                  "of the pot rather than points per round on purpose: sprints "
-                  "are not spread evenly through a season (three of 2026's "
-                  "first four fell in rounds 1-5), so points-per-round would "
-                  "drag every team down in the sprint-poor half for pure "
-                  "scheduling reasons and read as the whole grid losing "
-                  "momentum at once. Shares sum to zero across teams, which is "
-                  "what a momentum measure should do. Why: every other chart "
-                  "on this tab shows where teams stand; this shows which way "
-                  "they are going, which is the only question a mid-season "
-                  "review is really asking. The quadrants matter — a car that "
-                  "got faster while taking a smaller share is being let down "
-                  "by reliability, strategy or luck, and the opposite corner "
-                  "is a team out-executing its car. Neither is visible in a "
-                  "cumulative points line. Caveat: half a season is five or "
-                  "six races, so read the outliers, not the small movements."),
+                  f"last {MOMENTUM_WINDOW} rounds against the "
+                  f"{MOMENTUM_WINDOW} before them. The dot is the change. "
+                  "A ROLLING window, not first-half-vs-second: a half-split "
+                  "averages six rounds into the recent number, so one new "
+                  "result moves it by a sixth and the card sits ~3 races behind "
+                  "reality — which is how Aston Martin's 16-item Hungary "
+                  "package, the best single step on the 2026 upgrade board, "
+                  "still left them reading as the biggest loser on the grid. "
+                  "Share of the pot rather than points per round on purpose: "
+                  "sprints are not spread evenly through a season, so "
+                  "points-per-round would drag every team down in a "
+                  "sprint-poor block for pure scheduling reasons. Shares sum "
+                  "to zero across teams, which is what a momentum measure "
+                  "should do. The shaded band is the noise floor — two "
+                  "3-round means of a series that wanders this much differ by "
+                  "that amount on nothing at all, so a dot inside it has not "
+                  "moved. Why: every other chart here shows where teams stand; "
+                  "this shows which way they are going. The quadrants matter — "
+                  "a car that got faster while taking a smaller share is being "
+                  "let down by reliability, strategy or luck, and the opposite "
+                  "corner is a team out-executing its car. Caveat: circuit "
+                  "character is NOT corrected out. A per-team affinity "
+                  "adjustment was built and tested out-of-sample; it helped in "
+                  "2026 (+17%) but made 2024 and 2025 worse, so the confound is "
+                  "named under the chart instead of silently removed."),
             plain=_momentum_plain(s),
         ),
         card(
@@ -721,7 +935,8 @@ def _season_content(season: int) -> html.Div:
     ] + [c for c in (affinity_card(season), chaos_timeline_card(season),
                       pit_league_card(season), lap1_league_card(season),
                       testing_card(season),
-                      reliability_card(season), penalties_card(season),
+                      reliability_card(season), contact_card(season),
+                      penalties_card(season),
                       pu_pool_card(season), gearbox_pool_card(season),
                       engine_championship_card(season))
          if c is not None])

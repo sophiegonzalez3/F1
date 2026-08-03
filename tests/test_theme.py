@@ -10,10 +10,16 @@ go wrong and both are silent:
   format, so a numeric one renders literally and the calendar hover would show
   ".3~f" where a date belongs.
 """
+import re
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import pytest
 from plotly.subplots import make_subplots
+
+ROOT = Path(__file__).resolve().parents[1]
 
 from f1lib.components import HOVER_FMT, theme, theme_axes, BASE_NO_AXES
 
@@ -60,6 +66,47 @@ def test_subplots_get_the_format_on_every_panel():
 def test_format_trims_trailing_zeros_but_caps_at_three_decimals():
     """'.3~f' is the rule: enough for a lap time, never a float64 tail."""
     assert HOVER_FMT == ".3~f"
+
+
+def test_house_hover_format_carries_no_sign_flag():
+    """HOVER_FMT goes on the AXIS, where the same parser bug applies — an
+    axis hoverformat of '+.2f' is ignored exactly like the template one."""
+    assert not HOVER_FMT.lstrip(".0123456789").startswith("+")
+    assert "+" not in HOVER_FMT
+
+
+# ── the sign-flag trap ───────────────────────────────────────
+
+# Plotly 3.6 silently REJECTS a hovertemplate d3-format spec that begins with
+# the sign flag and prints the raw float64 instead:
+#
+#     %{y:+.2f}   ->  -7.8595041322313985     (broken, and looks deliberate)
+#     %{y:.2f}    ->  -7.86
+#     %{y:>+.2f}  ->  -7.86  /  +7.86         (align char first: accepted)
+#
+# Measured on the live bundle, not inferred. It is a nasty one because the
+# template LOOKS correct in review, the chart renders fine, and only the hover
+# gives it away — 49 call sites across eleven modules were affected. Always
+# write the explicit align char before the sign.
+SIGN_FIRST = re.compile(r"%\{[^}]+?:\+")
+
+
+def _py_sources():
+    for d in ("tabs", "f1lib"):
+        yield from sorted((ROOT / d).glob("*.py"))
+    yield ROOT / "app.py"
+
+
+@pytest.mark.parametrize("path", list(_py_sources()),
+                         ids=lambda p: p.relative_to(ROOT).as_posix())
+def test_no_hovertemplate_uses_a_leading_sign_flag(path):
+    src = path.read_text(encoding="utf-8")
+    bad = [src[max(0, m.start() - 30):m.end() + 12].replace("\n", " ")
+           for m in SIGN_FIRST.finditer(src)]
+    assert not bad, (
+        f"{path.relative_to(ROOT).as_posix()} has a hovertemplate format "
+        "starting with '+', which Plotly ignores — write ':>+' instead:\n  "
+        + "\n  ".join(bad))
 
 
 # ── multi-measure badges ─────────────────────────────────────

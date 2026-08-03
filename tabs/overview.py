@@ -126,11 +126,16 @@ def overview_pace_cards(fl):
                    "not just how fast a driver is but how consistent — "
                    "a tight violin means repeatable pace, a wide or "
                    "skewed one means scattered laps (traffic, errors, "
-                   "mixed fuel/tyre runs)."),
+                   "mixed fuel/tyre runs). Drivers on a mandated rookie FP1 "
+                   "outing are excluded — they are not measuring the same "
+                   "thing as the race driver whose seat they took, and up to "
+                   "six of them ran at once in 2026. The sidebar lists them "
+                   "and can put them back."),
              plain=_laptime_plain(v)),
         card("Driver Performance Matrix",dcc.Graph(figure=fig_bub,config=GFX),
              info=("Data: each driver plotted by best lap (x) vs median lap (y); "
-                   "bubble size = number of valid laps. Why: separates one-lap "
+                   "bubble size = number of valid laps. Test drivers on their "
+                   "mandated FP1 outing are excluded. Why: separates "
                    "one-lap speed from sustained race pace — bottom-left is fast "
                    "over both, and a big gap between a driver's x and y hints at "
                    "tyre management or traffic issues.")),

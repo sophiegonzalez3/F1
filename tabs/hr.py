@@ -389,7 +389,7 @@ def _net_fig(df: pd.DataFrame, include_rumored: bool) -> go.Figure:
         text=[f"{n:+d}" for n in nets], textposition="outside",
         textfont=dict(size=11),
         hovertemplate=("<b>%{y}</b><br>Gained %{customdata[0]} · "
-                       "Lost %{customdata[1]}<br>Net %{x:+d}<extra></extra>"),
+                       "Lost %{customdata[1]}<br>Net %{x:>+d}<extra></extra>"),
     ))
     fig.add_vline(x=0, line=dict(color=TEXT_DIM, width=1))
     span = max(abs(min(nets)), abs(max(nets)), 1)

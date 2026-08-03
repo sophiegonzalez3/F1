@@ -655,7 +655,7 @@ def _delta_decomposition(specs):
             x=grid, y=delta, mode="lines", name=tr["label"],
             line=dict(color=clr, width=1.8, dash=dash),
             hovertemplate=(f"<b>{tr['label']}</b><br>%{{x:.0f}} m<br>"
-                           "Δ %{y:+.3f}s<extra></extra>")))
+                           "Δ %{y:>+.3f}s<extra></extra>")))
         # Per-mini-sector delta = change in cumulative delta across each segment.
         cum_at = np.interp(ms_edges, grid, delta)
         ms_rows.append((tr["label"], tr["team"], np.diff(cum_at)))
@@ -695,7 +695,7 @@ def _delta_decomposition(specs):
                 marker_color=TEAM_COLORS.get(team, "#808080"),
                 marker_pattern_shape=["", "/", ".", "x", "-"][j % 5],
                 hovertemplate=(f"<b>{label}</b><br>%{{x:.0f}} m<br>"
-                               "Δ %{y:+.3f}s in this mini-sector<extra></extra>")))
+                               "Δ %{y:>+.3f}s in this mini-sector<extra></extra>")))
         theme(fig_sector, 340, f"Time Gained / Lost per Mini-Sector  ·  vs {ref['label']}")
         fig_sector.update_layout(
             barmode="overlay",

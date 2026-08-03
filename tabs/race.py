@@ -301,7 +301,7 @@ def _race_trace_fig(rl: pd.DataFrame, title: str, height: int = 640) -> go.Figur
                 hovertemplate=(
                     f"<b>{drv}</b> · {team}<br>"
                     "Lap %{x}<br>"
-                    "vs reference: %{y:+.1f} s<br>"
+                    "vs reference: %{y:>+.1f} s<br>"
                     "Gap to leader: +%{customdata[0]:.1f} s<extra></extra>"
                 ),
                 showlegend=False,
@@ -465,10 +465,10 @@ def _undercut_fig(pairs: pd.DataFrame, title: str) -> go.Figure:
         customdata=p[["Gap_Before", "Gap_After", "Outcome", "FlagNote"]].values,
         hovertemplate=(
             "<b>%{y}</b><br>"
-            "Gap before first stop: %{customdata[0]:+.1f} s "
+            "Gap before first stop: %{customdata[0]:>+.1f} s "
             "(+ = attacker behind)<br>"
-            "Gap after both stops: %{customdata[1]:+.1f} s<br>"
-            "Net gain for first stopper: %{x:+.1f} s<br>"
+            "Gap after both stops: %{customdata[1]:>+.1f} s<br>"
+            "Net gain for first stopper: %{x:>+.1f} s<br>"
             "%{customdata[2]}  ·  %{customdata[3]}<extra></extra>"
         ),
         text=p["Text"], textposition="outside",
@@ -926,7 +926,7 @@ def _wet_crossover_fig(res: dict, title: str, height: int = 460) -> go.Figure:
     fig.add_trace(go.Scatter(
         x=per["LapNo"], y=per["delta"], mode="lines", name="delta",
         line=dict(color=TEXT_MAIN, width=1.5), connectgaps=False,
-        hovertemplate="L%{x} delta: %{y:+.1f}s<extra></extra>",
+        hovertemplate="L%{x} delta: %{y:>+.1f}s<extra></extra>",
         showlegend=False), row=2, col=1)
     fig.add_hline(y=0, line=dict(color=TEXT_DIM, width=1, dash="dash"),
                   row=2, col=1)
@@ -976,7 +976,7 @@ def _wet_switch_fig(res: dict, title: str, height: int = 420) -> go.Figure:
         hovertemplate=("<b>%{y}</b> %{customdata[0]}<br>"
                        "switched lap %{customdata[1]:.0f} "
                        "(crossover lap %{customdata[2]:.0f})<br>"
-                       "%{x:+.0f} laps vs field · ~%{customdata[3]:.0f}s"
+                       "%{x:>+.0f} laps vs field · ~%{customdata[3]:.0f}s"
                        "<extra></extra>"),
         text=[f"{v:+.0f}" for v in sw["delta_laps"]], textposition="outside",
         textfont=dict(size=10)))
@@ -1328,7 +1328,7 @@ def _start_restart_fig(st: pd.DataFrame, restarts: list[int]) -> go.Figure:
         x=st["driver"], y=st["start_gain"], name="Lap 1",
         marker_color=[TEAM_COLORS.get(t, "#808080") for t in st["team"]],
         customdata=np.stack([st["grid"], st["p1"]], axis=-1),
-        hovertemplate=("<b>%{x}</b> · lap 1: %{y:+.0f}<br>"
+        hovertemplate=("<b>%{x}</b> · lap 1: %{y:>+.0f}<br>"
                        "P%{customdata[0]:.0f} on the grid → "
                        "P%{customdata[1]:.0f} after lap 1<extra></extra>"),
     ))
@@ -1338,7 +1338,7 @@ def _start_restart_fig(st: pd.DataFrame, restarts: list[int]) -> go.Figure:
             name=f"SC/VSC restarts (lap {', '.join(map(str, restarts))})",
             marker_color=[_hex_to_rgba(TEAM_COLORS.get(t, "#808080"), 0.45)
                           for t in st["team"]],
-            hovertemplate=("<b>%{x}</b> · restarts combined: %{y:+.0f}"
+            hovertemplate=("<b>%{x}</b> · restarts combined: %{y:>+.0f}"
                            "<extra></extra>"),
         ))
     fig.add_hline(y=0, line=dict(color="white", width=1, dash="dash"))

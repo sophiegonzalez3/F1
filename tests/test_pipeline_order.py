@@ -136,6 +136,40 @@ def test_fuel_load_follows_the_season(race_laps):
         "the 2026 fuel load should be far below the legacy one")
 
 
+def test_practice_fuel_correction_is_centred_not_end_anchored(race_laps):
+    """In practice the tank level is unknown, so the correction must be
+    CENTRED on each stint — otherwise it pays a bonus for running longer.
+
+    Anchoring on the stint's END assumes every run finishes empty, which
+    credited a 25-lap race sim up to 1.3 s at its start against 0.5 s for a
+    10-lap run. The median corrected lap then came out faster for no reason but
+    length, and that median is exactly what the sandbagging detector reads.
+    """
+    from f1lib.processing import clean_and_enrich_laps
+
+    fp = race_laps.copy()
+    fp["session_name"] = "Practice 2_Test Grand Prix_2026"
+    out = clean_and_enrich_laps(fp)
+
+    per_stint = out.groupby(["DriverNo", "Stint"])["FuelLoad_kg"]
+    means = per_stint.mean().dropna()
+    assert len(means) > 3, "need several stints to judge"
+    # every stint's correction straddles zero rather than sitting above it
+    assert abs(float(means.mean())) < 1.0, (
+        "practice fuel correction still carries a per-stint level offset")
+    assert (out["FuelLoad_kg"] < 0).any(), (
+        "a centred correction must go negative late in a stint")
+
+
+def test_race_fuel_load_stays_physical(race_laps):
+    """Centring applies to practice only. A race tank is known, never negative,
+    and must keep its real magnitude."""
+    from f1lib.processing import clean_and_enrich_laps
+    out = clean_and_enrich_laps(race_laps.copy())
+    assert (out["FuelLoad_kg"] >= 0).all()
+    assert out["FuelLoad_kg"].max() > 10.0
+
+
 def test_fuel_correction_without_a_season_column(race_laps):
     """Frames with no season column (ad-hoc slices, fixtures) must still
     correct — falling back to the legacy constant, i.e. unchanged behaviour."""

@@ -242,7 +242,7 @@ def _engine_fig(S: pd.DataFrame, makers: dict, height: int) -> go.Figure:
         marker=dict(color="#5B8DEF"),
         customdata=np.stack([d["pu"], d["n_pu"]], axis=-1),
         hovertemplate=("<b>%{y}</b><br>%{customdata[0]}<br>"
-                       "Engine share: %{x:+.2f} km/h "
+                       "Engine share: %{x:>+.2f} km/h "
                        "(%{customdata[1]} team(s) on this PU)<extra></extra>"),
     ))
     fig.add_trace(go.Bar(
@@ -251,7 +251,7 @@ def _engine_fig(S: pd.DataFrame, makers: dict, height: int) -> go.Figure:
         marker=dict(color="#E8A33D"),
         customdata=np.stack([d["pu"], d["n_pu"]], axis=-1),
         hovertemplate=("<b>%{y}</b><br>Own deviation from %{customdata[0]}: "
-                       "%{x:+.2f} km/h<extra></extra>"),
+                       "%{x:>+.2f} km/h<extra></extra>"),
     ))
     theme(fig, height)
     fig.add_vline(x=0, line=dict(color=TEXT_DIM, width=1))
@@ -308,7 +308,7 @@ def _payoff_fig(P: pd.DataFrame, season: int, height: int) -> go.Figure | None:
             marker=dict(color=clr),
             customdata=sub["n"],
             hovertemplate=("<b>%{x}</b> · " + tname + " pace<br>"
-                           "correlation %{y:+.2f} (n=%{customdata})"
+                           "correlation %{y:>+.2f} (n=%{customdata})"
                            "<extra></extra>"),
         ))
     theme(fig, height)
@@ -340,7 +340,7 @@ def _deg_fig(P: pd.DataFrame, order: list[str], height: int) -> go.Figure:
             marker=dict(size=5), connectgaps=False,
             customdata=[ev.get(r, "") for r in rounds],
             hovertemplate=(f"<b>{abbr(team)}</b> · %{{customdata}}<br>"
-                           "vs field at equal tyre age: %{y:+.2f} s/lap"
+                           "vs field at equal tyre age: %{y:>+.2f} s/lap"
                            "<extra></extra>"),
         ))
     theme(fig, height)

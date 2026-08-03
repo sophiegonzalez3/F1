@@ -230,7 +230,7 @@ def _tow_fig(ql: pd.DataFrame) -> go.Figure:
         customdata=np.stack([t["best_st"], t["med_st"]], axis=-1),
         hovertemplate=("<b>%{y}</b><br>Speed trap on best lap: "
                        "%{customdata[0]:.0f} km/h<br>Median other laps: "
-                       "%{customdata[1]:.0f} km/h<br>Δ %{x:+.1f} km/h"
+                       "%{customdata[1]:.0f} km/h<br>Δ %{x:>+.1f} km/h"
                        "<extra></extra>"),
         text=[f"{v:+.1f}" for v in t["delta"]], textposition="outside",
         textfont=dict(size=10)))

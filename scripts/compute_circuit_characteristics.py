@@ -40,8 +40,8 @@ import f1lib.data_loader as dl
 from f1lib.circuits import french_key
 from f1lib.config import HIST_CIRCUIT_KEY_MAP, THROTTLE_THRESHOLD
 from f1lib.processing import (
-    clean_and_enrich_laps, flag_dirty_air, enrich_track_evolution,
-    analyze_stints,
+    clean_and_enrich_laps, flag_dirty_air, flag_perturbed_laps,
+    enrich_track_evolution, analyze_stints,
 )
 
 VERBOSE = "--verbose" in sys.argv
@@ -207,8 +207,10 @@ def _race_deg_metric(key: str) -> float:
     laps = pd.read_parquet(paths["laps"])
     try:
         fl = clean_and_enrich_laps(laps)
-        fl = flag_dirty_air(fl)
-        fl = enrich_track_evolution(fl)
+        # ORDER MATTERS — flag_perturbed_laps before enrich_track_evolution, or
+        # the evolution fit (and every deg rate derived from it) runs on
+        # safety-car laps. See scripts/compute_team_pace.py for the measurement.
+        fl = enrich_track_evolution(flag_dirty_air(flag_perturbed_laps(fl)))
         st = analyze_stints(fl)
     except Exception as exc:
         print(f"      deg pipeline failed: {exc}")

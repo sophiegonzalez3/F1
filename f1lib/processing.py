@@ -39,7 +39,8 @@ from f1lib.config import (
     TEAM_COLORS,
     OUTLIER_THRESHOLD,
     FUEL_CORRECTION,
-    RACE_FUEL_KG,
+    RACE_FUEL_KG_DEFAULT,
+    race_fuel_kg,
     FUEL_BURN_PER_LAP,
     TRACK_EVO_BINS,
     TRACK_EVO_MIN_LAPS,
@@ -295,7 +296,9 @@ def clean_and_enrich_laps(df: pd.DataFrame) -> pd.DataFrame:
     # regardless of pit stops. Modelling it per stint (the old approach)
     # "refuelled" the car at every stop, which made cross-stint fuel-corrected
     # comparisons invalid.
-    #   Race   : burn = RACE_FUEL_KG / total_laps  (auto-adapts per circuit)
+    #   Race   : burn = race_fuel_kg(season) / total_laps  (auto-adapts per
+    #            circuit AND per era — 2026 cut the race fuel mass sharply, so
+    #            a single constant over-corrected every 2026 lap by ~50%)
     #   Sprint : same linear shape at the fallback burn rate (short distance,
     #            car fuelled for the sprint only, so the level is ~right)
     # Practice / Quali: the true load is unknown (teams run different
@@ -307,8 +310,18 @@ def clean_and_enrich_laps(df: pd.DataFrame) -> pd.DataFrame:
     _is_race   = df["session_name"].astype(str).str.startswith("Race_")
     _is_sprint = df["session_name"].astype(str).str.startswith("Sprint_")
 
+    # Race fuel load is era-dependent; resolve it per row from the season the
+    # lap belongs to. Frames without a season column (unit-test fixtures, ad-hoc
+    # slices) fall back to the pre-2026 default, so behaviour there is unchanged.
+    if "season" in df.columns:
+        _fuel_kg = df["season"].map(race_fuel_kg).astype(float)
+    else:
+        _fuel_kg = pd.Series(RACE_FUEL_KG_DEFAULT, index=df.index, dtype=float)
+
     _burn = pd.Series(FUEL_BURN_PER_LAP, index=df.index)
-    _burn[_is_race] = (RACE_FUEL_KG / _total_laps[_is_race]).clip(upper=3.0)
+    _burn[_is_race] = (
+        _fuel_kg[_is_race] / _total_laps[_is_race]
+    ).clip(upper=3.0)
 
     _max_lap_in_stint = df.groupby(
         ["session_name", "DriverNo", "Stint"]

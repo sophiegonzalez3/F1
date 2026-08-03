@@ -24,8 +24,9 @@ ONE-LAP (single flat-out lap, low fuel, max attack)
 RACE PACE (sustained laps on race fuel and wearing tyres)
 
   race_pace_gap_pct   Team's best driver's MEDIAN fuel- and track-evolution-
-                      corrected lap over clean, valid, non-dirty-air race laps,
-                      as % gap to the event's fastest team.
+                      corrected lap over clean race laps — valid, out of dirty
+                      air, and NOT perturbed (no safety car, VSC, yellow or
+                      sector anomaly) — as % gap to the event's fastest team.
   race_pace_pct       The same measure expressed vs the FIELD MEDIAN, for the
                       same reason as quali_pace_pct. Negative = faster than the
                       median car. This is the momentum series.
@@ -69,7 +70,10 @@ import numpy as np
 import pandas as pd
 
 import f1lib.data_loader as dl
-from f1lib.processing import clean_and_enrich_laps, flag_dirty_air, enrich_track_evolution
+from f1lib.processing import (
+    clean_and_enrich_laps, flag_dirty_air, flag_perturbed_laps,
+    enrich_track_evolution,
+)
 
 OUT_PATH = Path("data/team_pace_by_event.csv")
 HIST = Path("data/historical_results")
@@ -194,19 +198,41 @@ def race_pace_gaps(season: int, events: list[str]) -> pd.DataFrame:
     rows = []
     for event in events:
         key = dl._session_key(str(season), event, "Race")
-        p = dl._cache_paths(key)["laps"]
+        paths = dl._cache_paths(key)
+        p = paths["laps"]
         if not p.exists():
             continue
+        # Race-control messages are optional: without them flag_perturbed_laps
+        # still catches safety cars and VSCs from the per-lap TrackStatus
+        # column, but it misses the short sector yellows that never reach it.
+        rcm = None
+        if paths["race_control"].exists():
+            try:
+                rcm = pd.read_parquet(paths["race_control"])
+            except Exception as exc:
+                print(f"  [{season} {event}] race control unreadable ({exc})")
         try:
             fl = clean_and_enrich_laps(pd.read_parquet(p))
-            fl = flag_dirty_air(fl)
-            fl = enrich_track_evolution(fl)
+            # ORDER MATTERS — do not reorder. flag_perturbed_laps must run
+            # BEFORE enrich_track_evolution: the evolution fit only drops
+            # safety-car / VSC / yellow laps when Perturbed_Lap already exists,
+            # and fitting on them wrecks the measurement. compute_car_profile.py
+            # measured the same mistake at split-half reliability 0.17 (noise)
+            # against 0.69 with the correct order; here it moved a team's race
+            # pace by up to 0.46 pp in a single event.
+            fl = enrich_track_evolution(
+                flag_dirty_air(flag_perturbed_laps(fl, rcm=rcm)))
         except Exception as exc:
             print(f"  [{season} {event}] race pipeline failed: {exc}")
             continue
         y = ("LapTime_TrackCorrected" if "LapTime_TrackCorrected" in fl.columns
              else "LapTime_FuelCorrected")
-        clean = fl[fl["ValidLap"] & ~fl.get("Dirty_Air", False)]
+        # Perturbed laps are excluded from the median too, not just from the
+        # evolution fit — a VSC lap under the 1.25x outlier ceiling is still a
+        # slow lap and has no place in a car-pace measurement.
+        clean = fl[fl["ValidLap"]
+                   & ~fl.get("Dirty_Air", False)
+                   & ~fl.get("Perturbed_Lap", False)]
         med = clean.groupby(["Team", "Driver_Short"])[y].median()
         # a driver needs a real race's worth of clean laps to count
         n = clean.groupby(["Team", "Driver_Short"])[y].count()

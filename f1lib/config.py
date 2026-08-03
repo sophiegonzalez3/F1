@@ -58,8 +58,44 @@ FALLBACK_MIN_LAPS = 5
 
 OUTLIER_THRESHOLD  = 1.25   # Laps >25% slower than median excluded
 FUEL_CORRECTION    = 0.035  # Seconds per lap per kg of fuel
-RACE_FUEL_KG       = 105.0  # Starting fuel load for a Grand Prix distance
 FUEL_BURN_PER_LAP  = 1.5    # kg/lap fallback burn rate (non-race sessions)
+
+# Starting fuel load for a Grand Prix distance — SEASON-DEPENDENT.
+# The 2026 power-unit regulations cut the maximum race fuel mass sharply (the
+# PU draws far more of its energy electrically), so the 100-110 kg of the
+# previous era no longer applies. Held as one constant, the correction
+# over-states 2026 fuel burn by ~50%: 105 × 0.035 = 3.68 s of correction spread
+# across a race where ~2.45 s belongs. That does not distort a same-lap
+# team-vs-team comparison, but it systematically flatters any driver whose
+# clean laps sit early in the race (long first stint, one-stopper) against one
+# who ran clean late — i.e. it makes the correction strategy-dependent.
+# Seasons not listed fall back to RACE_FUEL_KG_DEFAULT.
+#
+# SOURCE NOTE: 70.0 is the widely-reported 2026 maximum race fuel mass, not a
+# figure read off the regulation text. It is the right order of magnitude and
+# unambiguously closer than 105, but confirm it against the FIA Technical
+# Regulations before treating any absolute fuel-corrected lap time as exact.
+# Relative (team-vs-team, same lap) comparisons are insensitive to the value.
+RACE_FUEL_KG_BY_SEASON: dict[int, float] = {
+    2026: 70.0,
+}
+RACE_FUEL_KG_DEFAULT = 105.0
+# Back-compat alias: the pre-2026 value, for any caller still reading the
+# scalar. New code should call race_fuel_kg(season).
+RACE_FUEL_KG = RACE_FUEL_KG_DEFAULT
+
+
+def race_fuel_kg(season) -> float:
+    """Starting race fuel load (kg) for a season.
+
+    Accepts the season as int or str (lap frames carry it as a string) and
+    falls back to the pre-2026 default for anything unrecognised, so a frame
+    with no season column still corrects the way it always did.
+    """
+    try:
+        return RACE_FUEL_KG_BY_SEASON.get(int(season), RACE_FUEL_KG_DEFAULT)
+    except (TypeError, ValueError):
+        return RACE_FUEL_KG_DEFAULT
 
 # Track-evolution estimation (processing.enrich_track_evolution)
 TRACK_EVO_BINS     = 10     # session-time bins for the evolution regression

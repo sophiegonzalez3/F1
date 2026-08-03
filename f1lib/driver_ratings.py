@@ -60,7 +60,10 @@ import pandas as pd
 
 import f1lib.data_loader as dl
 from f1lib.pace_features import canon
-from f1lib.processing import clean_and_enrich_laps, flag_dirty_air, enrich_track_evolution
+from f1lib.processing import (
+    clean_and_enrich_laps, flag_dirty_air, flag_perturbed_laps,
+    enrich_track_evolution,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -110,14 +113,19 @@ def _race_driver_gaps() -> pd.DataFrame:
         season_s, event_s, _ = key.split("__", 2)
         try:
             fl = clean_and_enrich_laps(pd.read_parquet(p))
-            fl = flag_dirty_air(fl)
-            fl = enrich_track_evolution(fl)
+            # ORDER MATTERS — flag_perturbed_laps before enrich_track_evolution,
+            # or the evolution fit runs on safety-car laps. See the same note in
+            # scripts/compute_team_pace.py.
+            fl = enrich_track_evolution(
+                flag_dirty_air(flag_perturbed_laps(fl)))
         except Exception as exc:
             logger.warning("race pipeline failed for %s: %s", key, exc)
             continue
         y = ("LapTime_TrackCorrected" if "LapTime_TrackCorrected" in fl.columns
              else "LapTime_FuelCorrected")
-        clean = fl[fl["ValidLap"] & ~fl.get("Dirty_Air", False)]
+        clean = fl[fl["ValidLap"]
+                   & ~fl.get("Dirty_Air", False)
+                   & ~fl.get("Perturbed_Lap", False)]
         med = clean.groupby(["Team", "Driver_Short"])[y].median()
         n = clean.groupby(["Team", "Driver_Short"])[y].count()
         med = med[n >= 10]

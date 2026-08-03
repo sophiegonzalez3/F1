@@ -98,6 +98,47 @@ def test_median_baseline_absorbs_a_bad_day_at_the_front():
         "expected the pole baseline to move the backmarker's gap materially")
 
 
+def test_sandbagging_front_runners_do_not_flatter_q1_teams():
+    """MS-05. Front-runners bank on used rubber in Q1 and do not push, so
+    their Q1→Q2 gain is track evolution PLUS the sandbag coming off. An offset
+    averaged over that mixture over-states the evolution, and the excess lands
+    as a pace bonus on teams measured only in Q1. The offset must instead come
+    from teams eliminated at the next cut — flat out on both sides of it.
+
+    Here the track truly gains 0.4% per session. A/B/C cruise Q1 (+0.8% of
+    sandbag on top), D/E/F are eliminated in Q2 having pushed in both, G is a
+    Q1-only backmarker truly 1.12% slower than the median car.
+    """
+    evo, sandbag = 1.004, 1.008          # per-session track gain; Q1 cruise
+    true_q2 = {"A": 88.0, "B": 88.1, "C": 88.2,     # advance to Q3
+               "D": 89.0, "E": 89.1, "F": 89.2}     # out in Q2
+    g = _round({
+        **{t: {"Q1": v * evo * sandbag, "Q2": v, "Q3": v / evo}
+           for t, v in true_q2.items() if t in ("A", "B", "C")},
+        **{t: {"Q1": v * evo, "Q2": v}
+           for t, v in true_q2.items() if t in ("D", "E", "F")},
+        "G": {"Q1": 90.0 * evo},
+    })
+    out = norm(g)
+    assert out, "estimator should have produced a fit"
+    # median car is D (89.0): G is truly 90/89 - 1 = +1.124% — no bonus
+    assert out["G"] == pytest.approx(+1.124, abs=0.10)
+    # and A's own Q1 cruise lap must not drag A's estimate slower
+    assert out["A"] == pytest.approx(-1.124, abs=0.10)
+
+
+def test_single_session_team_estimate_flags_thin_data():
+    """A Q1-only team's number leans entirely on the measured offsets; the
+    shipped table must say so via onelap_n_sessions (see quali_gaps)."""
+    path = ROOT / "data" / "team_pace_by_event.csv"
+    if not path.exists():
+        pytest.skip("team_pace_by_event.csv not built")
+    d = pd.read_csv(path)
+    assert "onelap_n_sessions" in d.columns
+    latest = d[d["season"] == d["season"].max()]
+    assert latest["onelap_n_sessions"].between(1, 3).all()
+
+
 def test_rejects_unidentified_fit():
     """A single team, or a lone team in its own session, cannot be separated
     from the session effect — the estimator must return nothing so the caller

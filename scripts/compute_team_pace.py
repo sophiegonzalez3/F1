@@ -18,13 +18,19 @@ ONE-LAP SPEED (single flat-out lap, low fuel, max attack)
                       the most-rubbered track of the weekend. Kept because
                       "where did they actually end up" is a real question, but
                       it is NOT a clean read of how quick the car is.
-  onelap_speed_pct    SPEED measure. The same laps, session-normalised: a
-                      two-way fixed-effects fit of log(lap time) on team and
-                      Q-session strips out the track evolution between Q1 and
-                      Q3, so a Q1 lap and a Q3 lap become comparable. Expressed
-                      vs the FIELD MEDIAN, not vs pole, so one team's off
-                      weekend does not move everybody else's line. Negative =
-                      faster than the median car. This is the momentum series.
+  onelap_speed_pct    SPEED measure. The same laps, session-normalised: the
+                      Q1→Q3 track evolution is measured from paired team
+                      deltas (median over teams present in both sessions,
+                      preferring teams eliminated at the next cut — they were
+                      flat out on both sides of it) and every lap is corrected
+                      onto the final session's track state, so a Q1 lap and a
+                      Q3 lap become comparable. Expressed vs the FIELD MEDIAN,
+                      not vs pole, so one team's off weekend does not move
+                      everybody else's line. Negative = faster than the median
+                      car. This is the momentum series.
+  onelap_n_sessions   How many Q sessions the team set a time in that round.
+                      1 means the estimate leans entirely on the measured
+                      evolution offsets — charts can flag it as thinner data.
 
 RACE PACE (sustained laps on race fuel and wearing tyres)
 
@@ -101,18 +107,47 @@ def canon(team: str) -> str:
 # Qualifying gap (results archive — covers every round)
 # ─────────────────────────────────────────────────────────────
 
+# Minimum paired teams for the sandbag-robust offset. Below this the
+# eliminated-team subset is too thin to take a median of, and the estimate
+# falls back to every team present in both sessions.
+_OFFSET_MIN_PAIRS = 3
+
+# Reject the whole fit when any team lands further than this from the field
+# median. The old 15% gate let anything short of a catastrophe through —
+# the largest GENUINE one-lap spread observed (Aston, Spa 2026) was 3.9%,
+# so 8% is double the worst real case and still catches red-flag garbage.
+_MAX_PLAUSIBLE_PCT = 8.0
+
+
 def _session_normalised_pace(g: pd.DataFrame) -> dict[str, float]:
     """Session-normalised one-lap pace for one round, as % vs the field median.
 
-    Fits log(lap time) ~ team + Q-session by least squares on every team's best
-    lap in every session it ran (an unbalanced two-way fixed-effects panel).
-    The session dummies absorb the track evolution between Q1 and Q3, so a team
-    whose best came from Q1 is no longer penalised ~1% for it — which is the
-    whole point: 19% of round-to-round steps in 2026 changed which session the
-    best lap came from, and that flip alone moved the raw gap by ~0.6 pp.
+    The Q1→Q3 track evolution is measured from PAIRED team deltas — for each
+    consecutive pair of sessions, the median of (log best in later − log best
+    in earlier) across teams that set a time in both — and every team's laps
+    are corrected onto the final session's track state. The team estimate is
+    its best CORRECTED lap across the sessions it ran.
+
+    Why paired medians and not a team+session OLS (the previous estimator,
+    MS-05): the OLS assumes every team's relative pace is constant across
+    Q1/Q2/Q3, and it is not. Front-runners set a banker on used rubber in Q1
+    and do not push, so their Q1→Q2 "improvement" is track evolution PLUS the
+    sandbag coming off — at Hungary 2026 McLaren gained 1.05% Q1→Q2 against
+    Aston's 0.40%. A session offset averaged over that mixture over-states the
+    evolution, and the excess lands as a pace bonus on exactly the teams
+    measured only in Q1 — the backmarkers whose form is hardest to read.
+    Two defences here:
+
+    * The Q1→Q2 offset is taken from teams ELIMINATED AT THE NEXT CUT when at
+      least _OFFSET_MIN_PAIRS of them exist: a team knocked out in Q2 was flat
+      out in Q1 (to escape it) and in Q2 (fighting elimination), so its delta
+      is track evolution, not sandbag release.
+    * The team estimate is the best corrected lap, not an OLS average over
+      every session the team ran — so a front-runner's Q1 cruise lap no longer
+      drags its own estimate slower either.
 
     Returns {team: pct_vs_field_median}; negative = faster than the median car.
-    Empty dict when the round cannot be fitted (caller falls back).
+    Empty dict when the round cannot be normalised (caller falls back).
     """
     long = []
     for s in ("Q1", "Q2", "Q3"):
@@ -133,32 +168,37 @@ def _session_normalised_pace(g: pd.DataFrame) -> dict[str, float]:
     teams = sorted(L["team"].unique())
     if len(teams) < 2 or L.empty:
         return {}
+    L["logt"] = np.log(L["t"].to_numpy(dtype=float))
 
-    # Design: intercept + (n_teams-1) team dummies + (n_sess-1) session dummies.
-    # The dropped team is the reference (effect 0); we re-centre on the median
-    # afterwards so the choice of reference does not matter.
-    T = pd.get_dummies(L["team"], prefix="t", drop_first=True).astype(float)
-    S = pd.get_dummies(L["sess"], prefix="s", drop_first=True).astype(float)
-    X = np.column_stack([np.ones(len(L)), T.values, S.values]) if len(S.columns) \
-        else np.column_stack([np.ones(len(L)), T.values])
-    y = np.log(L["t"].to_numpy(dtype=float))
-    try:
-        beta, _res, rank, _sv = np.linalg.lstsq(X, y, rcond=None)
-    except np.linalg.LinAlgError:
-        return {}
-    if rank < X.shape[1]:
-        # rank-deficient (e.g. a team that ran in exactly one session that no
-        # other team ran) — lstsq still returns a min-norm answer, but the team
-        # effects are no longer uniquely identified. Don't trust it.
-        return {}
+    # wide[team][sess] = log best; last[team] = latest session the team ran
+    wide: dict[str, dict[str, float]] = {}
+    for row in L.itertuples(index=False):
+        wide.setdefault(row.team, {})[row.sess] = row.logt
+    sessions = [s for s in ("Q1", "Q2", "Q3") if (L["sess"] == s).any()]
+    order = {s: i for i, s in enumerate(sessions)}
+    last = {t: max(d, key=lambda s: order[s]) for t, d in wide.items()}
 
-    eff = {c[2:]: b for c, b in zip(T.columns, beta[1:1 + len(T.columns)])}
-    eff[next(t for t in teams if t not in eff)] = 0.0   # the dropped reference
+    # Cumulative log-offset from each session onto the final session's track.
+    cum: dict[str, float] = {sessions[-1]: 0.0}
+    for a, b in reversed(list(zip(sessions, sessions[1:]))):
+        pairs = [t for t in teams if a in wide[t] and b in wide[t]]
+        # Teams whose run ENDED at b pushed flat out in both a and b; teams
+        # that advanced past b may have cruised through a. Only the Q1→Q2
+        # step ever distinguishes the two — every Q2∩Q3 team's last is Q3.
+        fighters = [t for t in pairs if last[t] == b]
+        use = fighters if len(fighters) >= _OFFSET_MIN_PAIRS else pairs
+        if not use:
+            return {}
+        step = float(np.median([wide[t][b] - wide[t][a] for t in use]))
+        cum[a] = step + cum[b]
+
+    # Best corrected lap per team — a sandbag lap is slow even corrected, so
+    # it never wins the min; a ruined final run falls back to the previous
+    # session's corrected time instead of poisoning the estimate.
+    eff = {t: min(wide[t][s] + cum[s] for s in wide[t]) for t in teams}
     med = float(np.median(list(eff.values())))
     out = {t: round((float(np.exp(v - med)) - 1) * 100, 3) for t, v in eff.items()}
-    # A sane one-lap field spans a few per cent; anything wilder means the fit
-    # went wrong (a red-flagged session, a single-lap sample) — reject it.
-    if max(abs(v) for v in out.values()) > 15.0:
+    if max(abs(v) for v in out.values()) > _MAX_PLAUSIBLE_PCT:
         return {}
     return out
 
@@ -177,6 +217,14 @@ def quali_gaps(season: int) -> pd.DataFrame:
         if team_best.empty:
             continue
         pole = team_best.min()
+        # Sessions each team set a time in — a single-session team's estimate
+        # leans entirely on the measured track-evolution offsets, so charts
+        # can flag it (MS-05's minimum ask).
+        n_sess = {}
+        for s in ("Q1", "Q2", "Q3"):
+            if s in g.columns:
+                for team in g.loc[g[s].notna(), "team"].unique():
+                    n_sess[team] = n_sess.get(team, 0) + 1
         fe = _session_normalised_pace(g)
         if fe:
             n_fe += 1
@@ -190,7 +238,8 @@ def quali_gaps(season: int) -> pd.DataFrame:
             rows.append({"season": season, "round": int(rnd), "event": event,
                          "team": team,
                          "quali_result_gap_pct": round((t / pole - 1) * 100, 3),
-                         "onelap_speed_pct": fe.get(team, np.nan)})
+                         "onelap_speed_pct": fe.get(team, np.nan),
+                         "onelap_n_sessions": n_sess.get(team, 0)})
     if rows:
         n_rounds = len({r["round"] for r in rows})
         print(f"  one-lap pace: session-normalised at {n_fe}/{n_rounds} rounds")

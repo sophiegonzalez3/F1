@@ -89,6 +89,19 @@ DEFAULTS: dict = {
         ("onelap", "Sprint Qualifying"): 0.20,
         ("longrun", "Practice 1"): 0.85,
         ("longrun", "Practice 2"): 0.70,
+        # LEFT AT 0.85 DELIBERATELY. The attenuation calibration
+        # (scripts/calibrate_pace_noise.py) is the one place that disagrees
+        # with this table: on pre-2026 data the outcome regresses on the FP3
+        # long-run gap with slope 0.18±0.05, implying a noise of 1.21. The
+        # story is physically plausible (FP3 sits an hour before qualifying,
+        # so its "race sims" are short afterthoughts around quali prep) —
+        # but raising it to 1.20 and re-running the backtest moved nothing
+        # decidable: pre-2026 MAE +0.001 / rho −0.019, 2026 MAE +0.003 /
+        # rho +0.004, on 14 and 7 events. The scoring loop is simply too
+        # thin at this stage to adjudicate, and swapping a constant that
+        # works in use for one an underpowered test cannot confirm is how
+        # tuning noise gets baked in. Revisit when FP3 long-run coverage
+        # grows; the calibration re-runs in one command.
         ("longrun", "Practice 3"): 0.85,
         ("longrun", "Sprint"): 0.45,
         # Actual qualifying gaps used as a LONG-RUN measurement (the optional

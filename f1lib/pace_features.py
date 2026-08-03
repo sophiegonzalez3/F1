@@ -35,6 +35,34 @@ All gaps are centered on the field mean (not the field best): the minimum of
 noisy estimates is itself noisy, the mean is stable. Convert to gap-to-best
 for display with `to_gap_to_best`.
 
+REJECTED: a speed-trap sandbagging correction
+---------------------------------------------
+Practice long runs are the model's weakest input — the outcome regresses on
+them with a slope of only 0.18 (pre-2026) to 0.52 (2026), i.e. they overstate
+the field's spread several times over. The obvious culprit is engine mode:
+teams running race sims turned down look slower than they are. The obvious
+fix is to read the turn-down off the speed traps, since `Speed_ST` is already
+in every lap row: reserve = (a team's median trap speed on quali-sim laps)
+− (its median on long-run laps), centred on the field, high = ran the sims
+turned down.
+
+Measured over 899 team-sessions (2024-26, 101 session-events), against the
+error the model actually makes (race pace minus the practice long-run gap):
+
+    2024-25   r = −0.165  (p < 0.001)   slope −0.029 pp per km/h
+    2026      r = +0.117  (p = 0.13)    slope +0.018 pp per km/h
+
+The sign FLIPS between eras and 2026 — the era the dashboard is for — is not
+significant. A correction fitted on this would be noise dressed as physics,
+so there is no mode term here. Run length was tested at the same time and is
+also clear (|error| vs stint length rho = −0.04, p = 0.25), which is the
+MS-03 stint-midpoint fuel fix in processing.py doing its job.
+
+What the same data DID show is that the long-run measurement is simply noisy,
+not biased, and that its noise can be estimated rather than guessed — see
+scripts/calibrate_pace_noise.py, which backs the `base_noise` table out of
+the attenuation slope instead of a grid search.
+
 Data access
 -----------
 `load_event_practice` reads practice laps from the app's full session cache

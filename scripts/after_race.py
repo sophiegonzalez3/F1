@@ -8,18 +8,22 @@ Steps, in dependency order:
 
   1. scripts/fetch_pitstops.py         real pit stops (race stats needs them)
   2. f1lib.fetch_historical_results    results/quali/sprint archive + standings
-  3. scripts/compute_team_pace.py      per-event team pace table (needs the archive)
-  4. f1lib.driver_ratings              per-event DRIVER pace table (BRIEF/DUEL)
-  5. scripts/compute_race_stats.py     SC rates, overtakes, pit league, ...
-  6. scripts/compute_atr.py            ATR sliding scale (needs standings)
-  7. scripts/compute_pu_topspeed.py    straight-line-speed / PU index (sessions)
-  8. scripts/compute_car_profile.py    car-concept axes for the STINTS tab
+  3. scripts/compute_incidents.py      race-control incident register (DNF
+                                       causes + the decomposition's labels)
+  4. scripts/compute_team_pace.py      per-event team pace table (needs the archive)
+  5. f1lib.driver_ratings              per-event DRIVER pace table (BRIEF/DUEL)
+  6. scripts/compute_race_stats.py     SC rates, overtakes, pit league, ...
+  7. scripts/compute_atr.py            ATR sliding scale (needs standings)
+  8. scripts/compute_pu_topspeed.py    straight-line-speed / PU index (sessions)
+  9. scripts/compute_car_profile.py    car-concept axes for the STINTS tab
                                        (telemetry, ~1 min per event)
-  9. scripts/backtest_pace_model.py    replays every weekend and re-scores the
+ 10. scripts/backtest_pace_model.py    replays every weekend and re-scores the
                                        pace model — feeds the BRIEF tab's
                                        track-record card, so skipping it
                                        silently leaves that card stale
- 10. compute_mistakes.py               micro-mistake archive (telemetry, slow)
+ 11. scripts/compute_weekend_decomp.py 'where the points went' table for the
+                                       RACE tab (needs pace, stats, incidents)
+ 12. compute_mistakes.py               micro-mistake archive (telemetry, slow)
 
 Stops at the first failing step; every step is idempotent, so fix and re-run.
 Not covered here (needs a human or a browser): the `radio-review` skill, the
@@ -52,6 +56,8 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "scripts/fetch_pitstops.py"]),
     ("archive",   "results archive",
      [sys.executable, "-m", "f1lib.fetch_historical_results"]),
+    ("incidents", "incident register",
+     [sys.executable, "scripts/compute_incidents.py"]),
     ("teampace",  "team pace table",
      [sys.executable, "scripts/compute_team_pace.py"]),
     ("driverpace", "driver pace table",
@@ -66,6 +72,8 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "scripts/compute_car_profile.py"]),
     ("backtest",   "pace-model scorecard",
      [sys.executable, "scripts/backtest_pace_model.py"]),
+    ("decomp",    "weekend decomposition",
+     [sys.executable, "scripts/compute_weekend_decomp.py"]),
     ("mistakes",  "micro-mistakes",
      [sys.executable, "compute_mistakes.py"]),
 ]

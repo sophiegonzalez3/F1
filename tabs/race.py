@@ -47,6 +47,7 @@ from f1lib.data_loader import load_session, load_sessions, is_cached
 from f1lib.radio_loader import load_race_radio, race_radio_available, radio_cached
 from tabs.replay import replay_card
 from tabs.race3d import race3d_card
+from tabs.race_decomp import weekend_decomp_card
 from f1lib.pitstops_loader import load_pitstops
 from f1lib.standings import _order_by_champ, _order_teams_by_champ
 
@@ -2089,6 +2090,12 @@ def tab_race(sel_drivers=None, sel_teams=None):
         replay_card(shown_year, meeting,
                     codes=sorted(rl["Driver_Short"].dropna().unique())),
         race3d_card(shown_year, meeting),
+        _section_header(
+            "WHERE THE POINTS WENT",
+            "the weekend's accounting — actual points against what the car "
+            "was worth, split into quali, the start, pit crew, safety-car "
+            "timing, incidents and on-track execution"),
+        weekend_decomp_card(shown_year, meeting),
         _section_header(
             "HOW THE RACE UNFOLDED",
             "the shape of the race from lights to flag — pace on every lap, "

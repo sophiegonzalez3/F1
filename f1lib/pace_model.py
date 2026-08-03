@@ -99,10 +99,47 @@ DEFAULTS: dict = {
         ("longrun", "Qualifying"): 0.55,
     },
     "default_base_noise": 0.6,
+    # ── upgrade-aware prior widening ──
+    # A team that brings a performance package is less predictable from its
+    # own form line than one running a stable car — the whole point of the
+    # package is to move the car, and it sometimes moves it backwards. The
+    # prior VARIANCE (never the mean: the direction is unknown) is widened by
+    # upgrade_var_per_item %² per Performance component declared in the FIA
+    # Car Presentation for that event (data/upgrades.csv), capped so a
+    # 16-item B-spec (sd contribution ≈ 0.6 %) can't blow the prior open.
+    # A-PRIORI constants, deliberately NOT tuned: upgrades.csv only covers
+    # 2026 — the holdout season — so any tuning would be holdout leakage.
+    "upgrade_var_per_item": 0.04,   # %² per declared performance component
+    "upgrade_var_cap": 0.36,        # %² ceiling per event
     # ── outcome simulation ──
     "exec_sd": 0.18,             # % — event-day execution noise per team
     "n_sims": 20000,
 }
+
+_UPGRADES_CSV = Path("data/upgrades.csv")
+_upgrades_cache: dict = {"mtime": None, "df": None}
+
+
+def _performance_items(season: int, event: str) -> dict[str, int]:
+    """{team: n declared Performance components} for one event; {} when the
+    upgrade table is absent or silent on the event."""
+    try:
+        mtime = _UPGRADES_CSV.stat().st_mtime
+    except OSError:
+        return {}
+    if _upgrades_cache["mtime"] != mtime:
+        try:
+            u = pd.read_csv(_UPGRADES_CSV, encoding="utf-8-sig")
+            u = u[u["category"] == "Performance"].copy()
+            u["team"] = u["team"].map(canon)
+            _upgrades_cache["df"] = u
+            _upgrades_cache["mtime"] = mtime
+        except Exception as exc:
+            logger.warning("upgrades.csv unreadable: %s", exc)
+            return {}
+    u = _upgrades_cache["df"]
+    m = u[(u["season"] == int(season)) & (u["event"] == str(event))]
+    return m.groupby("team").size().to_dict()
 
 # Weekend order of the pre-outcome sessions the model can ingest. A normal
 # weekend has the three practices; a sprint weekend has FP1 then Sprint
@@ -339,6 +376,17 @@ class PaceModel:
         if measurements is not None and not measurements.empty:
             teams = sorted(set(teams) | set(measurements["team"]))
         state = self.prior(season, round_, teams)
+
+        # A declared performance package makes the team's form line a worse
+        # predictor of THIS weekend — widen its prior (variance only, both
+        # kinds; the direction of an upgrade is unknown until it runs).
+        items = _performance_items(season, event)
+        if items:
+            per, cap = self.p["upgrade_var_per_item"], self.p["upgrade_var_cap"]
+            extra = state["team"].map(
+                lambda t: min(items.get(t, 0) * per, cap))
+            state["var"] = np.minimum(state["var"] + extra,
+                                      self.p["max_prior_var"])
 
         stages: dict[str, pd.DataFrame] = {}
 

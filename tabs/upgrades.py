@@ -520,7 +520,11 @@ def _impact_section() -> html.Div:
               "to upgrades that only pay off over a stint — check the race-"
               "pace line in the card above for those."),
     )
-    return html.Div([trend_card, board_card])
+    # The board answers "what happened around this package"; the event study
+    # below answers "does development pay off on average, and is the board
+    # reading causation or the calendar".
+    from tabs.upgrade_econ import upgrade_econ_card
+    return html.Div([trend_card, board_card, upgrade_econ_card(season)])
 
 
 @callback(Output("upg-impact-trend", "figure"),

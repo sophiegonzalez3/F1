@@ -23,7 +23,9 @@ Steps, in dependency order:
                                        silently leaves that card stale
  11. scripts/compute_weekend_decomp.py 'where the points went' table for the
                                        RACE tab (needs pace, stats, incidents)
- 12. compute_mistakes.py               micro-mistake archive (telemetry, slow)
+ 12. scripts/compute_upgrade_study.py  panel event study on declared upgrades
+                                       (needs the pace table + upgrades.csv)
+ 13. compute_mistakes.py               micro-mistake archive (telemetry, slow)
 
 Stops at the first failing step; every step is idempotent, so fix and re-run.
 Not covered here (needs a human or a browser): the `radio-review` skill, the
@@ -74,6 +76,8 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "scripts/backtest_pace_model.py"]),
     ("decomp",    "weekend decomposition",
      [sys.executable, "scripts/compute_weekend_decomp.py"]),
+    ("upgradestudy", "upgrade event study",
+     [sys.executable, "scripts/compute_upgrade_study.py"]),
     ("mistakes",  "micro-mistakes",
      [sys.executable, "compute_mistakes.py"]),
 ]

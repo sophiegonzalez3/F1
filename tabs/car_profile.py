@@ -79,10 +79,19 @@ AXES = [
     ("save_pct", "Energy saving", "pp", None, 0.98,
      "How much more the car coasts (off both pedals) in the race than in "
      "qualifying. Qualifying is the max-attack baseline, so the difference is "
-     "deliberate lift-and-coast — fuel and energy management. Neither good nor "
-     "bad on its own, which is why it is not colour-scored: it is a style. The "
-     "steadiest axis here (0.98), and essentially uncorrelated with pace, so "
-     "it is genuinely its own trait."),
+     "deliberate lift-and-coast — fuel and energy management. Deliberately NOT "
+     "colour-scored, and that decision is now measured rather than asserted: "
+     "coasting more is not associated with being slower, in the field "
+     "(r=+0.01), within an event (r=+0.01) or within a team over the season "
+     "(r=−0.00, n=752) — so calling it an 'energy deficit' and marking it red "
+     "would be reading a cost the data does not show. Two other readings were "
+     "tested and can be set aside: it is NOT a traffic artifact (r=+0.05 "
+     "against median finishing position, p=0.20) and it is uncorrelated with "
+     "every other axis here. About 23% of it tracks the PU SUPPLIER rather "
+     "than the team — Ford-powered cars coast markedly more than the rest in "
+     "2026 — so read it partly as the manufacturer's energy-management map, "
+     "which is also why it is the steadiest axis (0.98): a supplier map "
+     "barely changes between events."),
 ]
 
 

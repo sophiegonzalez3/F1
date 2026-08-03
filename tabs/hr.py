@@ -269,6 +269,32 @@ def _rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({r},{g},{b},{alpha})"
 
 
+def _current_season(lo: int, hi: int) -> int:
+    """Default upper bound of the season slider: the season now, clamped into
+    the data's range. staff_moves carries announced future starts (2027-28),
+    and opening on those would show a near-empty board."""
+    from datetime import date
+    return max(lo, min(hi, date.today().year))
+
+
+def _season_window(df: pd.DataFrame, season_range, mode: str) -> pd.DataFrame:
+    """Rows whose on-track influence season falls in the selected window.
+
+    mode 'upto'  — everything from the start of the data to the upper handle
+                   (the cumulative squad a team has assembled).
+    mode 'only'  — only the selected span (who moved in THIS window).
+    Rows with no season are kept in cumulative mode and dropped in
+    year-only mode, where "which year" is the whole question.
+    """
+    if not season_range:
+        return df
+    lo, hi = int(min(season_range)), int(max(season_range))
+    s = pd.to_numeric(df["season"], errors="coerce")
+    if mode == "only":
+        return df[s.between(lo, hi)]
+    return df[s.le(hi) | s.isna()]
+
+
 def _sankey_fig(df: pd.DataFrame, include_rumored: bool) -> go.Figure:
     d = df.copy()
     if not include_rumored:
@@ -583,23 +609,54 @@ def hr_section() -> html.Div:
               "than a 1,200-person Mercedes."),
     ) if not staff.empty else html.Div())
 
+    # Season range. Collapsing five years of transfer market into one picture
+    # makes ribbon thickness meaningless as "momentum" — a team that rebuilt
+    # in 2024 and has been quiet since looks identical to one signing now.
+    seasons = pd.to_numeric(df["season"], errors="coerce").dropna()
+    s_lo = int(seasons.min()) if not seasons.empty else 2024
+    s_hi = int(seasons.max()) if not seasons.empty else 2026
+    cur = _current_season(s_lo, s_hi)
+
     sankey_controls = html.Div([
-        dbc.Switch(id="hr-rumored-toggle", value=False,
-                   label="Include rumored moves",
-                   style={"display": "inline-block"}),
-        html.Span("rumored flows are drawn only when this is on",
-                  style={"color": TEXT_DIM, "fontSize": "0.72rem",
-                         "marginLeft": "10px"}),
-    ], style={"display": "flex", "alignItems": "center",
-              "marginBottom": "6px"})
+        html.Div([
+            dbc.Switch(id="hr-rumored-toggle", value=False,
+                       label="Include rumored moves",
+                       style={"display": "inline-block"}),
+            html.Span("rumored flows are drawn only when this is on",
+                      style={"color": TEXT_DIM, "fontSize": "0.72rem",
+                             "marginLeft": "10px"}),
+        ], style={"display": "flex", "alignItems": "center"}),
+        html.Div([
+            dbc.RadioItems(
+                id="hr-season-mode", inline=True, value="upto",
+                options=[{"label": "Cumulative to year", "value": "upto"},
+                         {"label": "That year only", "value": "only"}],
+                style={"fontSize": "0.75rem"},
+                inputStyle={"marginRight": "4px"},
+                labelStyle={"marginRight": "12px", "color": TEXT_DIM}),
+        ], style={"marginTop": "6px"}),
+        html.Div([
+            html.Span("Seasons influenced on track",
+                      style={"color": TEXT_DIM, "fontSize": "0.72rem"}),
+            dcc.RangeSlider(
+                id="hr-season-range", min=s_lo, max=s_hi, step=1,
+                value=[s_lo, cur], allowCross=False,
+                marks={y: {"label": str(y),
+                           "style": {"color": TEXT_DIM, "fontSize": "0.7rem"}}
+                       for y in range(s_lo, s_hi + 1)},
+                tooltip={"placement": "bottom", "always_visible": False}),
+        ], style={"marginTop": "4px", "maxWidth": "520px"}),
+    ], style={"marginBottom": "8px"})
+
+    df_win = _season_window(df, [s_lo, cur], "upto")
 
     sankey_card = card(
         "Team Momentum — staff flow (Sankey)",
         html.Div([
             sankey_controls,
-            dcc.Graph(id="hr-sankey", figure=_sankey_fig(df, False),
+            dcc.Graph(id="hr-sankey", figure=_sankey_fig(df_win, False),
                       config=GFX),
-            html.Div(dcc.Graph(id="hr-net", figure=_net_fig(df, False),
+            html.Div(dcc.Graph(id="hr-net", figure=_net_fig(df_win, False),
                                config=GFX),
                      style={"borderTop": f"1px solid {GRID_CLR}",
                             "marginTop": "8px", "paddingTop": "6px"}),
@@ -613,12 +670,19 @@ def hr_section() -> html.Div:
               "RBAT, and outside-industry orgs) is pooled into one 'Other' "
               "node. Internal promotions (same team on both ends) are NOT "
               "drawn here — they have their own card below. Toggle 'Include "
-              "rumored' to fold in unconfirmed moves (e.g. Horner → Alpine)."),
+              "rumored' to fold in unconfirmed moves (e.g. Horner → Alpine). "
+              "The season slider sets which moves are drawn, by the year each "
+              "one first influences the car on track: 'cumulative to year' is "
+              "the squad a team has assembled by then, 'that year only' is who "
+              "moved in that window. It matters — undated, the chart pools "
+              "five years of transfer market into one picture, so a team that "
+              "rebuilt in 2024 and has been quiet since looks exactly like one "
+              "signing hard right now. It opens on the current season."),
     )
 
     promo_card = card(
         "Internal Promotions — backfilling from within",
-        dcc.Graph(id="hr-promotions", figure=_promotions_fig(df, False),
+        dcc.Graph(id="hr-promotions", figure=_promotions_fig(df_win, False),
                   config=GFX),
         info=("Data: staff_moves.csv rows where origin and destination are the "
               "same team — promotions and internal re-appointments (e.g. "
@@ -650,9 +714,11 @@ def hr_section() -> html.Div:
 
 @callback([Output("hr-sankey", "figure"), Output("hr-net", "figure"),
            Output("hr-promotions", "figure")],
-          Input("hr-rumored-toggle", "value"),
+          [Input("hr-rumored-toggle", "value"),
+           Input("hr-season-range", "value"),
+           Input("hr-season-mode", "value")],
           prevent_initial_call=True)
-def _update_hr_figs(include_rumored):
-    df = moves_df()
+def _update_hr_figs(include_rumored, season_range, mode):
+    df = _season_window(moves_df(), season_range, mode)
     b = bool(include_rumored)
     return _sankey_fig(df, b), _net_fig(df, b), _promotions_fig(df, b)

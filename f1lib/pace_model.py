@@ -78,15 +78,28 @@ DEFAULTS: dict = {
     # confirmed lower long-run noise makes practice DRIFT WORSE than the
     # season-form prior in the settled era. One-lap sims are far more
     # representative and get more trust as the weekend sharpens.
-    # Sprint Qualifying is a real low-fuel qualifying (better than any practice
-    # sim) and the Sprint is a real race on race fuel (the strongest long-run
-    # read there is) — both get low noise, the Sprint the lowest of any
-    # long-run source.
+    # The SPRINT is a real race on race fuel and is the strongest long-run
+    # source there is (0.45, and the calibration independently implies 0.41).
+    # SPRINT QUALIFYING is the counter-example worth remembering: being a real
+    # low-fuel session was assumed to make it a better one-lap read than any
+    # practice sim, and the measurement disagrees — a green Friday-evening
+    # track with a single practice of setup behind it is not a Saturday
+    # quali. See its own note below.
     "base_noise": {
         ("onelap", "Practice 1"): 0.55,
         ("onelap", "Practice 2"): 0.35,
         ("onelap", "Practice 3"): 0.25,
-        ("onelap", "Sprint Qualifying"): 0.20,
+        # RAISED from 0.20 (Aug 2026). The old value was fitted on 2026's four
+        # sprint weekends — the holdout — because nothing had ever backfilled
+        # sprint sessions from earlier seasons, so there was no other sample.
+        # With 2021-25 sprints now cached, the attenuation calibration has 157
+        # pre-2026 observations and implies 0.606; the 2026 holdout says 0.634
+        # independently. Two disjoint samples agreeing at ~0.61 against a set
+        # value of 0.20 means the model was trusting Sprint Qualifying about
+        # three times more than it earns. Sensible in hindsight: SQ is a
+        # low-fuel qualifying run on a green Friday-evening track with one
+        # practice session of setup work behind it, not a Saturday quali.
+        ("onelap", "Sprint Qualifying"): 0.60,
         ("longrun", "Practice 1"): 0.85,
         ("longrun", "Practice 2"): 0.70,
         # LEFT AT 0.85 DELIBERATELY. The attenuation calibration

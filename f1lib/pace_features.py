@@ -63,6 +63,31 @@ not biased, and that its noise can be estimated rather than guessed — see
 scripts/calibrate_pace_noise.py, which backs the `base_noise` table out of
 the attenuation slope instead of a grid search.
 
+REJECTED: weighting sessions by track temperature
+-------------------------------------------------
+The next obvious lever, given weather is cached for every session: trust a
+practice session less when its track temperature is far from the conditions
+being predicted. Tested three ways, and it does not survive.
+
+    |session - RACE| temp   vs long-run error : rho +0.157 (p=0.11, n=107)
+    |session - QUALI| temp  vs one-lap error  : rho +0.043 (p=0.74, n=61)
+    |session - FP2| temp    vs one-lap error  : rho +0.505 (p=0.004, n=30)
+
+Only the third is significant, and it is the one to disbelieve. FP2 is a
+STAND-IN for qualifying conditions, so if the mechanism were real the direct
+measure (|session - quali|) would predict at least as well — it predicts
+essentially nothing. A proxy outperforming the quantity it proxies for is
+the signature of a chance hit in a small sample, not a mechanism, and n=30
+across several tested combinations is exactly where that happens. Checked
+and dismissed: it is not a session-identity artifact (FP1 and FP3 have the
+same mean temp delta, 6.49 vs 6.48 C).
+
+Rain fails too, and in the wrong direction — sessions with rain transfer
+slightly BETTER (median error 0.78 vs 0.92, n=12), which is noise.
+
+The honest read is that the corrections already applied upstream (track
+evolution, fuel, tyre age) absorb most of what temperature would explain.
+
 Data access
 -----------
 `load_event_practice` reads practice laps from the app's full session cache
@@ -138,12 +163,24 @@ def canon(team: str) -> str:
 # Data access
 # ─────────────────────────────────────────────────────────────
 
+# Historical names for the SAME session, resolved to the canonical one at
+# load time so the model sees a single session identity. F1 called the
+# sprint-grid qualifying session "Sprint Shootout" in 2023 and renamed it
+# "Sprint Qualifying" from 2024; the cache keys use whatever the calendar
+# said that year, so without this every 2023 sprint weekend silently has no
+# one-lap input and the noise constant for it can only be estimated on
+# recent seasons.
+_SESSION_ALIASES = {"Sprint Qualifying": ("Sprint Qualifying",
+                                          "Sprint Shootout")}
+
+
 def _laps_path(season: int | str, event: str, session: str) -> Path | None:
-    key = dl._session_key(str(season), event, session)
-    for base in (Path(SESSIONS_DIR), Path(SESSIONS_LITE_DIR)):
-        p = base / f"{key}__laps.parquet"
-        if p.exists():
-            return p
+    for name in _SESSION_ALIASES.get(session, (session,)):
+        key = dl._session_key(str(season), event, name)
+        for base in (Path(SESSIONS_DIR), Path(SESSIONS_LITE_DIR)):
+            p = base / f"{key}__laps.parquet"
+            if p.exists():
+                return p
     return None
 
 
@@ -164,9 +201,14 @@ def load_event_practice(season: int | str, event: str) -> pd.DataFrame:
         laps = pd.read_parquet(p)
         if laps.empty:
             continue
-        if "session_name" not in laps.columns:
-            dl._tag(laps, session, str(season), event,
-                    dl._session_name(str(season), event, session))
+        # Always (re)tag with the CANONICAL session name, not the one the
+        # file was cached under. A 2023 "Sprint Shootout" file carries its
+        # own name in the session columns, and everything downstream keys off
+        # them — _SESSION_KINDS would fall through to its default and let a
+        # one-lap session emit a long-run measurement, and pace_model's
+        # stage order would not recognise it at all.
+        dl._tag(laps, session, str(season), event,
+                dl._session_name(str(season), event, session))
         frames.append(laps)
     if not frames:
         return pd.DataFrame()

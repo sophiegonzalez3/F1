@@ -44,9 +44,26 @@ from f1lib.config import SESSIONS_LITE_DIR, SESSIONS_DIR, FASTF1_CACHE_DIR
 LITE = Path(SESSIONS_LITE_DIR)
 FULL = Path(SESSIONS_DIR)
 
-# Practice sessions only: quali/race targets come from the historical results
-# archive, and race laps for race-pace targets come from the full cache.
-_WANTED = ("Practice 1", "Practice 2", "Practice 3")
+# Every PRE-OUTCOME session the model can learn from — it must mirror
+# pace_features.INPUT_SESSIONS, or a session type the model ingests silently
+# has no history to calibrate against.
+#
+# Sprint Qualifying and the Sprint were missing here until Aug 2026, and the
+# consequence was quiet but real: on a sprint weekend those two sessions ARE
+# the model's practice input, yet the only cached examples were 2026 ones —
+# the holdout season. Their observation-noise constants therefore could not
+# be checked without leaking, and scripts/calibrate_pace_noise.py had to
+# report them as 2026-only. Sprints have run since 2021, so the history was
+# always fetchable; nothing was fetching it.
+#
+# The outcomes themselves still come from elsewhere: quali targets from the
+# historical results archive, race-pace targets from cached race laps.
+_WANTED = ("Practice 1", "Practice 2", "Practice 3",
+           "Sprint Qualifying", "Sprint",
+           # 2021-22 named the sprint race "Sprint" but the Friday session
+           # that set the sprint grid was ordinary Qualifying; 2023 renamed
+           # the sprint-only shootout, which FastF1 reports under both names.
+           "Sprint Shootout")
 
 
 def _lite_paths(key: str) -> dict[str, Path]:
@@ -91,8 +108,9 @@ def fetch_one(season: int, meeting: str, session: str) -> bool:
     return True
 
 
-def season_plan(season: int) -> list[tuple[str, str]]:
-    """(meeting, session) pairs for every practice session already run."""
+def season_plan(season: int,
+                wanted: tuple[str, ...] = _WANTED) -> list[tuple[str, str]]:
+    """(meeting, session) pairs for every wanted session already run."""
     sched = fastf1.get_event_schedule(season, include_testing=False)
     now = pd.Timestamp(datetime.now(timezone.utc)).tz_localize(None)
     plan: list[tuple[str, str]] = []
@@ -100,7 +118,7 @@ def season_plan(season: int) -> list[tuple[str, str]]:
         meeting = str(ev["EventName"])
         for i in range(1, 6):
             name = str(ev.get(f"Session{i}", "") or "")
-            if name not in _WANTED:
+            if name not in wanted:
                 continue
             date = ev.get(f"Session{i}DateUtc")
             if pd.notna(date) and pd.Timestamp(date) > now:
@@ -113,7 +131,19 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seasons", nargs="+", type=int, default=[2024, 2025])
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--sessions", nargs="+", default=None, metavar="NAME",
+                    help="restrict to these session names (default: all of "
+                         f"{', '.join(_WANTED)}). Use it to backfill one "
+                         "session type without re-walking whole calendars, "
+                         "e.g. --sessions 'Sprint Qualifying' Sprint "
+                         "'Sprint Shootout'")
     args = ap.parse_args()
+    wanted = tuple(args.sessions) if args.sessions else _WANTED
+    unknown = set(wanted) - set(_WANTED)
+    if unknown:
+        print(f"Unknown session name(s): {sorted(unknown)}\n"
+              f"Known: {list(_WANTED)}")
+        return 2
 
     LITE.mkdir(parents=True, exist_ok=True)
     fastf1.Cache.enable_cache(str(Path(FASTF1_CACHE_DIR)))
@@ -121,8 +151,8 @@ def main() -> int:
 
     n_ok = n_skip = n_fail = 0
     for season in args.seasons:
-        plan = season_plan(season)
-        print(f"\n[{season}] {len(plan)} practice sessions on the calendar",
+        plan = season_plan(season, wanted)
+        print(f"\n[{season}] {len(plan)} matching sessions on the calendar",
               flush=True)
         for meeting, session in plan:
             where = already_have(season, meeting, session)

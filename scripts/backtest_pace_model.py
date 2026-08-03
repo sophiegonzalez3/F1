@@ -5,7 +5,7 @@ backfill in data/sessions_lite), this replays the weekend: freezes the
 model's prediction at the prior and after each practice session, then scores
 those predictions against what actually happened —
 
-  onelap   → team session-normalised one-lap pace  (quali_pace_pct)
+  onelap   → team session-normalised one-lap pace  (onelap_speed_pct)
   longrun  → team race pace                          (race_pace_pct)
 
 both from data/team_pace_by_event.csv, and both the same columns the model's
@@ -76,8 +76,8 @@ OUT = Path("data/backtest_pace_model.csv")
 # this change, because the target itself changed. Spearman rho is (it is
 # scale-free), and so is the model's MAE relative to the raw-FP baseline,
 # since the baseline is scored on the same target.
-TARGET = {"onelap": "quali_pace_pct", "longrun": "race_pace_pct"}
-_TARGET_FALLBACK = {"onelap": "quali_gap_pct", "longrun": "race_pace_gap_pct"}
+TARGET = {"onelap": "onelap_speed_pct", "longrun": "race_pace_pct"}
+_TARGET_FALLBACK = {"onelap": "quali_result_gap_pct", "longrun": "race_pace_gap_pct"}
 
 
 # ─────────────────────────────────────────────────────────────

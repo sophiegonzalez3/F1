@@ -132,6 +132,35 @@ PITSTOPS_DIR     = "data/pitstops"             # real per-stop pit data (pitstop
 RADIO_WHISPER_MODEL = "medium.en"
 
 # ─────────────────────────────────────────────
+# PACE-TABLE COLUMN BRIDGE
+# ─────────────────────────────────────────────
+# data/team_pace_by_event.csv renamed two columns when the dashboard split its
+# vocabulary into SPEED (one flat-out lap) and PACE (a rate held over many
+# laps) — see components.PACE_MEASURES. Everything that reads the table applies
+# this map on load, so a CSV written by an older compute_team_pace.py, or one
+# restored from a backup, still works without being regenerated first.
+#
+# The old names are assembled from fragments on purpose: written as literals
+# they are exactly what a project-wide rename rewrites, which is how this
+# mapping silently flattened to identity the first time it was written.
+PACE_LEGACY_COLUMNS: dict[str, str] = {
+    "quali_" + "pace_pct": "onelap_speed_pct",
+    "quali_" + "gap_pct":  "quali_result_gap_pct",
+}
+
+
+def apply_pace_legacy_columns(df):
+    """Rename legacy pace-table columns in place-safe fashion.
+
+    Never clobbers a column that already carries the current name, so a table
+    holding both (a partial hand-edit) keeps the current one.
+    """
+    ren = {old: new for old, new in PACE_LEGACY_COLUMNS.items()
+           if old in df.columns and new not in df.columns}
+    return df.rename(columns=ren) if ren else df
+
+
+# ─────────────────────────────────────────────
 # CIRCUIT KEY BRIDGE
 # ─────────────────────────────────────────────
 # circuit_characteristics.csv uses French slugs (e.g. "monaco", "etats_unis")

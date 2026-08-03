@@ -124,7 +124,7 @@ def _practice_analysis(wl):
     tdf["longrun_gap_pct"] = (tdf["longrun"] / field_lr - 1) * 100     if pd.notna(field_lr) else np.nan
     tdf["qual_gap_pct"]    = (tdf["qual_best"] / pole - 1) * 100       if pd.notna(pole) else np.nan
     # Practice-native sandbag signal: relatively worse one-lap than race pace
-    # ⇒ likely sitting on qualifying pace.
+    # ⇒ likely sitting on one-lap speed.
     tdf["pace_in_hand"] = tdf["prac_gap_pct"] - tdf["longrun_gap_pct"]
     # Quali confirmation (only when quali present)
     tdf["pace_unlocked"] = tdf["prac_gap_pct"] - tdf["qual_gap_pct"]
@@ -161,7 +161,7 @@ def _practice_analysis(wl):
     any_soft = bool(tdf["ran_soft_qs"].any())
     tdf["flag_hand"]   = tdf["pace_in_hand"] > _SB_HAND_THRESH
     tdf["flag_bank"]   = tdf["team_banked"]  > _SB_BANK_THRESH
-    # "Hasn't shown one-lap pace": no soft-tyre quali-sim yet, but only counts
+    # "Hasn't shown one-lap speed": no soft-tyre quali-sim yet, but only counts
     # once at least one team has (i.e. the session is mature enough).
     tdf["flag_noshow"] = any_soft & (~tdf["ran_soft_qs"])
     flag_cols = ["flag_hand", "flag_bank", "flag_noshow"]
@@ -273,9 +273,9 @@ def tab_practice_construction(wl):
             legend=dict(orientation="h", x=0, y=1.12, bgcolor="rgba(0,0,0,0)"),
             margin=dict(l=60, r=30, t=40, b=30))
         fig_p.update_yaxes(autorange="reversed")
-        body.append(dbc.Row([dbc.Col(card("PACE PROGRESSION",
+        body.append(dbc.Row([dbc.Col(card("ONE-LAP SPEED PROGRESSION",
             dcc.Graph(figure=fig_p, config=GFX),
-            info="Each team's best quali-sim lap per session (best valid lap in qualifying), as a gap to that session's fastest. Y-axis inverted so rising lines = relative improvement. Shows the build trajectory across the weekend. ONE-LAP pace only — long-run pace is the sandbagging section below.",
+            info="Each team's best quali-sim lap per session (best valid lap in qualifying), as a gap to that session's fastest. Y-axis inverted so rising lines = relative improvement. Shows the build trajectory across the weekend. ONE-LAP SPEED only — long-run pace is the sandbagging section below.",
             measure="one-lap"), md=12)]))
 
     return html.Div(body)
@@ -299,7 +299,7 @@ def tab_sandbagging(wl):
     if tdf["pace_in_hand"].notna().any():
         toph = tdf.loc[tdf["pace_in_hand"].idxmax()]
         kpis.append(kpi("MOST PACE IN HAND", f"{_abbr(toph['Team'])}  +{toph['pace_in_hand']:.2f}%",
-                        tooltip="Largest gap between a team's one-lap deficit and its race-run deficit — relatively stronger on long runs than on a single lap, i.e. likely sitting on qualifying pace."))
+                        tooltip="Largest gap between a team's one-lap deficit and its race-run deficit — relatively stronger on long runs than on a single lap, i.e. likely sitting on one-lap speed."))
     if has_quali and tdf["pace_unlocked"].notna().any():
         topu = tdf.loc[tdf["pace_unlocked"].idxmax()]
         kpis.append(kpi("MOST PACE UNLOCKED", f"{_abbr(topu['Team'])}  +{topu['pace_unlocked']:.2f}%",
@@ -329,17 +329,17 @@ def tab_sandbagging(wl):
         "Pace in hand  (%)   ·   + = relatively faster on race runs than one lap")
     fig_olr = _sb_quadrant(tdf, "prac_gap_pct", "longrun_gap_pct",
         "Best one-lap gap to field  (%)", "Race-run gap to field  (%)",
-        "below line = one-lap pace in hand")
+        "below line = one-lap speed in hand")
     head_cols = []
     if fig_hand is not None:
         head_cols.append(dbc.Col(card([*gloss("sandbagging", "SANDBAG"),
             " SCOREBOARD · PACE IN HAND"],
             dcc.Graph(figure=fig_hand, config=GFX),
-            info="One-lap gap to field minus race-run gap to field. Positive = the team is relatively further back on a single lap than on long runs, a classic sign of qualifying pace held in reserve. 🚩 = ≥2 sandbag signals."), md=6))
-    head_cols.append(dbc.Col(card([*gloss("one-lap pace", "ONE-LAP"), " vs ",
+            info="One-lap gap to field minus race-run gap to field. Positive = the team is relatively further back on a single lap than on long runs, a classic sign of one-lap speed held in reserve. 🚩 = ≥2 sandbag signals."), md=6))
+    head_cols.append(dbc.Col(card([*gloss("one-lap speed", "ONE-LAP"), " vs ",
         *gloss("race pace", "RACE-RUN")],
         dcc.Graph(figure=fig_olr, config=GFX),
-        info="Each team's best practice one-lap gap (x) vs its fuel-corrected race-run gap (y), both relative to the field. Markers below the parity line are stronger on long runs than on one lap — one-lap pace likely in hand."),
+        info="Each team's best practice one-lap gap (x) vs its fuel-corrected race-run gap (y), both relative to the field. Markers below the parity line are stronger on long runs than on one lap — one-lap speed likely in hand."),
         md=6 if fig_hand is not None else 12))
     body.append(dbc.Row(head_cols))
 

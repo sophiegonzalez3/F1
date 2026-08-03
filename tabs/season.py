@@ -2,7 +2,7 @@
 SEASON tab — championship-long form view.
 
 Answers "who's trending up?" across a whole season instead of one weekend:
-team qualifying pace gap and race pace gap round by round, the cumulative
+team one-lap speed gap and race pace gap round by round, the cumulative
 points race, and each team's Saturday-vs-Sunday character. All of it reads
 data/team_pace_by_event.csv (compute_team_pace.py); no session loads.
 """
@@ -18,7 +18,8 @@ from dash import html, dcc, callback, Input, Output
 import dash_bootstrap_components as dbc
 
 from f1lib.components import (
-    theme, card, GFX, abbr, BASE, hex_to_rgba as _hex_to_rgba,
+    theme, theme_axes, card, GFX, abbr, BASE, BASE_NO_AXES,
+    hex_to_rgba as _hex_to_rgba,
 )
 from f1lib.glossary import gloss
 from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
@@ -134,13 +135,13 @@ def _half_split(s: pd.DataFrame) -> tuple[list[int], list[int]]:
 
 
 def _character_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
-    """One-lap pace vs race pace per team, drawn as an ARROW from the first
+    """One-lap speed vs race pace per team, drawn as an ARROW from the first
     half of the season to the second. The diagonal is 'same car Saturday and
     Sunday'; below it = stronger over a stint than over one lap. A season
     average would hide exactly the thing worth seeing at the break — a team
     whose character changed."""
     early, late = _half_split(s)
-    cols = ["quali_pace_pct", "race_pace_pct"]
+    cols = ["onelap_speed_pct", "race_pace_pct"]
     avg = s.groupby("team")[cols].mean().dropna()
     e = s[s["round"].isin(early)].groupby("team")[cols].mean() if early else None
     l = s[s["round"].isin(late)].groupby("team")[cols].mean() if late else None
@@ -196,7 +197,7 @@ def _character_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
             name=abbr(team), showlegend=False,
             hovertemplate=(f"<b>{abbr(team)}</b>"
                            + (" · second half" if have_arrows else "") +
-                           "<br>one-lap pace: %{x:+.2f}% vs median<br>"
+                           "<br>one-lap speed: %{x:+.2f}% vs median<br>"
                            "race pace: %{y:+.2f}% vs median<extra></extra>"),
         ))
     fig.add_annotation(x=hi, y=lo + (hi - lo) * 0.06,
@@ -207,7 +208,7 @@ def _character_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
                            showarrow=False, xanchor="left", yanchor="top",
                            font=dict(size=9, color=TEXT_DIM))
     theme(fig, height)
-    fig.update_xaxes(title_text="ONE-LAP pace vs field median (%) · left = faster")
+    fig.update_xaxes(title_text="ONE-LAP SPEED vs field median (%) · left = faster")
     fig.update_yaxes(title_text="RACE pace vs field median (%) · down = faster")
     return fig
 
@@ -239,7 +240,7 @@ def _momentum_frame(s: pd.DataFrame) -> pd.DataFrame:
         te, tl = e[e["team"] == team], l[l["team"] == team]
         if te.empty or tl.empty:
             continue
-        pace_e, pace_l = te["quali_pace_pct"].mean(), tl["quali_pace_pct"].mean()
+        pace_e, pace_l = te["onelap_speed_pct"].mean(), tl["onelap_speed_pct"].mean()
         pts_e, pts_l = te["points"].sum(), tl["points"].sum()
         share_e, share_l = pts_e / pot_e * 100, pts_l / pot_l * 100
         rows.append({
@@ -254,7 +255,7 @@ def _momentum_frame(s: pd.DataFrame) -> pd.DataFrame:
 
 
 def _momentum_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
-    """Change in one-lap pace against change in points-per-round, first half
+    """Change in one-lap speed against change in points-per-round, first half
     of the season to second. Quadrants say what kind of change it is."""
     d = _momentum_frame(s)
     fig = go.Figure()
@@ -285,7 +286,7 @@ def _momentum_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
                          r.ppr_e, r.ppr_l]],
             hovertemplate=(
                 f"<b>{abbr(r.team)}</b><br>"
-                "one-lap pace %{customdata[0]:+.2f}% → %{customdata[1]:+.2f}% "
+                "one-lap speed %{customdata[0]:+.2f}% → %{customdata[1]:+.2f}% "
                 "(%{x:+.2f})<br>"
                 "share of points %{customdata[2]:.1f}% → %{customdata[3]:.1f}% "
                 "(%{y:+.1f}pp)<br>"
@@ -293,7 +294,7 @@ def _momentum_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
                 "%{customdata[5]:.1f} pts/round</span><extra></extra>"),
         ))
     theme(fig, height)
-    fig.update_xaxes(title_text="change in ONE-LAP pace (pp) · "
+    fig.update_xaxes(title_text="change in ONE-LAP SPEED (pp) · "
                                 "left = the car got faster",
                      range=[-xr, xr])
     fig.update_yaxes(title_text="change in share of the points scored (pp)",
@@ -336,9 +337,11 @@ def _form_fig(s: pd.DataFrame, height: int = 560) -> go.Figure:
                 hovertemplate=(f"<b>{abbr(team)}</b> · %{{customdata[0]}}<br>"
                                "%{y:.0f} pts behind the leader<extra></extra>"),
             ), row=2, col=1)
-    fig.update_layout(**{k: v for k, v in BASE.items()
-                         if k not in ("xaxis", "yaxis")},
-                      height=height)
+    # BASE_NO_AXES + theme_axes rather than BASE: layout.xaxis only reaches
+    # panel 1 of a subplot figure, so the shared styling (and the house hover
+    # rounding) has to go on through update_*axes.
+    fig.update_layout(**BASE_NO_AXES, height=height)
+    theme_axes(fig)
     fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,
                      tickangle=-40, gridcolor=GRID_CLR, row=2, col=1)
     fig.update_xaxes(gridcolor=GRID_CLR, row=1, col=1)
@@ -529,7 +532,7 @@ def _points_plain(s: pd.DataFrame):
 
 
 def _quali_plain(s: pd.DataFrame):
-    fastest = _fastest_team(s, "quali_pace_pct")
+    fastest = _fastest_team(s, "onelap_speed_pct")
     if fastest is None:
         return None
     return (f"Over a single flat-out lap this season, {_fmt_team(fastest)} have "
@@ -544,11 +547,11 @@ def _race_plain(s: pd.DataFrame, quali_fastest):
     if fastest is None:
         return None
     if quali_fastest is not None and fastest != quali_fastest:
-        tail = (f" — a different car than the one-lap pacesetter "
+        tail = (f" — a different car than the one-lap speedsetter "
                 f"({_fmt_team(quali_fastest)}), so watch them recover ground "
                 "over a race.")
     else:
-        tail = (" — the same car that tops one-lap pace, the mark of an "
+        tail = (" — the same car that tops one-lap speed, the mark of an "
                 "all-round-strong package.")
     return (f"Over long runs on wearing tyres, {_fmt_team(fastest)} have the "
             f"best race pace on average{tail}")
@@ -578,11 +581,11 @@ def _momentum_plain(s: pd.DataFrame):
 
 
 def _character_plain(s: pd.DataFrame):
-    avg = (s.groupby("team")[["quali_pace_pct", "race_pace_pct"]]
+    avg = (s.groupby("team")[["onelap_speed_pct", "race_pace_pct"]]
            .mean().dropna())
     if avg.empty:
         return None
-    gain = (avg["quali_pace_pct"] - avg["race_pace_pct"]).sort_values(
+    gain = (avg["onelap_speed_pct"] - avg["race_pace_pct"]).sort_values(
         ascending=False)
     if gain.iloc[0] > 0.05:
         return (f"Teams below the dotted line race better than they qualify. "
@@ -600,14 +603,14 @@ def _season_content(season: int) -> html.Div:
         return html.P("No pace data for this season — run compute_team_pace.py.",
                       style={"color": TEXT_DIM})
     n_race = s["race_pace_pct"].notna().sum()
-    quali_fastest = _fastest_team(s, "quali_pace_pct")
+    quali_fastest = _fastest_team(s, "onelap_speed_pct")
     # The season-calendar ribbon now lives at the top of the tab, above the
     # championship standings (see tab_season) — not here in SEASON FORM.
     return html.Div([
         card(
-            [*gloss("one-lap pace", "One-Lap Pace"), " by Round"],
+            [*gloss("one-lap speed", "One-Lap Speed"), " by Round"],
             dcc.Graph(figure=_trend_fig(
-                s, "quali_pace_pct", "vs field median (%) · lower = faster",
+                s, "onelap_speed_pct", "vs field median (%) · lower = faster",
                 median_ref=True), config=GFX),
             measure="one-lap",
             info=("Data: every team's best qualifying lap in EVERY Q-session "
@@ -620,7 +623,7 @@ def _season_content(season: int) -> html.Div:
                   "Expressed vs the FIELD MEDIAN, not vs pole, so one team's "
                   "off weekend doesn't shift everyone else's line. Negative = "
                   "faster than the median car. Why: this is the momentum "
-                  "series — it isolates CAR one-lap pace from where the team "
+                  "series — it isolates CAR one-lap speed from where the team "
                   "happened to finish on Saturday. For the Saturday result "
                   "itself (which mixes pace with session progression, traffic "
                   "and penalties) use the grid in the QUALI tab."),
@@ -661,7 +664,10 @@ def _season_content(season: int) -> html.Div:
         card(
             "Saturday vs Sunday Character",
             dcc.Graph(figure=_character_fig(s), config=GFX),
-            info=("Data: season-average ONE-LAP pace (x) vs season-average "
+            # Both axes are pace measures, and they are different ones —
+            # the whole point of the chart is the gap between them.
+            measure=("one-lap", "race"),
+            info=("Data: season-average ONE-LAP SPEED (x) vs season-average "
                   "RACE pace (y) per team, both as % vs the field median; the "
                   "dotted diagonal means 'same relative pace both days'. Why: "
                   "teams below the line are stronger over a stint than over "
@@ -677,7 +683,7 @@ def _season_content(season: int) -> html.Div:
             "Momentum — who is actually moving",
             dcc.Graph(figure=_momentum_fig(s), config=GFX),
             measure="one-lap",
-            info=("Data: each team's average session-normalised ONE-LAP pace, "
+            info=("Data: each team's average session-normalised ONE-LAP SPEED, "
                   "and its SHARE of all the points the field scored, over the "
                   "first half of the rounds run so far against the same two "
                   "numbers over the second half. The dot is the change. Share "

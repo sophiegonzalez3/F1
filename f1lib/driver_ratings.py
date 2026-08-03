@@ -1,4 +1,4 @@
-"""Teammate-relative driver ratings (race and qualifying pace).
+"""Teammate-relative driver ratings (race and one-lap speed).
 
 The team model in pace_model.py predicts how fast a CAR will be. This module
 adds the missing half: how much a DRIVER adds to or subtracts from their car.

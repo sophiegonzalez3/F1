@@ -3,17 +3,22 @@
 One row per (season, round, event, team). Two FAMILIES of measure live here and
 they answer different questions — see the naming convention below.
 
-ONE-LAP (single flat-out lap, low fuel, max attack)
+Vocabulary: SPEED is one flat-out lap, PACE is a rate sustained over many laps.
+The columns are named for which one they carry, so a name can never imply the
+wrong thing. See f1lib/components.py PACE_MEASURES for the house rule.
 
-  quali_gap_pct       RESULT measure. Team's best single qualifying lap (best
+ONE-LAP SPEED (single flat-out lap, low fuel, max attack)
+
+  quali_result_gap_pct
+                      RESULT measure. Team's best single qualifying lap (best
                       of Q1/Q2/Q3 across its drivers) as % gap to pole. This is
                       what the timing screen showed on Saturday, so it mixes
-                      car pace with how far the team got through the sessions:
+                      car speed with how far the team got through the sessions:
                       a Q1 exit sets its best on a green track, a Q3 runner on
                       the most-rubbered track of the weekend. Kept because
                       "where did they actually end up" is a real question, but
-                      it is NOT a clean read of car pace.
-  quali_pace_pct      PACE measure. The same laps, session-normalised: a
+                      it is NOT a clean read of how quick the car is.
+  onelap_speed_pct    SPEED measure. The same laps, session-normalised: a
                       two-way fixed-effects fit of log(lap time) on team and
                       Q-session strips out the track evolution between Q1 and
                       Q3, so a Q1 lap and a Q3 lap become comparable. Expressed
@@ -27,9 +32,11 @@ RACE PACE (sustained laps on race fuel and wearing tyres)
                       corrected lap over clean race laps — valid, out of dirty
                       air, and NOT perturbed (no safety car, VSC, yellow or
                       sector anomaly) — as % gap to the event's fastest team.
+                      Still a PACE measure, unlike quali_result_gap_pct: only
+                      the baseline differs, not what is being measured.
   race_pace_pct       The same measure expressed vs the FIELD MEDIAN, for the
-                      same reason as quali_pace_pct. Negative = faster than the
-                      median car. This is the momentum series.
+                      same reason as onelap_speed_pct. Negative = faster than
+                      the median car. This is the momentum series.
   race_pace_missing   True when the round ran but no race-pace figure could be
                       computed (laps not cached, or under the 10-clean-lap
                       floor). Lets the charts BREAK the line instead of drawing
@@ -182,8 +189,8 @@ def quali_gaps(season: int) -> pd.DataFrame:
         for team, t in team_best.items():
             rows.append({"season": season, "round": int(rnd), "event": event,
                          "team": team,
-                         "quali_gap_pct": round((t / pole - 1) * 100, 3),
-                         "quali_pace_pct": fe.get(team, np.nan)})
+                         "quali_result_gap_pct": round((t / pole - 1) * 100, 3),
+                         "onelap_speed_pct": fe.get(team, np.nan)})
     if rows:
         n_rounds = len({r["round"] for r in rows})
         print(f"  one-lap pace: session-normalised at {n_fe}/{n_rounds} rounds")
@@ -304,7 +311,7 @@ def build_season(season: int) -> pd.DataFrame:
     out["points"] = out["points"].fillna(0.0)
     out = out.sort_values(["team", "round"])
     out["cum_points"] = out.groupby("team")["points"].cumsum()
-    return out.sort_values(["round", "quali_gap_pct"]).reset_index(drop=True)
+    return out.sort_values(["round", "quali_result_gap_pct"]).reset_index(drop=True)
 
 
 def main() -> int:
@@ -325,7 +332,7 @@ def main() -> int:
     out = pd.concat(frames, ignore_index=True)
     out.to_csv(OUT_PATH, index=False)
     n_rp = out["race_pace_gap_pct"].notna().sum()
-    n_qp = out["quali_pace_pct"].notna().sum()
+    n_qp = out["onelap_speed_pct"].notna().sum()
     print(f"\nWrote {len(out)} rows -> {OUT_PATH} "
           f"({n_rp} with race pace, {n_qp} with one-lap pace, "
           f"{out['season'].nunique()} seasons)")

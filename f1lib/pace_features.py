@@ -1,7 +1,7 @@
 """Per-session team pace measurements for the weekend prediction model.
 
 Turns one session's laps into a small table of *measurements*: for each team,
-an estimate of one-lap pace and long-run (race) pace expressed as a % gap to
+an estimate of one-lap speed and long-run (race) pace expressed as a % gap to
 the field mean, each with a standard error. These are the observations the
 Bayesian layer in pace_model.py blends with its prior.
 
@@ -277,6 +277,13 @@ def _clean_mask(sl: pd.DataFrame) -> pd.Series:
     m = sl["ValidLap"] & sl["LapTime_s"].notna()
     if "Perturbed_Lap" in sl.columns:
         m &= ~sl["Perturbed_Lap"]
+    # Mandated rookie FP1 entrants are excluded here rather than downstream.
+    # Both measurements are expressed against the session's own median, so a
+    # tester does not just get a bad number of their own — they drag the
+    # reference and shift EVERY team's figure. Up to six of them ran at once in
+    # 2026 (Austria, Barcelona).
+    if "Is_Race_Driver" in sl.columns:
+        m &= sl["Is_Race_Driver"]
     return m
 
 
@@ -289,7 +296,7 @@ def _is_wet(sl: pd.DataFrame) -> bool:
 
 
 def _onelap_measurements(sl: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """(team_rows, driver_rows) of one-lap pace for a single session's laps."""
+    """(team_rows, driver_rows) of one-lap speed for a single session's laps."""
     empty = pd.DataFrame()
     pool = sl[_clean_mask(sl) & sl["Is_Quali_Sim"]
               & sl["Compound"].astype(str).isin(DRY_COMPOUNDS)].copy()

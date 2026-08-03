@@ -17,6 +17,14 @@ from f1lib.config import (
 )
 
 # ── Plotly theme ─────────────────────────────────────────────
+# HOVER_FMT is the house rounding rule, applied at the axis so it reaches every
+# trace that does not spell out its own format. Without it Plotly prints raw
+# float64 into the hover box — "1.2999999999999998% vs median" — which is
+# unreadable at a glance and makes a measurement look more precise than it is.
+# "~" trims trailing zeros, so 1.5 stays "1.5" while 1.23456 becomes "1.235".
+# Three decimals is the ceiling: lap times need them, nothing here needs more.
+HOVER_FMT = ".3~f"
+
 BASE = dict(
     paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
     font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=12),
@@ -26,12 +34,59 @@ BASE = dict(
     margin=dict(l=60, r=20, t=50, b=50),
 )
 
+# BASE minus the two axis entries, for figures that manage their own axes
+# (make_subplots, where layout.xaxis only reaches the first panel). Pair it
+# with theme_axes() so those figures still get the house hover rounding.
+BASE_NO_AXES = {k: v for k, v in BASE.items() if k not in ("xaxis", "yaxis")}
+
+
+def _is_temporal(fig, letter: str) -> bool:
+    """True when this figure's x (or y) axis carries dates.
+
+    Matters because Plotly reads `hoverformat` on a date axis as a d3-TIME
+    format, so a numeric one would render literally — the hover would read
+    ".3~f" instead of a date. Checked against the trace data rather than
+    layout.type, because callers routinely set type="date" AFTER theming.
+    """
+    import numpy as _np
+    ax_type = getattr(getattr(fig.layout, f"{letter}axis", None), "type", None)
+    if ax_type == "date":
+        return True
+    for tr in fig.data:
+        vals = getattr(tr, letter, None)
+        if vals is None or _np.ndim(vals) == 0:
+            continue
+        arr = _np.asarray(vals)
+        if arr.dtype.kind == "M":                 # datetime64
+            return True
+        if arr.dtype == object and arr.size:
+            head = arr.flat[0]
+            if hasattr(head, "year") and hasattr(head, "month"):
+                return True
+    return False
+
+
+def theme_axes(fig, **kw):
+    """Apply the shared axis styling — including hover rounding — to EVERY
+    axis of a figure, subplots included. update_*axes with no selector hits
+    all of them, which is exactly what layout.xaxis cannot do.
+
+    Date axes keep their own formatting; everything else gets HOVER_FMT.
+    """
+    fig.update_xaxes(gridcolor=GRID_CLR, zeroline=False, **kw)
+    fig.update_yaxes(gridcolor=GRID_CLR, zeroline=False, **kw)
+    if not _is_temporal(fig, "x"):
+        fig.update_xaxes(hoverformat=HOVER_FMT)
+    if not _is_temporal(fig, "y"):
+        fig.update_yaxes(hoverformat=HOVER_FMT)
+    return fig
+
 
 def theme(fig, h=450, t=""):
+    # BASE carries no axis hoverformat: theme_axes decides per figure, since a
+    # numeric format on a date axis renders as literal text.
     fig.update_layout(**BASE, height=h, title=t)
-    fig.update_xaxes(gridcolor=GRID_CLR, zeroline=False)
-    fig.update_yaxes(gridcolor=GRID_CLR, zeroline=False)
-    return fig
+    return theme_axes(fig)
 
 
 GFX = {"displayModeBar": False}
@@ -80,25 +135,41 @@ def plain_line(text):
                "fontStyle": "italic"})
 
 
-# ── Pace-measure badges ──────────────────────────────────────
-# "Pace" means four different things in this dashboard and the difference
-# decides whether a number is meaningful. A card that shows any of them wears
-# the matching badge in its header, so you never have to infer which one from
-# the title. Colours: warm = single lap, cool = sustained running, grey = a
-# classification result rather than a speed measurement.
+# ── Speed / pace measure badges ──────────────────────────────
+# A card that shows any of these wears the matching badge in its header, so you
+# never have to infer which one from the title. Colours: warm = single lap,
+# cool = sustained running, grey = a classification result rather than a speed
+# measurement.
+#
+# HOUSE RULE — SPEED vs PACE
+# SPEED is instantaneous: one flat-out lap. PACE is a rate held over distance:
+# many laps, race fuel, wearing tyres. It is the same distinction runners and
+# cyclists use, and it is load-bearing here.
+#
+# The sport itself does say "qualifying pace" and "one-lap pace", and that is
+# perfectly good English. It is banned in this dashboard's copy anyway, because
+# three of the five measures below would otherwise all be called "pace" — at
+# which point the badge stops carrying information and you have to read the
+# qualifier to know whether you are looking at 90 seconds or 90 minutes. The
+# Upgrade Impact trend, which plots both on one chart in the same units, is
+# what made that unworkable.
+#
+# tests/test_vocabulary.py enforces the rule on new UI strings.
 PACE_MEASURES: dict[str, tuple[str, str, str]] = {
     # key: (label, colour, definition)
     "one-lap": (
-        "ONE-LAP", "#FF8A3D",
-        "ONE-LAP PACE — a single flat-out lap: low fuel, fresh tyres, maximum "
-        "attack. This is qualifying speed. It says nothing about how the car "
-        "behaves over a stint, and a car can be strong here and weak on Sunday."),
+        "ONE-LAP SPEED", "#FF8A3D",
+        "ONE-LAP SPEED — a single flat-out lap: low fuel, fresh tyres, maximum "
+        "attack. This is qualifying speed. Called SPEED, not pace, on purpose: "
+        "in this dashboard 'pace' always means a rhythm sustained over many "
+        "laps. It says nothing about how the car behaves over a stint, and a "
+        "car can be strong here and weak on Sunday."),
     "race": (
         "RACE PACE", "#3DD6C4",
         "RACE PACE — the MEDIAN of clean green-flag laps on race fuel and "
         "wearing tyres, corrected for fuel burn and track evolution, with "
-        "dirty-air laps excluded. Sustained speed over many laps, which is what "
-        "actually decides races. Not a single fast lap."),
+        "dirty-air laps excluded. A rhythm sustained over many laps, which is "
+        "what actually decides races. Not a single fast lap."),
     "stint": (
         "STINT PACE", "#5BA7FF",
         "STINT PACE — race pace narrowed to one continuous run on one tyre "
@@ -107,7 +178,8 @@ PACE_MEASURES: dict[str, tuple[str, str, str]] = {
     "result": (
         "RESULT", "#8A8FA3",
         "RESULT — where the car actually ended up (grid slot, classification, "
-        "gap to pole), not a like-for-like speed measurement. It bakes in "
+        "gap to pole), not a like-for-like measurement of how quick the car is. "
+        "It bakes in "
         "session progression, traffic, penalties and mistakes. Use it for what "
         "happened, not for how fast the car is."),
     "predicted": (
@@ -139,12 +211,21 @@ def card(title, children, info=None, plain=None, measure=None):
     explaining what data the graph uses and why it is relevant (hover to read).
     Pass `plain` for a beginner-facing 'In plain terms: …' strip below the
     content — a plain-English reading of what the card shows.
+
     Pass `measure` ("one-lap" / "race" / "stint" / "result" / "predicted") to
     badge the header with WHICH pace measure the card is showing — see
-    PACE_MEASURES. Any card whose subject is a speed should carry one."""
+    PACE_MEASURES. Any card whose subject is a speed should carry one.
+
+    A card that plots MORE THAN ONE measure must name all of them: pass a
+    tuple/list and every badge is rendered, left to right, in the order given.
+    A single badge on a two-measure card is worse than none — it silently
+    mislabels the series it does not cover, which is exactly how the Upgrade
+    Impact trend (one-lap solid + race dotted) read as a one-lap-only card.
+    """
     header = [html.Span(title, style={"fontWeight": "700", "letterSpacing": "1px", "fontSize": "0.85rem"})]
     if measure:
-        header += pace_badge(measure)
+        for _m in ([measure] if isinstance(measure, str) else list(measure)):
+            header += pace_badge(_m)
     if info:
         header += tip(" ⓘ", info, style={
             "cursor": "help", "fontSize": "0.72rem", "opacity": "0.6",

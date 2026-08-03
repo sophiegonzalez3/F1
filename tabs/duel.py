@@ -587,7 +587,7 @@ def _verdict_section(res: dict, a: str, b: str, ca: str, grid_known: bool,
         kpi("GRID", "actual qualifying" if grid_known else "predicted",
             tooltip="Whether the simulation uses the real starting grid (once "
                     "qualifying is loaded) or samples the grid from the "
-                    "one-lap pace prediction."),
+                    "one-lap speed prediction."),
     ], className="mb-2")
     ladder = card(
         "WHERE THE PROBABILITY COMES FROM",

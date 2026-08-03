@@ -69,7 +69,13 @@ SESSION_INFO_LIST = _default_session_info()
 # ── Mutable application state ─────────────────────────────────
 laps_raw = telemetry_raw = weather_raw = race_control_raw = results_raw = None
 laps = stints = telemetry = None
-SESSIONS = DRIVERS = COMPOUNDS = TEAMS = []
+# DRIVERS holds the season's RACE drivers only — the mandated rookie FP1
+# outings are kept in the lap data (flagged Is_Race_Driver) but excluded here,
+# because this list is what the sidebar pre-selects and therefore what every
+# tab measures. TEST_DRIVERS is the excluded set, so the exclusion can be shown
+# rather than silently applied. Seasons with no roster on file put everyone in
+# DRIVERS and leave TEST_DRIVERS empty (f1lib.roster fails open).
+SESSIONS = DRIVERS = COMPOUNDS = TEAMS = TEST_DRIVERS = []
 LOADED_SESSION_INFO: list[dict] = []        # the SESSION_INFO_LIST currently loaded
 LAST_LOAD_MSG: str = ""                      # human-readable result of the last load
 DATA_GENERATION: int = 0                     # bumped on every rebuild — cache keys
@@ -80,7 +86,7 @@ post_load_hook = None
 
 _PUBLISHED = ("laps_raw", "telemetry_raw", "weather_raw", "race_control_raw",
               "results_raw", "laps", "stints", "telemetry",
-              "SESSIONS", "DRIVERS", "COMPOUNDS", "TEAMS",
+              "SESSIONS", "DRIVERS", "COMPOUNDS", "TEAMS", "TEST_DRIVERS",
               "LOADED_SESSION_INFO", "LAST_LOAD_MSG", "DATA_GENERATION")
 
 _consumers: list[dict] = []
@@ -110,7 +116,8 @@ def rebuild_state(session_info_list: list[dict], force_reload: bool = False) -> 
     """
     global laps_raw, telemetry_raw, weather_raw, race_control_raw, results_raw
     global laps, stints, telemetry
-    global SESSIONS, DRIVERS, COMPOUNDS, TEAMS, LOADED_SESSION_INFO, LAST_LOAD_MSG
+    global SESSIONS, DRIVERS, COMPOUNDS, TEAMS, TEST_DRIVERS
+    global LOADED_SESSION_INFO, LAST_LOAD_MSG
     global DATA_GENERATION
 
     if not session_info_list:
@@ -152,7 +159,13 @@ def rebuild_state(session_info_list: list[dict], force_reload: bool = False) -> 
     laps, stints, telemetry      = _laps, _stints, _telemetry
     DATA_GENERATION += 1                      # invalidate generation-keyed caches
     SESSIONS  = sorted(laps["session_name"].unique())
-    DRIVERS   = sorted(laps["Driver_Short"].dropna().unique())
+    _all_drv  = sorted(laps["Driver_Short"].dropna().unique())
+    if "Is_Race_Driver" in laps.columns:
+        _race = set(laps.loc[laps["Is_Race_Driver"], "Driver_Short"].dropna())
+        DRIVERS      = [d for d in _all_drv if d in _race]
+        TEST_DRIVERS = [d for d in _all_drv if d not in _race]
+    else:
+        DRIVERS, TEST_DRIVERS = _all_drv, []
     COMPOUNDS = [c for c in ["SOFT","MEDIUM","HARD","INTER","WET"]
                  if c in laps["Compound"].unique()]
     TEAMS     = sorted(laps["Team"].dropna().unique())
@@ -161,7 +174,10 @@ def rebuild_state(session_info_list: list[dict], force_reload: bool = False) -> 
     from datetime import datetime as _dt
     LAST_LOAD_MSG = (
         f"Loaded {len(SESSIONS)} session(s) · {len(DRIVERS)} drivers · "
-        f"{len(TEAMS)} teams  ({_dt.now().strftime('%H:%M:%S')})"
+        f"{len(TEAMS)} teams"
+        + (f" · {len(TEST_DRIVERS)} test driver(s) excluded"
+           if TEST_DRIVERS else "")
+        + f"  ({_dt.now().strftime('%H:%M:%S')})"
     )
     print(f"Ready  sessions={len(SESSIONS)}  drivers={len(DRIVERS)}  teams={len(TEAMS)}", flush=True)
     _publish()

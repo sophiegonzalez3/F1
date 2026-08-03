@@ -25,7 +25,9 @@ from dash import html, dcc
 import dash_bootstrap_components as dbc
 
 import f1lib.state as state
-from f1lib.components import theme, card, kpi, GFX, abbr as _abbr, BASE
+from f1lib.components import (
+    theme, theme_axes, card, kpi, GFX, abbr as _abbr, BASE, BASE_NO_AXES,
+)
 from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
 from f1lib.pace_model import PaceModel, canon
 from f1lib.race_forecast import RaceForecaster
@@ -133,8 +135,11 @@ def _track_record_fig(b: pd.DataFrame, height: int = 400) -> go.Figure:
                                f"<br>{fmt}"
                                "<br>%{customdata[0]} events<extra></extra>"),
             ), row=1, col=panel)
-    fig.update_layout(**{k: v for k, v in BASE.items()
-                         if k not in ("xaxis", "yaxis")}, height=height)
+    # BASE_NO_AXES + theme_axes rather than BASE: layout.xaxis only reaches
+    # panel 1 of a subplot figure, so the shared styling (and the house hover
+    # rounding) has to go on through update_*axes.
+    fig.update_layout(**BASE_NO_AXES, height=height)
+    theme_axes(fig)
     fig.update_xaxes(gridcolor=GRID_CLR)
     fig.update_yaxes(title_text="MAE (%)", gridcolor=GRID_CLR, row=1, col=1)
     fig.update_yaxes(title_text="Spearman ρ", gridcolor=GRID_CLR,
@@ -494,13 +499,13 @@ def tab_brief(sel_drivers=None, sel_teams=None):
     kpis = []
     if not probs.empty:
         top = probs.iloc[0]
-        kpis.append(kpi("PREDICTED QUALI PACE", f"{_abbr(top['team'])}",
-            tooltip="Team with the fastest predicted one-lap pace at the "
+        kpis.append(kpi("PREDICTED ONE-LAP SPEED", f"{_abbr(top['team'])}",
+            tooltip="Team with the fastest predicted one-lap speed at the "
                     "current stage of the weekend."))
         kpis.append(kpi("P(POLE-PACE TEAM)", f"{top['p_best']*100:.0f}%",
             color="#FFD700",
             tooltip="Monte-Carlo probability this team has the field's fastest "
-                    "one-lap pace, given the model's uncertainty and event-day "
+                    "one-lap speed, given the model's uncertainty and event-day "
                     "execution noise. Team-level, not driver-level."))
     # biggest mover since previous PRE-QUALI stage (the quali stage never
     # moves the one-lap latent, so comparing against it would show 0.00)
@@ -540,11 +545,11 @@ def tab_brief(sel_drivers=None, sel_teams=None):
     body.append(dbc.Row([
         dbc.Col(card(f"PREDICTED ORDER · {_KIND_LABEL['onelap'].upper()}",
             dcc.Graph(figure=_order_fig(pre_quali_show, "onelap"), config=GFX),
-            info="Predicted qualifying pace as a gap to the field mean, at "
+            info="Predicted one-lap speed as a gap to the field mean, at "
                  "the last PRE-quali stage — this chart never uses the quali "
                  "result itself, so it stays an honest prediction. Whiskers "
                  "are ±1sd. Team pace = the team's faster driver. This is "
-                 "ONE-LAP pace: a single flat-out lap, not race pace.",
+                 "ONE-LAP SPEED: a single flat-out lap, not race pace.",
             measure="predicted"), md=6),
         dbc.Col(card(f"PREDICTED ORDER · {_KIND_LABEL['longrun'].upper()}",
             dcc.Graph(figure=_order_fig(final_show, "longrun"), config=GFX),
@@ -583,11 +588,11 @@ def tab_brief(sel_drivers=None, sel_teams=None):
                     for _, r in probs.iterrows()]
         from dash import dash_table
         from f1lib.components import TABLE_STYLE
-        body.append(card("QUALIFYING PACE PROBABILITIES",
+        body.append(card("ONE-LAP SPEED PROBABILITIES",
             dash_table.DataTable(data=rows,
                 columns=[{"name": c, "id": c} for c in rows[0]], **TABLE_STYLE),
             info="Monte-Carlo probability each team has the fastest / a top-3 "
-                 "one-lap pace, from the predicted gaps, their uncertainty and "
+                 "one-lap speed, from the predicted gaps, their uncertainty and "
                  "an event-day execution-noise term. Team pace, not driver — "
                  "it does not model qualifying mistakes or grid penalties."))
 

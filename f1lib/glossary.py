@@ -62,15 +62,22 @@ GLOSSARY: dict[str, str] = {
         "circuit, measured to the thousandth of a second.",
     "sector": "Each lap is split into three timed parts (Sector 1/2/3), so you "
         "can see which part of the track a driver gains or loses time in.",
-    "one-lap pace": "How fast a car is over a SINGLE flat-out lap — low fuel, "
-        "fresh tyres, maximum attack. This is qualifying speed, and it is not "
-        "the same thing as race pace: a car can be quick here and fall away on "
-        "Sunday.",
+    # HOUSE RULE — SPEED vs PACE. In this dashboard "pace" always means a rate
+    # SUSTAINED over many laps, and "speed" means a single flat-out lap. The
+    # sport says "qualifying pace" too, and that is fine English; it is banned
+    # here because three of the five measures would otherwise be called "pace"
+    # and the word would stop carrying information. See PACE_MEASURES in
+    # components.py, and tests/test_vocabulary.py which enforces it.
+    "one-lap speed": "How fast a car is over a SINGLE flat-out lap — low fuel, "
+        "fresh tyres, maximum attack. This is qualifying speed. This dashboard "
+        "deliberately never calls it 'pace': pace here always means a rhythm "
+        "held over many laps, and a car can be quick over one lap and fall "
+        "away on Sunday.",
     "race pace": "How fast a car is over MANY laps in a row on a heavy fuel "
         "load and wearing tyres — measured as the median of clean green-flag "
         "laps, corrected for fuel burn and track evolution. The thing that "
         "actually wins races, and often a different pecking order from "
-        "one-lap pace.",
+        "one-lap speed.",
     "stint pace": "Race pace narrowed to one continuous run on one tyre "
         "compound — it separates 'this car is quick' from 'this car is quick "
         "on this particular tyre'.",
@@ -126,7 +133,7 @@ GLOSSARY: dict[str, str] = {
     "sandbagging": "Deliberately running slower than you can in practice, to "
         "hide your true pace from rivals. A tactic the dashboard tries to catch.",
     "quali sim": "A 'qualifying simulation' — a practice lap run in full "
-        "qualifying trim (low fuel, fresh softs) to preview one-lap pace.",
+        "qualifying trim (low fuel, fresh softs) to preview one-lap speed.",
     "dnf": "Did Not Finish — a car that retired from the race, usually from a "
         "crash or mechanical failure.",
     "fuel load": "How much fuel is on board. A full tank makes the car heavier "
@@ -157,8 +164,17 @@ _ALIASES: dict[str, str] = {
     "pit": "pit stop",
     "pit-stop": "pit stop",
     "pitstop": "pit stop",
-    "one lap pace": "one-lap pace",
-    "one-lap": "one-lap pace",
+    # "one-lap pace" and friends stay resolvable: the term is standard paddock
+    # English and appears in ~100 gloss() call sites, in the archive, and in
+    # anything the reader has already read elsewhere. The dashboard's own copy
+    # says "speed"; the hover still answers when someone types "pace".
+    "one lap pace": "one-lap speed",
+    "one-lap pace": "one-lap speed",
+    "one-lap": "one-lap speed",
+    "one lap speed": "one-lap speed",
+    "one-lap-speed": "one-lap speed",
+    "qualifying pace": "one-lap speed",
+    "quali pace": "one-lap speed",
     "long run": "race pace",
     "long-run pace": "race pace",
     "race-pace": "race pace",

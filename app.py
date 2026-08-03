@@ -200,7 +200,13 @@ _ARCHIVED_TABS = [
 ]
 _ARCHIVED_IDS = {tid for tid, _ in _ARCHIVED_TABS}
 
+# CONTEXT leads and is where the app opens. Splitting the read-once reference
+# material out of SEASON fixed "an encyclopedia stands between you and the
+# charts", but parking it last traded that for "you can't find it" — the
+# rulebook, the finances and the transfer market are what the rest of the
+# dashboard is read AGAINST, so they belong at the start of the run.
 TABS = dbc.Tabs([
+    dbc.Tab(label="CONTEXT",        tab_id="tab-context"),
     dbc.Tab(label="SEASON",         tab_id="tab-season"),
     dbc.Tab(label="TRACK",          tab_id="tab-track"),
     dbc.Tab(label="WEEK END PRED",  tab_id="tab-weekend"),
@@ -210,11 +216,10 @@ TABS = dbc.Tabs([
     dbc.Tab(label="RACE",           tab_id="tab-race"),
     dbc.Tab(label="DUEL",           tab_id="tab-duel"),
     dbc.Tab(label="TEAM & TEAMATE", tab_id="tab-teams"),
-    dbc.Tab(label="CONTEXT",        tab_id="tab-context"),
     # Archived tabs live in the bar but are hidden; the "+" menu selects them.
     *[dbc.Tab(label=lbl, tab_id=tid, tab_style={"display": "none"})
       for tid, lbl in _ARCHIVED_TABS],
-], id="tabs", active_tab="tab-season")
+], id="tabs", active_tab="tab-context")
 
 # "+" dropdown holding the optional / archived tabs, pinned after the last tab.
 _MORE_MENU = dbc.DropdownMenu(
@@ -305,8 +310,12 @@ def _memo_key(tab, ss, sd, st):
 # PRED 3.7 s, TELEMETRY 3.4 s). After every render (page open, data load,
 # filter change) a daemon thread quietly builds the not-yet-memoized tabs
 # for the current filters, so by the time the user clicks one it is served
-# from the memo. Heaviest tabs first; a newer schedule or a data reload
-# cancels the sweep (results from a stale world are dropped).
+# from the memo. Heaviest tabs first (worst-case click latency is what hurts);
+# a newer schedule or a data reload cancels the sweep (results from a stale
+# world are dropped). tab-context is the landing tab, so it is normally already
+# in the memo from the interactive render before this sweep starts — it stays
+# in the list only to cover the filter-change case, where it is not the one
+# being viewed.
 _PREWARM_TABS = ("tab-race", "tab-weekend", "tab-laps", "tab-teams",
                  "tab-season", "tab-stints", "tab-quali", "tab-track",
                  "tab-duel", "tab-context")
@@ -404,7 +413,7 @@ def _render_tab(tab, ss, sd, st):
             _section_header(
                 "TEAM COMPARISON AND MOMENTUM",
                 ["How the teams stack up against each other across the loaded "
-                 "sessions — ", *gloss("one-lap pace", "one-lap"), " and ",
+                 "sessions — ", *gloss("one-lap speed", "one-lap"), " and ",
                  *gloss("race pace"), ", ", *gloss("sector"), " strengths, and "
                  "which way each team's form is trending. Every metric takes the "
                  "stronger of a team's two cars, so this is the ",
@@ -417,7 +426,7 @@ def _render_tab(tab, ss, sd, st):
                 ["Now zoom inside each garage: the head-to-head duel between the "
                  "two ", *gloss("teammate", "drivers sharing identical machinery"),
                  ". Because the car is a constant, these gaps isolate the "
-                 "driver — ", *gloss("qualifying"), " pace, ",
+                 "driver — ", *gloss("one-lap speed"), ", ",
                  *gloss("race pace"), ", and how momentum swings from one side "
                  "of the garage to the other across the weekend."]),
             tab_teammates(fl_d, fs_d),
@@ -455,7 +464,7 @@ def _render_tab(tab, ss, sd, st):
                 ["Who is holding pace back. Working from clean laps expressed as "
                  "a ", *gloss("gap to the field"), " — which cancels out track "
                  "evolution — it reads the 'pace in hand' between ",
-                 *gloss("one-lap pace", "one-lap"), " and race runs, banked time "
+                 *gloss("one-lap speed", "one-lap"), " and race runs, banked time "
                  "never assembled into a lap, and once qualifying loads how much "
                  "pace was actually unlocked. Inferential by nature: these are "
                  "corroborating signals, not verdicts."]),

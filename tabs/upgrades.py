@@ -241,9 +241,9 @@ def _upgrade_rounds(season: int) -> pd.DataFrame:
 
 
 def _gap_series(season: int) -> pd.DataFrame:
-    """(round, team) → session-normalised ONE-LAP pace for the season.
+    """(round, team) → session-normalised ONE-LAP SPEED for the season.
 
-    Reads quali_pace_pct, not quali_gap_pct. The raw gap-to-pole moves ~0.6 pp
+    Reads onelap_speed_pct, not quali_result_gap_pct. The raw gap-to-pole moves ~0.6 pp
     on its own whenever a team's best lap flips between Q-sessions (19% of
     round-to-round steps in 2026) — six times this board's ±0.1 pp noise floor,
     and the field control can't remove it because a basis flip is specific to
@@ -252,7 +252,7 @@ def _gap_series(season: int) -> pd.DataFrame:
     """
     pace = team_pace_df()
     s = pace[pace["season"] == season]
-    col = "quali_pace_pct" if "quali_pace_pct" in s.columns else "quali_gap_pct"
+    col = "onelap_speed_pct" if "onelap_speed_pct" in s.columns else "quali_result_gap_pct"
     return s.set_index(["team", "round"])[col]
 
 
@@ -324,7 +324,7 @@ def _effect_board_fig(eff: pd.DataFrame, season: int) -> go.Figure:
     fig.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
     theme(fig, max(340, 26 * len(eff) + 110))
     span = float(eff["effect"].abs().max()) if len(eff) else 1.0
-    fig.update_xaxes(title_text="Change in one-lap pace (pp), "
+    fig.update_xaxes(title_text="Change in one-lap speed (pp), "
                                 "field-adjusted · negative = car got faster",
                      range=[-span*1.35, span*1.35])
     fig.update_layout(showlegend=False, bargap=0.35)
@@ -343,14 +343,14 @@ def _team_trend_fig(season: int, team: str) -> go.Figure:
     # Both series are the session-normalised, field-median-relative PACE
     # measures — not the gap-to-pole/gap-to-best result measures. connectgaps
     # stays False so a round we could not measure is a hole, not a guess.
-    qcol = "quali_pace_pct" if "quali_pace_pct" in g.columns else "quali_gap_pct"
+    qcol = "onelap_speed_pct" if "onelap_speed_pct" in g.columns else "quali_result_gap_pct"
     rcol = ("race_pace_pct" if "race_pace_pct" in g.columns
             else "race_pace_gap_pct")
     fig.add_trace(go.Scatter(
         x=g["round"], y=g[qcol], mode="lines+markers",
-        name="One-lap pace", line=dict(color=clr, width=2.5),
+        name="One-lap speed", line=dict(color=clr, width=2.5),
         marker=dict(size=7), connectgaps=False,
-        hovertemplate="One-lap pace: %{y:+.2f}% vs median<extra></extra>"))
+        hovertemplate="One-lap speed: %{y:+.2f}% vs median<extra></extra>"))
     if g[rcol].notna().any():
         fig.add_trace(go.Scatter(
             x=g["round"], y=g[rcol], mode="lines+markers",
@@ -403,7 +403,10 @@ def _impact_section() -> html.Div:
                         if not ups.empty else teams[0]))
 
     trend_card = card(
-        "Upgrade Impact — team pace trend",
+        # No measure word in the title: the card plots two different ones and
+        # the badges name them. Calling it "pace trend" made the solid one-lap
+        # line read as race pace.
+        "Upgrade Impact — team trend by round",
         html.Div([
             dcc.Dropdown(id="upg-impact-team",
                          options=[{"label": t, "value": t} for t in teams],
@@ -414,8 +417,10 @@ def _impact_section() -> html.Div:
                       figure=_team_trend_fig(season, default_team),
                       config=GFX),
         ]),
-        measure="one-lap",
-        info=("Data: the team's session-normalised ONE-LAP pace (solid) and "
+        # Two series, two badges — the chart draws one-lap (solid) AND race
+        # (dotted), and a lone ONE-LAP chip silently mislabelled the dotted line.
+        measure=("one-lap", "race"),
+        info=("Data: the team's session-normalised ONE-LAP SPEED (solid) and "
               "corrected RACE pace (dotted) at every round, both as % vs the "
               "field median, with ▼ marking the events where the team brought "
               "upgrades (hover for the FIA component list). The two lines are "
@@ -435,7 +440,7 @@ def _impact_section() -> html.Div:
                style={"color": TEXT_DIM}),
         measure="one-lap",
         info=(f"Data: for every performance/circuit upgrade package, the "
-              f"team's average session-normalised ONE-LAP pace over the "
+              f"team's average session-normalised ONE-LAP SPEED over the "
               f"{_WINDOW} rounds from its debut minus the {_WINDOW} rounds "
               "before, MINUS the median of the same delta for teams that "
               "brought nothing that round (the field control — track and "

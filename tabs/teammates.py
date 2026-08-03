@@ -262,7 +262,7 @@ def _tab_teammates_inner(fl, fs):
         if cmp_rows:
             pace_rows[cmp] = cmp_rows
 
-    # ── Quali sim / single-lap pace ───────────────────────────
+    # ── Quali sim / single-lap speed ──────────────────────────
     # Best quali-sim lap across ALL sessions (not just quali sessions).
     # Falls back to best valid lap if Is_Quali_Sim is absent.
     if "Is_Quali_Sim" in fl.columns and fl["Is_Quali_Sim"].any():
@@ -602,7 +602,7 @@ def _tab_teammates_inner(fl, fs):
               "compound (all sessions). One diverging bar per team — it points left "
               "when the left/teal driver is faster, right when the right/orange driver "
               "is. Why: compares teammates on equal tyres, the cleanest race-pace duel. "
-              "Note this is STINT pace, not one-lap pace: a driver can lose this duel "
+              "Note this is STINT pace, not one-lap speed: a driver can lose this duel "
               "and still out-qualify their teammate."),
         measure="stint",
     )
@@ -859,7 +859,7 @@ def _tab_teammates_inner(fl, fs):
             "Qualifying", dbc.Row(quali_col_items),
             info=("Data: teammate single-lap qualifying comparison — best quali-sim "
                   "lap and/or the classified Q3→Q2→Q1 time. Bars diverge toward the "
-                  "faster driver. Why: qualifying pace decides grid position and is a "
+                  "faster driver. Why: one-lap speed decides grid position and is a "
                   "clean low-fuel speed test."),
         ))
 

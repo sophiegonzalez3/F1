@@ -50,15 +50,17 @@ def overview_pace_cards(fl):
     END PRED practice-construction section)."""
     v = fl[fl["ValidLap"]]
 
-    # Drop FP1 test/rookie drivers (the mandatory young-driver FP1 outings, two
-    # per car per season): a real race driver is in the season's driver
-    # standings, a one-off tester never is — so their laps would only add noise
-    # to the pace charts. Empty standings (pre-season) → keep everyone.
+    # Test drivers are already gone: the sidebar's driver filter excludes them
+    # and Is_Race_Driver marks them in the lap data (f1lib.roster). This used
+    # to filter on "is this driver in the championship standings?", which
+    # happened to work mid-season and silently emptied the chart in pre-season
+    # and at round 1, when nobody has scored yet. Kept as a belt-and-braces
+    # guard for callers that pass unfiltered laps.
+    if "Is_Race_Driver" in v.columns:
+        v = v[v["Is_Race_Driver"]]
+
     _season, _, _ = _loaded_meeting_season_round()
     _ds = _driver_standings_after_round(_season, None)
-    _real = set(_ds)
-    if _real:
-        v = v[v["Driver_Short"].isin(_real)]
 
     # Drivers left→right in championship order (points leader first).
     drv_order = sorted(
@@ -86,9 +88,13 @@ def overview_pace_cards(fl):
                                      tickangle=0))
 
     # ── Driver Performance Matrix ─────────────────────────────
+    # tmgaps() aggregates the UNFILTERED laps, so re-apply the same race-driver
+    # restriction the violins above use — otherwise this chart alone would show
+    # the FP1 testers.
     tg = tmgaps(fl)
-    if _real:                              # same real-driver filter as the violins
-        tg = tg[tg["Driver_Short"].isin(_real)]
+    if "Is_Race_Driver" in fl.columns:
+        _race = set(fl.loc[fl["Is_Race_Driver"], "Driver_Short"].dropna())
+        tg = tg[tg["Driver_Short"].isin(_race)]
     fig_bub = go.Figure()
     max_laps = max(tg["Laps_count"].max(), 1)
     for team in sorted(tg["Team"].unique()):
@@ -125,7 +131,7 @@ def overview_pace_cards(fl):
         card("Driver Performance Matrix",dcc.Graph(figure=fig_bub,config=GFX),
              info=("Data: each driver plotted by best lap (x) vs median lap (y); "
                    "bubble size = number of valid laps. Why: separates one-lap "
-                   "qualifying pace from sustained race pace — bottom-left is fast "
+                   "one-lap speed from sustained race pace — bottom-left is fast "
                    "over both, and a big gap between a driver's x and y hints at "
                    "tyre management or traffic issues.")),
     ]

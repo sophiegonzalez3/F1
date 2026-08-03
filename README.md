@@ -160,7 +160,7 @@ the beginner glossary — **new cards should pass `measure=` to `card()`**.
 
 | Badge | Means | Measured as |
 |-------|-------|-------------|
-| `ONE-LAP` | Single flat-out lap: low fuel, fresh tyres, max attack — qualifying speed | Best single lap |
+| `ONE-LAP SPEED` | Single flat-out lap: low fuel, fresh tyres, max attack — qualifying speed | Best single lap |
 | `RACE PACE` | Sustained speed on race fuel and wearing tyres — what decides races | **Median** of clean green-flag laps, fuel- and track-corrected, dirty air excluded |
 | `STINT PACE` | Race pace narrowed to one compound | Same, per stint/compound |
 | `RESULT` | Where the car *ended up*, not how fast it was | Grid slot, classification, gap to pole |
@@ -168,19 +168,26 @@ the beginner glossary — **new cards should pass `measure=` to `card()`**.
 
 Two consequences worth knowing when reading `data/team_pace_by_event.csv`:
 
-- `quali_gap_pct` (gap to pole) is a **RESULT**, not a pace. It compares a Q1
-  lap on a green track against a Q3 lap on a rubbered one — worth ~1% of lap
-  time in 2026, up to 1.5% at Monaco. Use `quali_pace_pct`, which fits
-  `log(lap time) ~ team + Q-session` so every car is judged on the same track
-  state, for anything about *car pace* or season momentum.
-- Both `*_pace_pct` columns are expressed against the **field median**, not the
-  fastest car. A floating best-car baseline means one team's off weekend moves
-  everybody else's line; the median doesn't. Negative = faster than the median
-  car.
+- `quali_result_gap_pct` (gap to pole) is a **RESULT**, not a measure of how
+  quick the car is. It compares a Q1 lap on a green track against a Q3 lap on a
+  rubbered one — worth ~1% of lap time in 2026, up to 1.5% at Monaco. Use
+  `onelap_speed_pct`, which fits `log(lap time) ~ team + Q-session` so every car
+  is judged on the same track state, for anything about car speed or season
+  momentum.
+- `onelap_speed_pct` and `race_pace_pct` are expressed against the **field
+  median**, not the fastest car. A floating best-car baseline means one team's
+  off weekend moves everybody else's line; the median doesn't. Negative =
+  faster than the median car. (`race_pace_gap_pct` is the same race-pace
+  measure baselined on the fastest team — still pace, just a different
+  reference.)
+- Columns written before the speed/pace split (`quali_pace_pct`,
+  `quali_gap_pct`) are renamed on load by
+  `f1lib.config.apply_pace_legacy_columns`, so an older table — or one restored
+  from a backup — still works without being regenerated.
 
 ## The pace model scores itself on the corrected measure
 
-`f1lib/pace_model.py` builds its season-form prior from `quali_pace_pct` /
+`f1lib/pace_model.py` builds its season-form prior from `onelap_speed_pct` /
 `race_pace_pct`, and `scripts/backtest_pace_model.py` scores its predictions
 against the same two columns. They used to use the raw `*_gap_pct` pair, which
 was wrong in a specific and measurable way: the Q1→Q3 artifact correlates
@@ -272,9 +279,12 @@ card, put it where its refresh cadence belongs.
 SEASON's momentum block deliberately answers *what changed*, not *where things
 stand* — the standings table already does the latter:
 
-- **Momentum** — change in one-lap pace against change in points-per-round,
-  first half of the rounds run so far vs second. The quadrants separate "the
-  car got faster" from "the results got better", which are not the same thing.
+- **Momentum** — change in one-lap speed against change in each team's SHARE of
+  the points the field scored, first half of the rounds run so far vs second.
+  (Share, not points-per-round: sprints aren't spread evenly through a season,
+  so a per-round rate drags every team down in the sprint-poor half for pure
+  scheduling reasons.) The quadrants separate "the car got faster" from "the
+  results got better", which are not the same thing.
 - **Form Guide** — 3-round rolling points rate, and the gap to the leader per
   round. The cumulative points line is monotonic and hides recent form.
 - **Saturday vs Sunday Character** — drawn as an arrow from the first half of

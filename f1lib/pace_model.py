@@ -1,7 +1,7 @@
 """Progressive weekend pace prediction.
 
 Estimates, for every team at a given event, two latent quantities as % gaps
-to the field mean: ONE-LAP pace (what qualifying will show) and LONG-RUN pace
+to the field mean: ONE-LAP SPEED (what qualifying will show) and LONG-RUN pace
 (what the race will show). The estimate starts from an era-aware season-form
 prior and is sharpened after each practice session by the measurements from
 pace_features.py, in a plain Gaussian precision-weighted (Kalman-style)
@@ -44,6 +44,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from f1lib.config import apply_pace_legacy_columns
 from f1lib.pace_features import event_measurements, canon
 
 logger = logging.getLogger(__name__)
@@ -133,14 +134,18 @@ class PaceModel:
     # / to the fastest team. The raw pair carries ~1% of Q1→Q3 track evolution,
     # which flips on and off as a team's best lap moves between Q-sessions —
     # 19% of round-to-round steps in 2026 — so the prior was partly learning
-    # noise. Falls back to the old columns when the table predates them.
-    COL_ONELAP = ("quali_pace_pct", "quali_gap_pct")
+    # noise. Falls back to the gap columns when the table predates them.
+    COL_ONELAP = ("onelap_speed_pct", "quali_result_gap_pct")
     COL_LONGRUN = ("race_pace_pct", "race_pace_gap_pct")
 
     def __init__(self, pace_csv: str | Path = PACE_CSV, **overrides):
         self.p = {**DEFAULTS, **overrides}
         self._driver_ratings = None            # lazy (needs driver_pace CSV)
-        df = pd.read_csv(pace_csv)
+        # This reads the CSV directly rather than through tabs.pace_data (a
+        # model must not depend on a tab), so it applies the legacy column map
+        # itself — otherwise an older table resolves to a column that is not
+        # there and the fallback above cannot save it.
+        df = apply_pace_legacy_columns(pd.read_csv(pace_csv))
         df["team"] = df["team"].map(canon)
         self.col_onelap = next(
             (c for c in self.COL_ONELAP if c in df.columns), self.COL_ONELAP[-1])

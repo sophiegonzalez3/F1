@@ -48,6 +48,7 @@ from f1lib.config import (
     MIN_LAPS_MEDIUM,
     FALLBACK_MIN_LAPS,
 )
+from f1lib.roster import flag_race_drivers, non_race_drivers_in
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +334,18 @@ def clean_and_enrich_laps(df: pd.DataFrame) -> pd.DataFrame:
         _fuel_race.where(_is_race | _is_sprint, _fuel_stint).clip(lower=0)
     )
     df["LapTime_FuelCorrected"] = df["LapTime_s"] - (df["FuelLoad_kg"] * FUEL_CORRECTION)
+
+    # ── Race driver vs mandated rookie FP1 outing ────────────
+    # Flag, never drop: the laps stay so the DATA QUALITY tab can report what
+    # was loaded and an end-of-season rookie card can use them. Consumers that
+    # measure the FIELD filter on this — a tester shifts the session median
+    # every practice measurement is expressed against. Seasons with no roster
+    # on file come back all-True (see f1lib.roster).
+    df["Is_Race_Driver"] = flag_race_drivers(df)
+    _n_test = int((~df["Is_Race_Driver"]).sum())
+    if _n_test:
+        logger.info("  Non-race drivers : %d lap(s) from %s",
+                    _n_test, ", ".join(non_race_drivers_in(df)))
 
     # ── Team color ───────────────────────────────────────────
     df["TeamColor"] = df["Team"].map(TEAM_COLORS).fillna("#808080")

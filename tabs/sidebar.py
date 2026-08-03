@@ -130,6 +130,19 @@ def build_sidebar(logo_src: str) -> dbc.Col:
              "Clear the selection, then type in the box above to search and "
              "add drivers one by one. While nothing is selected, tabs show "
              "the full field."),
+        # The mandated rookie FP1 outings are excluded by default. Shown here
+        # rather than applied silently: the switch names who is missing, and
+        # lets them back in for a look. Always rendered (hidden when the event
+        # had none) so the callback below always has its Input — a component
+        # that appears and disappears takes the callback with it.
+        html.Div([
+            dbc.Switch(id="drv-include-test", value=False,
+                       label=f"Include test drivers ({len(state.TEST_DRIVERS)})",
+                       style={"marginTop": "6px", "marginBottom": "2px"}),
+            html.Div(", ".join(state.TEST_DRIVERS),
+                     style={"color": TEXT_DIM, "fontSize": "0.68rem",
+                            "lineHeight": "1.35"}),
+        ], style={} if state.TEST_DRIVERS else {"display": "none"}),
         html.Hr(style=_HR),
 
         # SESSIONS is the least-frequently changed filter, so it sits at the
@@ -174,6 +187,27 @@ def driver_quick_select(_a, _n, options):
     if ctx.triggered_id == "drv-none-btn":
         return []
     return [o["value"] for o in (options or [])]
+
+
+# ── Test-driver toggle ───────────────────────────────────────
+@callback(
+    Output("driver-filter", "options", allow_duplicate=True),
+    Output("driver-filter", "value", allow_duplicate=True),
+    Input("drv-include-test", "value"),
+    prevent_initial_call=True,
+)
+def driver_include_test(include):
+    """Add or remove the mandated rookie FP1 entrants from the driver filter.
+
+    Rewrites both the options AND the selection: leaving them selectable but
+    unselected would put a chip in the box that quietly changes every
+    field-relative number the moment someone clicks it.
+    """
+    drivers = list(state.DRIVERS)
+    if include:
+        drivers += list(state.TEST_DRIVERS)
+        drivers = sorted(drivers)
+    return [{"label": d, "value": d} for d in drivers], drivers
 
 
 # ── Team quick select (All / None / championship tiers) ──────

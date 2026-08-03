@@ -272,7 +272,7 @@ def _payoff_fig(P: pd.DataFrame, season: int, height: int) -> go.Figure | None:
     tp = team_pace_df()
     if tp.empty:
         return None
-    tp = tp[tp["season"] == season][["round", "team", "quali_pace_pct",
+    tp = tp[tp["season"] == season][["round", "team", "onelap_speed_pct",
                                      "race_pace_pct"]]
     J = P.merge(tp, on=["round", "team"], how="inner")
     if len(J) < 30:
@@ -281,7 +281,7 @@ def _payoff_fig(P: pd.DataFrame, season: int, height: int) -> go.Figure | None:
     for c, label, _u, better, _rel, _d in AXES:
         if c not in J.columns or better is None:
             continue          # a style axis has no strong end to test
-        for tgt, tname in (("quali_pace_pct", "One-lap"),
+        for tgt, tname in (("onelap_speed_pct", "One-lap"),
                            ("race_pace_pct", "Race")):
             s = J[[c, tgt]].dropna()
             if len(s) < 25:
@@ -427,6 +427,11 @@ def car_concept_section(season: int | None = None,
                       config=GFX),
             _axis_legend(),
         ]),
+        # The matrix mixes measurement families on purpose: straight-line,
+        # cornering and top-end fade come off the best qualifying lap, while
+        # tyre wear and energy saving come off race running. Both chips, so the
+        # header never implies the whole row was measured the same way.
+        measure=("one-lap", "stint"),
         info=("Data: data/car_profile.csv (scripts/compute_car_profile.py), "
               "built from the cached qualifying and race telemetry of every "
               "event this season. Each axis is centred on the field that "

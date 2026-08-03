@@ -134,7 +134,7 @@ def test_model_and_backtest_read_the_same_pace_columns():
     sys.modules["backtest_pace_model"] = bt
     spec.loader.exec_module(bt)
 
-    assert bt.TARGET == {"onelap": "quali_pace_pct",
+    assert bt.TARGET == {"onelap": "onelap_speed_pct",
                          "longrun": "race_pace_pct"}
     if not (ROOT / "data" / "team_pace_by_event.csv").exists():
         pytest.skip("pace table not built")
@@ -148,20 +148,74 @@ def test_model_and_backtest_read_the_same_pace_columns():
 
 
 def test_real_table_has_both_measure_families():
-    """The shipped table must carry the result measures AND the pace measures —
-    the SEASON charts read the pace ones, and conflating them is the whole bug
-    this estimator exists to fix."""
+    """The shipped table must carry the RESULT measures AND the speed/pace
+    measures — the SEASON charts read the latter, and conflating them is the
+    whole bug this estimator exists to fix.
+
+    Read through the legacy-column map, exactly as every consumer does, so a
+    table written before the speed/pace rename still passes rather than
+    failing the suite on a naming change it is not about.
+    """
+    from f1lib.config import apply_pace_legacy_columns
+
     path = ROOT / "data" / "team_pace_by_event.csv"
     if not path.exists():
         pytest.skip("team_pace_by_event.csv not built")
-    d = pd.read_csv(path)
-    for col in ("quali_gap_pct", "quali_pace_pct",
+    d = apply_pace_legacy_columns(pd.read_csv(path))
+    for col in ("quali_result_gap_pct", "onelap_speed_pct",
                 "race_pace_gap_pct", "race_pace_pct", "race_pace_missing"):
         assert col in d.columns, f"missing column {col}"
 
     latest = d[d["season"] == d["season"].max()]
-    # gap-to-pole is non-negative by construction; pace-vs-median straddles 0
-    assert (latest["quali_gap_pct"] >= -1e-9).all()
-    assert latest["quali_pace_pct"].min() < 0 < latest["quali_pace_pct"].max()
+    # gap-to-pole is non-negative by construction; speed-vs-median straddles 0
+    assert (latest["quali_result_gap_pct"] >= -1e-9).all()
+    assert latest["onelap_speed_pct"].min() < 0 < latest["onelap_speed_pct"].max()
     # and the median car should sit near zero
-    assert abs(latest.groupby("round")["quali_pace_pct"].median().mean()) < 0.35
+    assert abs(latest.groupby("round")["onelap_speed_pct"].median().mean()) < 0.35
+
+
+# ── legacy column compatibility ──────────────────────────────
+
+def test_legacy_columns_are_renamed_on_load():
+    """A table written before the speed/pace rename must still load. The map
+    is what lets the CSV schema move without a flag day."""
+    from f1lib.config import apply_pace_legacy_columns
+
+    legacy = pd.DataFrame({
+        "season": [2026], "round": [1], "event": ["X"], "team": ["Ferrari"],
+        "quali_gap_pct": [0.5], "quali_pace_pct": [-0.2],
+        "race_pace_pct": [-0.1],
+    })
+    out = apply_pace_legacy_columns(legacy)
+    assert "onelap_speed_pct" in out.columns
+    assert "quali_result_gap_pct" in out.columns
+    assert out["onelap_speed_pct"].iloc[0] == -0.2
+    assert out["quali_result_gap_pct"].iloc[0] == 0.5
+    # untouched columns stay put
+    assert out["race_pace_pct"].iloc[0] == -0.1
+
+
+def test_legacy_map_never_clobbers_a_current_column():
+    """A hand-edited table carrying BOTH names must keep the current one —
+    silently overwriting it with stale values would be the worst outcome."""
+    from f1lib.config import apply_pace_legacy_columns
+
+    both = pd.DataFrame({"quali_pace_pct": [99.0], "onelap_speed_pct": [-0.2]})
+    out = apply_pace_legacy_columns(both)
+    assert out["onelap_speed_pct"].iloc[0] == -0.2
+
+
+def test_current_table_needs_no_renaming():
+    """The shim must be a no-op on a freshly built table — if it fires, the
+    writer and the readers have drifted apart."""
+    from f1lib.config import apply_pace_legacy_columns, PACE_LEGACY_COLUMNS
+
+    path = ROOT / "data" / "team_pace_by_event.csv"
+    if not path.exists():
+        pytest.skip("team_pace_by_event.csv not built")
+    d = pd.read_csv(path, nrows=1)
+    stale = [c for c in PACE_LEGACY_COLUMNS if c in d.columns]
+    assert not stale, (
+        f"data/team_pace_by_event.csv still uses {stale} — "
+        "re-run scripts/compute_team_pace.py")
+    assert list(apply_pace_legacy_columns(d).columns) == list(d.columns)

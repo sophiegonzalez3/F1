@@ -10,14 +10,27 @@ import pandas as pd
 _PATH = Path("data/team_pace_by_event.csv")
 _CACHE: dict = {"mtime": None, "df": pd.DataFrame()}
 
-# quali_gap_pct / race_pace_gap_pct are the RESULT measures (gap to pole, gap
-# to the fastest team). quali_pace_pct / race_pace_pct are the session-
-# normalised, field-median-relative PACE measures the season charts read —
-# see compute_team_pace.py for why the two families are not interchangeable.
+# Two families, and they are not interchangeable — see compute_team_pace.py.
+#
+#   RESULT   quali_result_gap_pct   where the car finished up on Saturday
+#            race_pace_gap_pct      race pace, but baselined on the fastest
+#                                   team rather than the field median
+#   SPEED /  onelap_speed_pct       one flat-out lap, session-normalised
+#   PACE     race_pace_pct          sustained race laps
+#            …both vs the FIELD MEDIAN, which is what the season charts read.
+#
+# Note race_pace_gap_pct keeps "pace": it IS a race-pace measure, only its
+# baseline differs. quali_result_gap_pct does not, because it mixes car speed
+# with how far through qualifying the team got.
 _COLS = ["season", "round", "event", "team",
-         "quali_gap_pct", "quali_pace_pct",
+         "quali_result_gap_pct", "onelap_speed_pct",
          "race_pace_gap_pct", "race_pace_pct", "race_pace_missing",
          "points", "cum_points"]
+
+# Legacy header handling lives in config so f1lib/pace_model.py — which reads
+# the same CSV directly, without going through this module — applies exactly
+# the same map. Two copies of a compatibility shim is one copy too many.
+from f1lib.config import apply_pace_legacy_columns as _apply_legacy_names
 
 _CAL_PATH = Path("data/season_calendar.csv")
 _CAL_CACHE: dict = {"mtime": None, "df": pd.DataFrame()}
@@ -38,7 +51,7 @@ def team_pace_df() -> pd.DataFrame:
             _CACHE["df"] = pd.DataFrame(columns=_COLS)
         else:
             try:
-                _CACHE["df"] = pd.read_csv(_PATH)
+                _CACHE["df"] = _apply_legacy_names(pd.read_csv(_PATH))
             except Exception:
                 _CACHE["df"] = pd.DataFrame(columns=_COLS)
         _CACHE["mtime"] = mtime

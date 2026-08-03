@@ -665,13 +665,17 @@ def zone_dominance_section(laps_df: pd.DataFrame) -> html.Div:
         return card("Track Zone Dominance",
                     html.P("No valid race or practice laps loaded — this card "
                            "excludes qualifying and sprint qualifying by design.",
-                           style={"color": TEXT_DIM}))
+                           style={"color": TEXT_DIM}),
+                               measure="race",
+                           )
 
     ctx = _current()
     if ctx is None:
         return card("Track Zone Dominance",
                     html.P("No circuit geometry or position telemetry available "
-                           "for the loaded laps.", style={"color": TEXT_DIM}))
+                           "for the loaded laps.", style={"color": TEXT_DIM}),
+                               measure="race",
+                           )
 
     geom, is_real = ctx["geom"], ctx["is_real"]
     # tab_laps hands us the sidebar-filtered frame; the dropdowns must offer
@@ -760,6 +764,7 @@ def zone_dominance_section(laps_df: pd.DataFrame) -> html.Div:
                   "owns over a run — a slow-corner sector won by one team and a "
                   "straight won by another is a car-balance story lap time "
                   "hides. Absolute one-lap dominance lives in the QUALI tab."),
+            measure="race",
         ),
     ])
 

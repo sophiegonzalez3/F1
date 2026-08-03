@@ -582,6 +582,7 @@ def _tab_teammates_inner(fl, fs):
                       f"their best valid {cmp} stint (trimmed median). Why: "
                       "same car, same compound — the cleanest possible "
                       "race-pace comparison between two drivers."),
+                measure="stint",
             ), md=col_w))
     else:
         pace_col_items = [dbc.Col(html.P(
@@ -600,7 +601,10 @@ def _tab_teammates_inner(fl, fs):
         info=("Data: each teammate's fuel-corrected pace on their best valid stint per "
               "compound (all sessions). One diverging bar per team — it points left "
               "when the left/teal driver is faster, right when the right/orange driver "
-              "is. Why: compares teammates on equal tyres, the cleanest race-pace duel."),
+              "is. Why: compares teammates on equal tyres, the cleanest race-pace duel. "
+              "Note this is STINT pace, not one-lap pace: a driver can lose this duel "
+              "and still out-qualify their teammate."),
+        measure="stint",
     )
 
     # ══════════════════════════════════════════════════════════
@@ -667,6 +671,7 @@ def _tab_teammates_inner(fl, fs):
                           "identified, else the best valid lap. Why: isolates "
                           "single-lap speed from race pace; a driver can win one "
                           "duel and lose the other."),
+                    measure="one-lap",
                 ), md=6)
             )
         if quali_time_rows:
@@ -688,6 +693,7 @@ def _tab_teammates_inner(fl, fs):
                           "teammate duel as it counted on Saturday — unlike the "
                           "practice-based one-lap estimate, this is the result "
                           "that set the grid."),
+                    measure="result",
                 ), md=6)
             )
 

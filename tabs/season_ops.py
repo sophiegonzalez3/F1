@@ -618,7 +618,11 @@ def affinity_card(season: int, min_events: int = 2) -> html.Div | None:
     pace = team_pace_df()
     if pace.empty:
         return None
-    s = pace[(pace["season"] == season) & pace["quali_gap_pct"].notna()].copy()
+    # Session-normalised ONE-LAP pace, not the raw gap to pole: a team whose
+    # best lap flips Q-session between a power and a technical round would
+    # otherwise book ~0.6 pp of track evolution as a concept preference.
+    pcol = "quali_pace_pct" if "quali_pace_pct" in pace.columns else "quali_gap_pct"
+    s = pace[(pace["season"] == season) & pace[pcol].notna()].copy()
     if s.empty:
         return None
     try:
@@ -635,8 +639,8 @@ def affinity_card(season: int, min_events: int = 2) -> html.Div | None:
 
     rows = []
     for team, g in s.groupby("team"):
-        p = g[g["kind"] == "power"]["quali_gap_pct"]
-        t = g[g["kind"] == "technical"]["quali_gap_pct"]
+        p = g[g["kind"] == "power"][pcol]
+        t = g[g["kind"] == "technical"][pcol]
         if len(p) < min_events or len(t) < min_events:
             continue
         rows.append({"team": team, "delta": float(t.mean() - p.mean()),
@@ -671,7 +675,8 @@ def affinity_card(season: int, min_events: int = 2) -> html.Div | None:
     return card(
         "Track-Type Affinity — Power vs Technical",
         dcc.Graph(figure=fig, config=GFX),
-        info=("Data: each team's average qualifying gap on high-speed "
+        measure="one-lap",
+        info=("Data: each team's average session-normalised ONE-LAP pace on high-speed "
               "'power' circuits (avg-speed score ≥ 3 in "
               "circuit_characteristics.csv) minus its average gap on slower "
               "technical circuits, this season (min. "

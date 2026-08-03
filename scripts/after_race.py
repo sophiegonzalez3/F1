@@ -13,7 +13,13 @@ Steps, in dependency order:
   5. scripts/compute_race_stats.py     SC rates, overtakes, pit league, ...
   6. scripts/compute_atr.py            ATR sliding scale (needs standings)
   7. scripts/compute_pu_topspeed.py    straight-line-speed / PU index (sessions)
-  8. compute_mistakes.py               micro-mistake archive (telemetry, slow)
+  8. scripts/compute_car_profile.py    car-concept axes for the STINTS tab
+                                       (telemetry, ~1 min per event)
+  9. scripts/backtest_pace_model.py    replays every weekend and re-scores the
+                                       pace model — feeds the BRIEF tab's
+                                       track-record card, so skipping it
+                                       silently leaves that card stale
+ 10. compute_mistakes.py               micro-mistake archive (telemetry, slow)
 
 Stops at the first failing step; every step is idempotent, so fix and re-run.
 Not covered here (needs a human or a browser): the `radio-review` skill, the
@@ -56,6 +62,10 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "scripts/compute_atr.py"]),
     ("topspeed",  "PU top-speed index",
      [sys.executable, "scripts/compute_pu_topspeed.py"]),
+    ("carprofile", "car concept profile",
+     [sys.executable, "scripts/compute_car_profile.py"]),
+    ("backtest",   "pace-model scorecard",
+     [sys.executable, "scripts/backtest_pace_model.py"]),
     ("mistakes",  "micro-mistakes",
      [sys.executable, "compute_mistakes.py"]),
 ]

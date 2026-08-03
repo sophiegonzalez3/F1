@@ -486,10 +486,14 @@ def _tab_teams_inner2(fl, fs):
             html.Hr(style={"borderColor": GRID_CLR, "marginBottom": "12px"}),
         ])
 
-    def _maybe_card(title, fig, info=None):
-        """Only add the card if the figure has at least one trace."""
+    def _maybe_card(title, fig, info=None, measure=None):
+        """Only add the card if the figure has at least one trace.
+        `measure` badges the header with WHICH pace measure the card shows
+        (one-lap / race / stint), so a single flat-out lap and a stint median
+        can never be mistaken for the same quantity."""
         if fig and fig.data:
-            return [card(title, dcc.Graph(figure=fig, config=GFX), info=info)]
+            return [card(title, dcc.Graph(figure=fig, config=GFX), info=info,
+                         measure=measure)]
         return []
 
     # ═════════════════════════════════════════════════════════
@@ -510,6 +514,7 @@ def _tab_teams_inner2(fl, fs):
                   "best valid stint on each compound (all sessions). Bars show the % "
                   "gap to the fastest team on that compound. Why: the cleanest read "
                   "on true race-run pace, separated by tyre."),
+            measure="stint",
         )
 
     # Best lap overall
@@ -520,6 +525,7 @@ def _tab_teams_inner2(fl, fs):
         info=("Data: the single fastest valid lap set by either driver of each team, "
               "across all sessions; bars show % gap to the fastest team. Why: a raw "
               "measure of ultimate one-lap car+driver performance."),
+        measure="one-lap",
     )
 
     # NB laps – total
@@ -563,6 +569,7 @@ def _tab_teams_inner2(fl, fs):
             info=("Data: best qualifying time (Q3→Q2→Q1 cascade) of the team's "
                   "quicker driver; bars show % gap to pole pace. Why: low-fuel, "
                   "max-attack single-lap performance — the purest car+driver speed."),
+            measure="one-lap",
         )
 
     if has_race:
@@ -573,6 +580,7 @@ def _tab_teams_inner2(fl, fs):
             info=("Data: best representative stint pace of the team's stronger driver "
                   "in race/sprint sessions only (fuel-corrected). Why: actual race-day "
                   "pace, which can differ markedly from one-lap qualifying speed."),
+            measure="race",
         )
         left_cards += _maybe_card(
             "Positions Gained / Lost (race/sprint)",
@@ -602,6 +610,7 @@ def _tab_teams_inner2(fl, fs):
                   "drivers' best stint per compound instead of taking the best one. "
                   "Why: rewards teams with two strong cars, not just one standout; a "
                   "missing driver falls back to the available one (never forced to 0)."),
+            measure="stint",
         )
 
     right_cards += _maybe_card(
@@ -611,6 +620,7 @@ def _tab_teams_inner2(fl, fs):
         info=("Data: mean of the two drivers' best valid laps per team. Why: a "
               "two-car measure of single-lap speed — penalises line-ups that lean "
               "on one quick driver."),
+        measure="one-lap",
     )
 
     right_cards += _maybe_card(
@@ -651,6 +661,7 @@ def _tab_teams_inner2(fl, fs):
                   lower_is_better=True, xlabel="Avg Quali Lap (s)"),
             info=("Data: mean of both drivers' best qualifying times (Q3→Q2→Q1). "
                   "Why: a two-car view of single-lap speed."),
+            measure="one-lap",
         )
 
     if has_race:
@@ -661,6 +672,7 @@ def _tab_teams_inner2(fl, fs):
             info=("Data: mean of both drivers' best representative race/sprint stint "
                   "pace (fuel-corrected). Why: sustained race pace measured across the "
                   "whole line-up."),
+            measure="race",
         )
         right_cards += _maybe_card(
             "Avg Positions Gained / Lost (race/sprint)",

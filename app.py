@@ -134,7 +134,7 @@ from f1lib.standings import (
 # docs, and the UPGRADES tab live in tabs/upgrades.py (the extraction template
 # for splitting further tabs out of this file — see tabs/__init__.py).
 from tabs.upgrades import upgrade_impact_section, upgrade_event_detail, upgrades_df
-from tabs.season import tab_season
+from tabs.season import tab_season, tab_context
 from tabs.qualifying import tab_quali
 from tabs.fingerprints import fingerprint_section
 print(f"Team upgrades           : {len(upgrades_df()):,} rows")
@@ -210,6 +210,7 @@ TABS = dbc.Tabs([
     dbc.Tab(label="RACE",           tab_id="tab-race"),
     dbc.Tab(label="DUEL",           tab_id="tab-duel"),
     dbc.Tab(label="TEAM & TEAMATE", tab_id="tab-teams"),
+    dbc.Tab(label="CONTEXT",        tab_id="tab-context"),
     # Archived tabs live in the bar but are hidden; the "+" menu selects them.
     *[dbc.Tab(label=lbl, tab_id=tid, tab_style={"display": "none"})
       for tid, lbl in _ARCHIVED_TABS],
@@ -308,7 +309,7 @@ def _memo_key(tab, ss, sd, st):
 # cancels the sweep (results from a stale world are dropped).
 _PREWARM_TABS = ("tab-race", "tab-weekend", "tab-laps", "tab-teams",
                  "tab-season", "tab-stints", "tab-quali", "tab-track",
-                 "tab-duel")
+                 "tab-duel", "tab-context")
 _prewarm_seq = 0
 
 
@@ -479,6 +480,7 @@ def _render_tab(tab, ss, sd, st):
             standings=_season_standings_row(fl_d),
             upgrades=upgrade_impact_section(),
         )
+    if tab=="tab-context":    return tab_context()
     return html.P("Select a tab.")
 
 

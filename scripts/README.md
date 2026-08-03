@@ -82,6 +82,7 @@ slower cadence (yearly / on-symptom).
 | `compute_race_stats.py` | `race_stats.csv`, `track_limits.csv`, `lap1_league.csv`, `pit_league.csv` | After caching a new race, and after `fetch_pitstops.py`. (Step 5.) |
 | `compute_atr.py` | `data/atr_allowance.csv` | After a new race — and specifically after the first race past 30 June (creates the H2 window) and after the season opener. (Step 6.) |
 | `compute_pu_topspeed.py` | `data/pu_topspeed.csv` (SEASON Engine Championship card) | After caching a new race. Args: `--season 2026`, `--verbose`. (Step 7.) |
+| `compute_car_profile.py` | `data/car_profile.csv` (STINTS Car Concept section) | After caching a new race. Reads qualifying + race telemetry, ~1 min per event. Args: `--season 2026`, `--event Hungarian`. (Step 8.) |
 | `compute_circuit_characteristics.py` | `data/circuit_characteristics_computed.csv` | Only when a new circuit enters the calendar, one is resurfaced, or telemetry coverage grows. Args: `--verbose`. |
 | `compute_corner_classes.py` | `data/corner_speed_classes.json` (fixed slow/medium/fast km/h thresholds) | Once per season, from a full season of cached track maps. Deliberately NOT per-race: the thresholds must stay fixed for cross-event comparison. Args: `--season`, `--verbose`. |
 | `build_quali_scenes.py` | `data/track_scenes/`, `data/replays/` | Before shipping new circuits so the QUALI 3D replay loads instantly. Args: `--force`, or `<season> "<Meeting>"` for one. |
@@ -100,7 +101,7 @@ and needs a cached track map for the circuit — which `during_weekend.py` warms
 
 | Script | What it does | Run it when |
 |---|---|---|
-| `backtest_pace_model.py` | Replays every cached weekend to score the progressive pace model → `data/backtest_pace_model.csv`. Args: `--seasons`, `--tune`. | After changing `f1lib/pace_model.py` or `pace_features.py`, to confirm it still beats the naive baseline. |
+| `backtest_pace_model.py` | Replays every cached weekend to score the progressive pace model → `data/backtest_pace_model.csv`. Args: `--seasons`, `--tune`. | After every race (`after_race.py` step 9) — it feeds the BRIEF tab's **Model Track Record** card, so skipping it leaves that card quietly stale. Also after changing `f1lib/pace_model.py` or `pace_features.py`, to confirm it still beats the naive baseline. |
 | `backtest_race_forecast.py` | Validates the race-result forecast's pace + grid + passability blend. | After changing `f1lib/race_forecast.py` or `driver_ratings.py`. |
 
 ## Team radio

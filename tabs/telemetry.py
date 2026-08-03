@@ -943,6 +943,7 @@ def tab_laps(fl, ft):
     return html.Div([
         zone_dominance_section(fl),
         card("Best Lap Leaderboard",
+             measure="one-lap",
              info=("Data: each driver's single fastest valid lap across all loaded "
                    "sessions (one lap per driver). The list is paged by "
                    "championship tier — page 1 the top teams, page 2 the "

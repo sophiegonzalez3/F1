@@ -275,7 +275,8 @@ def tab_practice_construction(wl):
         fig_p.update_yaxes(autorange="reversed")
         body.append(dbc.Row([dbc.Col(card("PACE PROGRESSION",
             dcc.Graph(figure=fig_p, config=GFX),
-            info="Each team's best quali-sim lap per session (best valid lap in qualifying), as a gap to that session's fastest. Y-axis inverted so rising lines = relative improvement. Shows the build trajectory across the weekend."), md=12)]))
+            info="Each team's best quali-sim lap per session (best valid lap in qualifying), as a gap to that session's fastest. Y-axis inverted so rising lines = relative improvement. Shows the build trajectory across the weekend. ONE-LAP pace only — long-run pace is the sandbagging section below.",
+            measure="one-lap"), md=12)]))
 
     return html.Div(body)
 
@@ -360,7 +361,8 @@ def tab_sandbagging(wl):
         fig_b.update_yaxes(autorange="reversed")
         body.append(dbc.Row([dbc.Col(card("BANKED TIME · PRACTICE (per driver)",
             dcc.Graph(figure=fig_b, config=GFX),
-            info="Best assembled practice lap minus the sum of the driver's best sectors. Large values mean the pace was there but never put together on one lap — sometimes deliberate."), md=12)]))
+            info="Best assembled practice lap minus the sum of the driver's best sectors. Large values mean the pace was there but never put together on one lap — sometimes deliberate.",
+            measure="one-lap"), md=12)]))
 
     # ── Quali confirmation layer (only once qualifying is loaded) ──
     if has_quali:

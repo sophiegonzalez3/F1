@@ -10,8 +10,14 @@ import pandas as pd
 _PATH = Path("data/team_pace_by_event.csv")
 _CACHE: dict = {"mtime": None, "df": pd.DataFrame()}
 
+# quali_gap_pct / race_pace_gap_pct are the RESULT measures (gap to pole, gap
+# to the fastest team). quali_pace_pct / race_pace_pct are the session-
+# normalised, field-median-relative PACE measures the season charts read —
+# see compute_team_pace.py for why the two families are not interchangeable.
 _COLS = ["season", "round", "event", "team",
-         "quali_gap_pct", "race_pace_gap_pct", "points", "cum_points"]
+         "quali_gap_pct", "quali_pace_pct",
+         "race_pace_gap_pct", "race_pace_pct", "race_pace_missing",
+         "points", "cum_points"]
 
 _CAL_PATH = Path("data/season_calendar.csv")
 _CAL_CACHE: dict = {"mtime": None, "df": pd.DataFrame()}

@@ -122,7 +122,7 @@ the repo root inside the venv.
 3. **After the race is cached**, rebuild the derived tables:
 
    ```bash
-   python scripts/after_race.py   # pit stops → results archive → team pace → driver pace → race stats → ATR → PU top-speed → mistakes
+   python scripts/after_race.py   # pit stops → results archive → team pace → driver pace → race stats → ATR → PU top-speed → car profile → model backtest → mistakes
    ```
 
    Stops at the first failure; every step is idempotent, and `--skip <key>`
@@ -148,6 +148,137 @@ the repo root inside the venv.
 See [`scripts/README.md`](scripts/README.md) for the full per-script reference.
 
 ---
+
+## "Pace" means four different things — say which
+
+The word *pace* is unavoidable in F1 and dangerously overloaded: a car can lead
+one measure and be mid-pack in another. Every card whose subject is a speed
+therefore wears a colour-coded badge in its header naming the measure, with the
+full definition on hover. The vocabulary is defined once in
+[`f1lib/components.py`](f1lib/components.py) (`PACE_MEASURES`) and mirrored in
+the beginner glossary — **new cards should pass `measure=` to `card()`**.
+
+| Badge | Means | Measured as |
+|-------|-------|-------------|
+| `ONE-LAP` | Single flat-out lap: low fuel, fresh tyres, max attack — qualifying speed | Best single lap |
+| `RACE PACE` | Sustained speed on race fuel and wearing tyres — what decides races | **Median** of clean green-flag laps, fuel- and track-corrected, dirty air excluded |
+| `STINT PACE` | Race pace narrowed to one compound | Same, per stint/compound |
+| `RESULT` | Where the car *ended up*, not how fast it was | Grid slot, classification, gap to pole |
+| `PREDICTED` | A model estimate, not a measurement | Pace model, pre-session |
+
+Two consequences worth knowing when reading `data/team_pace_by_event.csv`:
+
+- `quali_gap_pct` (gap to pole) is a **RESULT**, not a pace. It compares a Q1
+  lap on a green track against a Q3 lap on a rubbered one — worth ~1% of lap
+  time in 2026, up to 1.5% at Monaco. Use `quali_pace_pct`, which fits
+  `log(lap time) ~ team + Q-session` so every car is judged on the same track
+  state, for anything about *car pace* or season momentum.
+- Both `*_pace_pct` columns are expressed against the **field median**, not the
+  fastest car. A floating best-car baseline means one team's off weekend moves
+  everybody else's line; the median doesn't. Negative = faster than the median
+  car.
+
+## The pace model scores itself on the corrected measure
+
+`f1lib/pace_model.py` builds its season-form prior from `quali_pace_pct` /
+`race_pace_pct`, and `scripts/backtest_pace_model.py` scores its predictions
+against the same two columns. They used to use the raw `*_gap_pct` pair, which
+was wrong in a specific and measurable way: the Q1→Q3 artifact correlates
+**+0.84** with a team's true pace, adding ~0.67 pp to Aston Martin and removing
+0.59 from Mercedes. It was a rank-amplifier, so it made the ordering look
+easier to predict than it is while adding error no model could have foreseen.
+
+Switching both (2024-26, paired per event):
+
+| | rank ρ | MAE vs the raw-FP baseline |
+|---|---|---|
+| ground-effect, one-lap | +0.016 (n.s.) | **0.53 → 0.29** |
+| 2026-regs, one-lap | −0.019 (p=0.016) | **0.37 → 0.30** |
+
+The 2026 ρ dip is real, not noise — and expected. Removing a rank-amplifying
+artifact *should* lower apparent ordering skill; what matters is that error
+relative to the naive baseline improved in both eras.
+
+**Comparing runs across this change:** raw MAE is meaningless across it, because
+the target moved. Use Spearman ρ (scale-free) or model-MAE ÷ baseline-MAE.
+`tests/test_team_pace.py` pins the prior and the target to the same columns so
+they can't drift apart again.
+
+**Eras are not comparable.** 2026 is a new formula. `--tune` trains on 2024,
+validates on 2025 (same era) and reports 2026 as a **holdout** — never tuned on,
+so it tests whether constants fitted in one formula survive into another. A
+different absolute error there is expected; the question the holdout answers is
+whether the model still beats its baselines.
+
+**The re-tune said keep the defaults**, and the run is worth not repeating:
+
+- The tuned set scored slightly *worse* on the 2025 validation season and
+  identically on the 2026 holdout. The existing constants were validated, not
+  improved.
+- **The long-run constants cannot be tuned on 2024 at all.** It has 2 / 1 / 0
+  scoreable events at FP1 / FP2 / FP3, so the objective is byte-identical for
+  every candidate value and the grid returns whichever it tried first — the
+  `0.35` it "found" for long-run FP3 was fitted on zero events. `tune()` now
+  counts events per stage first and keeps the default for anything under
+  `MIN_TUNE_EVENTS`, printing which constants are unidentifiable.
+- **One-lap FP1 is flat**: sweeping 0.40 → 1.00 moves the score by 0.002. A
+  grid optimum sitting on a boundary is usually this, not a discovery.
+
+If you re-tune after more races are cached, check the coverage table it prints
+before believing any constant it reports.
+
+## Car concept: only measure what holds up
+
+`data/car_profile.csv` (`scripts/compute_car_profile.py`) decomposes each
+weekend into the traits that make lap time — straight-line speed, cornering,
+top-end fade, tyre wear, energy saving — and the STINTS tab's **Car Concept**
+section reads it. Every axis is centred on the field that weekend, because
+otherwise the circuit swamps the car.
+
+The rule for adding an axis: it has to survive a **split-half reliability**
+check before it is presented as a season trait. Average the odd rounds and the
+even rounds separately, correlate the two, apply Spearman-Brown; below 0.6 it
+does not ship as a trait. Current scores — energy saving 0.98, cornering 0.92,
+top-end fade 0.77, straight-line 0.75, tyre wear 0.69. `tests/test_car_profile.py`
+enforces this against the shipped table, so an axis that decays fails CI rather
+than quietly misinforming.
+
+Two hard-won details worth not re-learning:
+
+- **Tyre wear only works if perturbed laps are filtered first.** Running
+  `enrich_track_evolution` without `flag_perturbed_laps` lets safety-car laps
+  into the degradation fit and reliability collapses from 0.69 to 0.17 — which
+  looks exactly like "tyre wear isn't a real team trait". It is; the pipeline
+  was wrong. `build_event()` has the correct order and a test pins it.
+- **Nothing here measures battery state.** There is no state-of-charge channel
+  in public telemetry. What is measurable is top-end fade (throttle pinned,
+  speed falling), which cannot separate "out of deployment" from "hit its drag
+  limit" — so that is what it is called.
+
+## Which tab holds what
+
+The split is by **how often the content changes**, not by subject:
+
+- **SEASON** — everything that moves when a race happens: the calendar, the
+  championship standings, the season form and momentum charts, the race-ops
+  league tables, and the car-upgrade payoff.
+- **CONTEXT** — read-once reference: the budget cap, ATR, technical directives,
+  team finances, factories, the staff transfer market and the newcomer primer.
+
+These lived together until the momentum charts ended up buried a third of the
+way down a 35-card scroll behind material you had already read. If you add a
+card, put it where its refresh cadence belongs.
+
+SEASON's momentum block deliberately answers *what changed*, not *where things
+stand* — the standings table already does the latter:
+
+- **Momentum** — change in one-lap pace against change in points-per-round,
+  first half of the rounds run so far vs second. The quadrants separate "the
+  car got faster" from "the results got better", which are not the same thing.
+- **Form Guide** — 3-round rolling points rate, and the gap to the leader per
+  round. The cumulative points line is monotonic and hides recent form.
+- **Saturday vs Sunday Character** — drawn as an arrow from the first half of
+  the season to the second, not a single season-average dot.
 
 ## Project layout
 

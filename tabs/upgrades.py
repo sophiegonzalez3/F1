@@ -241,10 +241,19 @@ def _upgrade_rounds(season: int) -> pd.DataFrame:
 
 
 def _gap_series(season: int) -> pd.DataFrame:
-    """(round, team) → quali_gap_pct for the season, indexed for lookups."""
+    """(round, team) → session-normalised ONE-LAP pace for the season.
+
+    Reads quali_pace_pct, not quali_gap_pct. The raw gap-to-pole moves ~0.6 pp
+    on its own whenever a team's best lap flips between Q-sessions (19% of
+    round-to-round steps in 2026) — six times this board's ±0.1 pp noise floor,
+    and the field control can't remove it because a basis flip is specific to
+    one team. So a team that reached Q2 for the first time the round its new
+    floor arrived would have read as a successful upgrade either way.
+    """
     pace = team_pace_df()
     s = pace[pace["season"] == season]
-    return s.set_index(["team", "round"])["quali_gap_pct"]
+    col = "quali_pace_pct" if "quali_pace_pct" in s.columns else "quali_gap_pct"
+    return s.set_index(["team", "round"])[col]
 
 
 def _effect_rows(season: int) -> pd.DataFrame:
@@ -315,7 +324,7 @@ def _effect_board_fig(eff: pd.DataFrame, season: int) -> go.Figure:
     fig.add_vline(x=0, line=dict(color="white", width=1, dash="dash"))
     theme(fig, max(340, 26 * len(eff) + 110))
     span = float(eff["effect"].abs().max()) if len(eff) else 1.0
-    fig.update_xaxes(title_text="Change in quali gap to pole (pp), "
+    fig.update_xaxes(title_text="Change in one-lap pace (pp), "
                                 "field-adjusted · negative = car got faster",
                      range=[-span*1.35, span*1.35])
     fig.update_layout(showlegend=False, bargap=0.35)
@@ -331,20 +340,24 @@ def _team_trend_fig(season: int, team: str) -> go.Figure:
     clr = TEAM_COLORS.get(team, "#808080")
 
     fig = go.Figure()
+    # Both series are the session-normalised, field-median-relative PACE
+    # measures — not the gap-to-pole/gap-to-best result measures. connectgaps
+    # stays False so a round we could not measure is a hole, not a guess.
+    qcol = "quali_pace_pct" if "quali_pace_pct" in g.columns else "quali_gap_pct"
+    rcol = ("race_pace_pct" if "race_pace_pct" in g.columns
+            else "race_pace_gap_pct")
     fig.add_trace(go.Scatter(
-        x=g["round"], y=g["quali_gap_pct"], mode="lines+markers",
-        name="Quali gap", line=dict(color=clr, width=2.5),
-        marker=dict(size=7),
-        hovertemplate="Quali gap: %{y:.2f}%<extra></extra>"))
-    rp = g[g["race_pace_gap_pct"].notna()]
-    if not rp.empty:
+        x=g["round"], y=g[qcol], mode="lines+markers",
+        name="One-lap pace", line=dict(color=clr, width=2.5),
+        marker=dict(size=7), connectgaps=False,
+        hovertemplate="One-lap pace: %{y:+.2f}% vs median<extra></extra>"))
+    if g[rcol].notna().any():
         fig.add_trace(go.Scatter(
-            x=rp["round"], y=rp["race_pace_gap_pct"], mode="lines+markers",
-            name="Race pace gap", line=dict(color=clr, width=1.5, dash="dot"),
-            marker=dict(size=6, symbol="diamond"),
-            hovertemplate="Race gap: %{y:.2f}%<extra></extra>"))
-    ymax = float(np.nanmax([g["quali_gap_pct"].max(),
-                            g["race_pace_gap_pct"].max()]))
+            x=g["round"], y=g[rcol], mode="lines+markers",
+            name="Race pace", line=dict(color=clr, width=1.5, dash="dot"),
+            marker=dict(size=6, symbol="diamond"), connectgaps=False,
+            hovertemplate="Race pace: %{y:+.2f}% vs median<extra></extra>"))
+    ymax = float(np.nanmax([g[qcol].max(), g[rcol].max()]))
     for u in ups.itertuples():
         fig.add_vline(x=u.round, line=dict(color="#FFB000", width=1,
                                            dash="dash"))
@@ -362,7 +375,8 @@ def _team_trend_fig(season: int, team: str) -> go.Figure:
     theme(fig, 420)
     fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,
                      tickangle=-40)
-    fig.update_yaxes(title_text="Gap to front (%) · lower = faster")
+    fig.update_yaxes(title_text="vs field median (%) · lower = faster")
+    fig.add_hline(y=0, line=dict(color=TEXT_DIM, width=1, dash="dot"))
     fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                   xanchor="left", x=0))
     return fig
@@ -400,12 +414,18 @@ def _impact_section() -> html.Div:
                       figure=_team_trend_fig(season, default_team),
                       config=GFX),
         ]),
-        info=("Data: the team's qualifying gap to pole (solid) and corrected "
-              "race-pace gap (dotted) at every round, with ▼ marking the "
-              "events where the team brought upgrades (hover for the FIA "
-              "component list). Why: reads the season as a development "
-              "story — a gap that steps down right after a ▼ is an upgrade "
-              "that worked; one that doesn't is money spent for nothing."),
+        measure="one-lap",
+        info=("Data: the team's session-normalised ONE-LAP pace (solid) and "
+              "corrected RACE pace (dotted) at every round, both as % vs the "
+              "field median, with ▼ marking the events where the team brought "
+              "upgrades (hover for the FIA component list). The two lines are "
+              "different measures, not two views of one: solid is a single "
+              "flat-out lap, dotted is the median of clean race laps on race "
+              "fuel. An upgrade can move one without the other — a floor that "
+              "helps in traffic shows on the dotted line first. Why: reads the "
+              "season as a development story — a line that steps down right "
+              "after a ▼ is an upgrade that worked; one that doesn't is money "
+              "spent for nothing."),
     )
     board_card = card(
         "Upgrade Effect Board — did it work?",
@@ -413,16 +433,23 @@ def _impact_section() -> html.Div:
         if not eff.empty else
         html.P("Not enough rounds around each upgrade to measure effects yet.",
                style={"color": TEXT_DIM}),
+        measure="one-lap",
         info=(f"Data: for every performance/circuit upgrade package, the "
-              f"team's average quali gap over the {_WINDOW} rounds from its "
-              f"debut minus the {_WINDOW} rounds before, MINUS the median of "
-              "the same delta for teams that brought nothing that round "
-              "(the field control — track and conditions swings hit "
-              "everyone, so they cancel). Negative = the car genuinely "
-              "closed on the front. Why: the question the FIA Car "
-              "Presentation documents never answer. Caveats: two rounds is "
-              "a small sample and setup/driver form add noise — treat "
-              "±0.1 pp as noise, not signal."),
+              f"team's average session-normalised ONE-LAP pace over the "
+              f"{_WINDOW} rounds from its debut minus the {_WINDOW} rounds "
+              "before, MINUS the median of the same delta for teams that "
+              "brought nothing that round (the field control — track and "
+              "conditions swings hit everyone, so they cancel). Negative = "
+              "the car genuinely gained on the field. Why: the question the "
+              "FIA Car Presentation documents never answer. Caveats: two "
+              "rounds is a small sample and setup/driver form add noise — "
+              "treat ±0.1 pp as noise, not signal. This board reads the "
+              "session-normalised measure precisely so that noise floor "
+              "means something: on the raw gap-to-pole a team's number moved "
+              "~0.6 pp whenever its best lap flipped Q-session, six times the "
+              "floor, and the field control could not remove it. Still blind "
+              "to upgrades that only pay off over a stint — check the race-"
+              "pace line in the card above for those."),
     )
     return html.Div([trend_card, board_card])
 

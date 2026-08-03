@@ -5,12 +5,19 @@ backfill in data/sessions_lite), this replays the weekend: freezes the
 model's prediction at the prior and after each practice session, then scores
 those predictions against what actually happened —
 
-  onelap   → team qualifying gap to pole   (quali_gap_pct, results archive)
-  longrun  → team race-pace gap to best     (race_pace_gap_pct, cached races)
+  onelap   → team session-normalised one-lap pace  (quali_pace_pct)
+  longrun  → team race pace                          (race_pace_pct)
 
-both from data/team_pace_by_event.csv. Everything is compared in
-mean-centered gap space (each set minus its own mean) so predicted gaps to
-the FIELD MEAN and archive gaps to pole/best live on one scale.
+both from data/team_pace_by_event.csv, and both the same columns the model's
+own prior is built from. Everything is compared in mean-centered space (each
+set minus its own mean).
+
+These used to be the raw gap-to-pole / gap-to-fastest columns. Scoring against
+those meant part of the measured error was Q1->Q3 track evolution that no model
+could predict — whether a team's best lap lands in Q1 or Q2 shifts that target
+~0.6 pp, and it flipped on 19% of round-to-round steps in 2026. Raw MAE from
+before that change is NOT comparable with raw MAE after it; Spearman rho is
+(scale-free), and so is model-MAE-over-baseline-MAE.
 
 Metrics per (era, stage, kind)
 ------------------------------
@@ -31,8 +38,9 @@ Usage
 -----
     python scripts/backtest_pace_model.py                 # all cached events
     python scripts/backtest_pace_model.py --seasons 2024 2025
-    python scripts/backtest_pace_model.py --tune          # grid-search base noise on
-                                                  # 2024, validate on 2025
+    python scripts/backtest_pace_model.py --tune          # two-stage grid search:
+                                                  # train 2024, validate 2025,
+                                                  # hold out 2026 (new era)
 """
 from __future__ import annotations
 
@@ -55,10 +63,21 @@ from scipy.stats import spearmanr
 import f1lib.data_loader as dl
 from f1lib.config import SESSIONS_DIR, SESSIONS_LITE_DIR
 from f1lib.pace_features import event_measurements, PRACTICE_SESSIONS
-from f1lib.pace_model import PaceModel, era_of
+from f1lib.pace_model import PaceModel, era_of, DEFAULTS
 
 OUT = Path("data/backtest_pace_model.csv")
-TARGET = {"onelap": "quali_gap_pct", "longrun": "race_pace_gap_pct"}
+# Score against the SAME quantity the model's prior is built from — the
+# session-normalised, field-median-relative pace columns. Scoring against the
+# raw gap-to-pole meant part of the measured error was Q1→Q3 track evolution
+# the model could not have predicted: a team whose best lap flips Q-session
+# moves that target ~0.6 pp for reasons invisible on Friday.
+#
+# NOTE for anyone comparing to older runs: raw MAE is NOT comparable across
+# this change, because the target itself changed. Spearman rho is (it is
+# scale-free), and so is the model's MAE relative to the raw-FP baseline,
+# since the baseline is scored on the same target.
+TARGET = {"onelap": "quali_pace_pct", "longrun": "race_pace_pct"}
+_TARGET_FALLBACK = {"onelap": "quali_gap_pct", "longrun": "race_pace_gap_pct"}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -94,6 +113,8 @@ def _actual(model: PaceModel, season: int, event: str,
             kind: str) -> pd.Series:
     """Actual outcome per team, mean-centered. Empty if unavailable."""
     col = TARGET[kind]
+    if col not in model.pace.columns:          # table predates the pace columns
+        col = _TARGET_FALLBACK[kind]
     s = model.pace[(model.pace["season"] == season)
                    & (model.pace["event"] == event)]
     a = s.dropna(subset=[col]).set_index("team")[col]
@@ -161,6 +182,8 @@ def backtest(model: PaceModel, seasons: list[int],
 # Summary
 # ─────────────────────────────────────────────────────────────
 
+_STAGE_LABEL_SHORT = {"Practice 1": "FP1", "Practice 2": "FP2",
+                      "Practice 3": "FP3"}
 _STAGE_ORDER = ["prior", "after FP1", "after FP2", "after FP3",
                 "after SprintQuali", "after Sprint", "raw-FP"]
 
@@ -225,32 +248,114 @@ def paired_summary(bt: pd.DataFrame) -> None:
 # Tuning: grid-search base noise on 2024, validate on 2025
 # ─────────────────────────────────────────────────────────────
 
-def tune(model_path=None) -> None:
-    onelap_grid = [0.25, 0.35, 0.5]
-    longrun_grid = [0.35, 0.5, 0.7]
-    print("Grid-searching base-noise on 2024 (train) → 2025 (validate)…\n")
-    best = None
-    for o1, o2, o3, l1, l2, l3 in itertools.product(
-            onelap_grid, onelap_grid, onelap_grid,
-            longrun_grid, longrun_grid, longrun_grid):
-        bn = {("onelap", "Practice 1"): o1, ("onelap", "Practice 2"): o2,
-              ("onelap", "Practice 3"): o3, ("longrun", "Practice 1"): l1,
-              ("longrun", "Practice 2"): l2, ("longrun", "Practice 3"): l3}
-        m = PaceModel(base_noise=bn)
-        bt = backtest(m, [2024], verbose=False)
-        fp3 = bt[(bt["stage"] == "after FP3")]
-        if fp3.empty:
+def _stage_score(bt: pd.DataFrame, kind: str) -> float:
+    """Lower is better: MAE penalised, rank correlation rewarded. Scored on
+    the post-practice stages, which is when the prediction is actually read."""
+    d = bt[(bt["kind"] == kind) & (bt["stage"].str.startswith("after"))]
+    if d.empty:
+        return float("inf")
+    return float(d["mae"].mean() - 0.5 * d["rho"].mean())
+
+
+# A base-noise constant is only identifiable if the training set actually
+# contains events scored at that stage. Below this many, the grid search sees
+# an unchanged score for every candidate value and returns whichever it tried
+# first — a fabricated constant that looks like a result. 2024 has ZERO
+# long-run FP3 events, so that constant was "optimised" on nothing.
+MIN_TUNE_EVENTS = 5
+
+
+def _stage_coverage(seasons: list[int]) -> pd.Series:
+    """Events per (kind, stage) in the training set — what each constant can
+    actually be fitted on."""
+    bt = backtest(PaceModel(), list(seasons), verbose=False)
+    if bt.empty:
+        return pd.Series(dtype=int)
+    return bt.groupby(["kind", "stage"])["event"].nunique()
+
+
+def tune(train=(2024,), validate=(2025,), holdout=(2026,)) -> None:
+    """Grid-search the practice base-noise constants.
+
+    Two stages, not one 6-D grid: `_update_one` only ever reads
+    base_noise[(kind, session)], so the one-lap posterior is independent of the
+    long-run constants. Tuning them separately is 4³+4³ = 128 fits instead of
+    4⁶ = 4096, for the same answer.
+
+    Three season groups, deliberately:
+      train     grid-searched on
+      validate  same era, never tuned on — catches overfitting
+      holdout   DIFFERENT regulation era, never tuned on — catches constants
+                that only work for the era they were fitted in
+
+    The holdout matters here: 2026 is a new formula. Its absolute errors are
+    not expected to match the ground-effect seasons and a difference there is
+    not evidence of a bug — what the holdout is really asking is whether the
+    model still beats its baselines, not whether it hits the same MAE.
+    """
+    onelap_grid = [0.20, 0.30, 0.40, 0.55]
+    longrun_grid = [0.35, 0.50, 0.70, 0.85]
+    sess = ["Practice 1", "Practice 2", "Practice 3"]
+
+    cov = _stage_coverage(list(train))
+    print(f"Training-set coverage ({list(train)}) — a constant needs at least "
+          f"{MIN_TUNE_EVENTS} events to be identifiable:")
+    unidentified = set()
+    for kind in ("onelap", "longrun"):
+        for sname in sess:
+            n = int(cov.get((kind, f"after {_STAGE_LABEL_SHORT[sname]}"), 0))
+            flag = "" if n >= MIN_TUNE_EVENTS else "   <- NOT IDENTIFIABLE, keeping default"
+            if n < MIN_TUNE_EVENTS:
+                unidentified.add((kind, sname))
+            print(f"  {kind:<8} {sname:<11} {n:3d} events{flag}")
+    print()
+
+    print(f"Stage 1/2 — one-lap noise, {len(onelap_grid)**3} fits on "
+          f"{list(train)}…", flush=True)
+    best_one = None
+    for combo in itertools.product(onelap_grid, repeat=3):
+        bn = {("onelap", s_): v for s_, v in zip(sess, combo)
+              if ("onelap", s_) not in unidentified}
+        sc = _stage_score(backtest(PaceModel(base_noise={**DEFAULTS["base_noise"],
+                                                        **bn}),
+                                   list(train), verbose=False), "onelap")
+        if best_one is None or sc < best_one[0]:
+            best_one = (sc, bn)
+    print(f"  best one-lap: "
+          f"{ {s: v for (_, s), v in best_one[1].items()} }  score {best_one[0]:.3f}")
+
+    print(f"\nStage 2/2 — long-run noise, {len(longrun_grid)**3} fits…",
+          flush=True)
+    best_lng = None
+    for combo in itertools.product(longrun_grid, repeat=3):
+        bn = {**best_one[1], **{("longrun", s_): v for s_, v in zip(sess, combo)
+                                if ("longrun", s_) not in unidentified}}
+        sc = _stage_score(backtest(PaceModel(base_noise={**DEFAULTS["base_noise"],
+                                                         **bn}),
+                                   list(train), verbose=False), "longrun")
+        if best_lng is None or sc < best_lng[0]:
+            best_lng = (sc, bn)
+    tuned = {**DEFAULTS["base_noise"], **best_lng[1]}
+    print(f"  best long-run: "
+          f"{ {s: v for (k, s), v in best_lng[1].items() if k == 'longrun'} }"
+          f"  score {best_lng[0]:.3f}")
+
+    print("\n" + "=" * 66)
+    print("TUNED base_noise (paste into DEFAULTS in f1lib/pace_model.py):")
+    for k in sorted(best_lng[1]):
+        print(f"    {k}: {best_lng[1][k]}")
+
+    for label, seasons_ in (("VALIDATE (same era, not tuned on)", validate),
+                            ("HOLDOUT (different era, not tuned on)", holdout)):
+        if not seasons_:
             continue
-        score = fp3["mae"].mean() - 0.5 * fp3["rho"].mean()  # low MAE, high rho
-        if best is None or score < best[0]:
-            best = (score, bn)
-    print("Best base-noise on 2024:")
-    for k, v in best[1].items():
-        print(f"    {k}: {v}")
-    print("\nValidating on 2025 with tuned constants:")
-    print_summary(backtest(PaceModel(base_noise=best[1]), [2025], verbose=False))
-    print("\nvs default constants on 2025:")
-    print_summary(backtest(PaceModel(), [2025], verbose=False))
+        print("\n" + "=" * 66)
+        print(f"{label}: {list(seasons_)}")
+        print("\n--- tuned ---")
+        print_summary(backtest(PaceModel(base_noise=tuned), list(seasons_),
+                               verbose=False))
+        print("\n--- current defaults ---")
+        print_summary(backtest(PaceModel(), list(seasons_), verbose=False))
 
 
 def main() -> int:

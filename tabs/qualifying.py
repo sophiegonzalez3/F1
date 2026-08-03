@@ -471,6 +471,7 @@ def _grid_card(ql: pd.DataFrame, sess: str):
               "this shows the field as it will actually line up, with ▲▼ "
               "deltas vs the quali result."),
         plain=_grid_plain(ql),
+        measure="result",
     )
 
 
@@ -537,6 +538,7 @@ def tab_quali() -> html.Div:
                       "eliminated. Why: who found pace when it mattered, "
                       "who peaked in Q1 and faded, and who only cleared "
                       "each cut by nothing."),
+                measure="result",
             ), lg=7 if grid_card is not None else 12),
             *([dbc.Col(grid_card, lg=5)] if grid_card is not None else []),
         ]),

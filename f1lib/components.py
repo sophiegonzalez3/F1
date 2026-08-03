@@ -80,12 +80,71 @@ def plain_line(text):
                "fontStyle": "italic"})
 
 
-def card(title, children, info=None, plain=None):
+# ── Pace-measure badges ──────────────────────────────────────
+# "Pace" means four different things in this dashboard and the difference
+# decides whether a number is meaningful. A card that shows any of them wears
+# the matching badge in its header, so you never have to infer which one from
+# the title. Colours: warm = single lap, cool = sustained running, grey = a
+# classification result rather than a speed measurement.
+PACE_MEASURES: dict[str, tuple[str, str, str]] = {
+    # key: (label, colour, definition)
+    "one-lap": (
+        "ONE-LAP", "#FF8A3D",
+        "ONE-LAP PACE — a single flat-out lap: low fuel, fresh tyres, maximum "
+        "attack. This is qualifying speed. It says nothing about how the car "
+        "behaves over a stint, and a car can be strong here and weak on Sunday."),
+    "race": (
+        "RACE PACE", "#3DD6C4",
+        "RACE PACE — the MEDIAN of clean green-flag laps on race fuel and "
+        "wearing tyres, corrected for fuel burn and track evolution, with "
+        "dirty-air laps excluded. Sustained speed over many laps, which is what "
+        "actually decides races. Not a single fast lap."),
+    "stint": (
+        "STINT PACE", "#5BA7FF",
+        "STINT PACE — race pace narrowed to one continuous run on one tyre "
+        "compound. Same measure as race pace, but per-compound, so it separates "
+        "'the car is quick' from 'the car is quick on this tyre'."),
+    "result": (
+        "RESULT", "#8A8FA3",
+        "RESULT — where the car actually ended up (grid slot, classification, "
+        "gap to pole), not a like-for-like speed measurement. It bakes in "
+        "session progression, traffic, penalties and mistakes. Use it for what "
+        "happened, not for how fast the car is."),
+    "predicted": (
+        "PREDICTED", "#B47BEA",
+        "PREDICTED — a model estimate, not a measurement. Produced before the "
+        "session it describes, from season form plus whatever practice running "
+        "has happened so far. Check the prediction ledger for its track record."),
+}
+
+
+def pace_badge(kind: str):
+    """Small colour-coded chip naming WHICH pace measure a card shows, with the
+    full definition on hover. Returns a children list (chip + tooltip) — splice
+    it into a header, or pass `measure=` to card() which does it for you."""
+    entry = PACE_MEASURES.get(str(kind).strip().lower())
+    if entry is None:
+        return []
+    label, colour, definition = entry
+    return tip(label, definition, placement="bottom", style={
+        "cursor": "help", "fontSize": "0.6rem", "fontWeight": "800",
+        "letterSpacing": "0.08em", "color": colour,
+        "border": f"1px solid {colour}", "borderRadius": "3px",
+        "padding": "1px 5px", "marginLeft": "8px", "whiteSpace": "nowrap",
+        "verticalAlign": "middle", "userSelect": "none"})
+
+
+def card(title, children, info=None, plain=None, measure=None):
     """A titled card. Pass `info` to show a small ⓘ tooltip in the header
     explaining what data the graph uses and why it is relevant (hover to read).
     Pass `plain` for a beginner-facing 'In plain terms: …' strip below the
-    content — a plain-English reading of what the card shows."""
+    content — a plain-English reading of what the card shows.
+    Pass `measure` ("one-lap" / "race" / "stint" / "result" / "predicted") to
+    badge the header with WHICH pace measure the card is showing — see
+    PACE_MEASURES. Any card whose subject is a speed should carry one."""
     header = [html.Span(title, style={"fontWeight": "700", "letterSpacing": "1px", "fontSize": "0.85rem"})]
+    if measure:
+        header += pace_badge(measure)
     if info:
         header += tip(" ⓘ", info, style={
             "cursor": "help", "fontSize": "0.72rem", "opacity": "0.6",

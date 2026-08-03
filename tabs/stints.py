@@ -624,6 +624,7 @@ def tab_stints(fl, fs):
               "with fuel and track-grip trends removed, what remains is the tyre "
               "itself — lower/flatter = less degradation."),
         plain=_deg_plain,
+        measure="stint",
     )
 
     # (b) Merged field degradation curves — one subplot figure, shared legend
@@ -744,6 +745,7 @@ def tab_stints(fl, fs):
               "excluded. Why: pooling all stints is far more robust than any "
               "single-stint fit. Tip: use “Open in big window” for a "
               "full-screen, zoomable view."),
+        measure="stint",
     )
 
     # (c) Merged deg-vs-field bars
@@ -756,6 +758,7 @@ def tab_stints(fl, fs):
               "better tyre management; positive (red) = worse. Perturbed and "
               "dirty-air laps excluded. Why: deviation from the pooled curve is "
               "the cleanest tyre-management signal this data can give."),
+        measure="stint",
     )
 
     deg_cards = [deg_rate_card, field_curve_card, field_dev_card]
@@ -850,6 +853,7 @@ def tab_stints(fl, fs):
               "deg. Why: the cliff, not the average deg rate, is what forces a "
               "pit stop — knowing at what age each compound cliffs at this "
               "circuit is the single most valuable strategy number."),
+        measure="stint",
     )
 
     # 3c. Compound pace offsets (race sessions only — comparable fuel)
@@ -909,6 +913,7 @@ def tab_stints(fl, fs):
               "Why: the compound offset sets the strategy crossover — how many "
               "laps of tyre advantage a fresh soft buys over a hard determines "
               "whether an extra stop pays for itself."),
+        measure="stint",
     )
 
     # 4. Stint Lap Inspector
@@ -964,7 +969,24 @@ def tab_stints(fl, fs):
         ),
     ])
 
+    # The season-long car-concept block sits at the TOP of the tab: it is the
+    # context for everything below it. The per-event stint cards tell you what
+    # the tyres did this weekend; this tells you what kind of car was doing it.
+    from tabs.car_profile import car_concept_section
     return html.Div([
+        car_concept_section(),
+        html.Hr(style={"borderColor": GRID_CLR, "margin": "34px 0 24px"}),
+        html.Div([
+            html.H3("THIS WEEKEND'S STINTS", style={
+                "color": TEXT_MAIN, "fontWeight": "900", "letterSpacing": "3px",
+                "textAlign": "center", "fontSize": "1.3rem",
+                "borderBottom": f"2px solid {ACCENT}", "paddingBottom": "8px",
+                "marginBottom": "4px"}),
+            html.P("degradation, cliffs and compound offsets for the loaded "
+                   "event — the evidence the season view above is built from",
+                   style={"color": TEXT_DIM, "fontSize": "0.78rem",
+                          "textAlign": "center", "marginBottom": "18px"}),
+        ]),
         card("Lap Time Evolution – All Laps", evo_layout,
              info=("Data: every lap (valid or not) for the selected session, one line "
                    "per driver, markers tinted by compound, with track-flag periods "

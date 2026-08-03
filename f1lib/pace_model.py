@@ -60,6 +60,17 @@ DEFAULTS: dict = {
     "longrun_from_onelap_var": 0.30,  # %² added when race form is missing and
                                       # the one-lap prior stands in for it
     # ── measurement noise beyond the fit SE, per (kind, session) in % ──
+    # RE-TUNED 2026-08 against the session-normalised target (the switch from
+    # gap-to-pole). Outcome: KEEP THESE VALUES. The grid search on 2024 either
+    # reproduced them or moved one step on thin data, and the tuned set scored
+    # slightly WORSE on the 2025 validation season and identically on the 2026
+    # holdout. Two things the run exposed, both now guarded in tune():
+    #   * the long-run constants are UNIDENTIFIABLE on 2024 — it has 2 / 1 / 0
+    #     events at FP1 / FP2 / FP3, so the score is byte-identical for every
+    #     candidate and the search returns whichever it tried first. The 0.35
+    #     it "found" for longrun FP3 was fitted on nothing.
+    #   * one-lap FP1 is FLAT: sweeping 0.40 → 1.00 moves the score by 0.002.
+    #     Its exact value barely matters, so there is nothing to gain here.
     # Long-run noise is deliberately high: practice race-sims run on unknown
     # fuel and engine modes with different programmes per team, so they are a
     # weak read on true race pace. Backtest (backtest_pace_model.py, 2024-25)
@@ -116,11 +127,25 @@ def era_of(season: int) -> str:
 
 
 class PaceModel:
+    # Which columns of team_pace_by_event.csv the season-form prior is built
+    # from. The *_pace_pct pair is session-normalised (a two-way team+Q-session
+    # fit) and field-median-relative; the *_gap_pct pair is the raw gap to pole
+    # / to the fastest team. The raw pair carries ~1% of Q1→Q3 track evolution,
+    # which flips on and off as a team's best lap moves between Q-sessions —
+    # 19% of round-to-round steps in 2026 — so the prior was partly learning
+    # noise. Falls back to the old columns when the table predates them.
+    COL_ONELAP = ("quali_pace_pct", "quali_gap_pct")
+    COL_LONGRUN = ("race_pace_pct", "race_pace_gap_pct")
+
     def __init__(self, pace_csv: str | Path = PACE_CSV, **overrides):
         self.p = {**DEFAULTS, **overrides}
         self._driver_ratings = None            # lazy (needs driver_pace CSV)
         df = pd.read_csv(pace_csv)
         df["team"] = df["team"].map(canon)
+        self.col_onelap = next(
+            (c for c in self.COL_ONELAP if c in df.columns), self.COL_ONELAP[-1])
+        self.col_longrun = next(
+            (c for c in self.COL_LONGRUN if c in df.columns), self.COL_LONGRUN[-1])
         df["era"] = df["season"].map(era_of)
         # global chronological event index within era (for cross-season decay)
         df = df.sort_values(["season", "round"])
@@ -200,8 +225,8 @@ class PaceModel:
               teams: list[str] | None = None) -> pd.DataFrame:
         """Pre-weekend prior. Columns: team, kind, mean, var."""
         teams = teams or self.teams_of_season(season)
-        one = self._prior_kind(season, round_, "quali_gap_pct", teams)
-        lng = self._prior_kind(season, round_, "race_pace_gap_pct", teams)
+        one = self._prior_kind(season, round_, self.col_onelap, teams)
+        lng = self._prior_kind(season, round_, self.col_longrun, teams)
         # race-pace history only exists for locally-cached rounds; where it is
         # too thin, the one-lap form is the best available stand-in (they are
         # strongly correlated), with honesty about the extra uncertainty

@@ -62,10 +62,29 @@ GLOSSARY: dict[str, str] = {
         "circuit, measured to the thousandth of a second.",
     "sector": "Each lap is split into three timed parts (Sector 1/2/3), so you "
         "can see which part of the track a driver gains or loses time in.",
-    "one-lap pace": "How fast a car is over a single flat-out lap (the "
-        "qualifying skill) — as opposed to how fast it is over a long run.",
-    "race pace": "How fast a car is over many laps in a row on a heavier fuel "
-        "load and wearing tyres — the thing that actually wins races.",
+    "one-lap pace": "How fast a car is over a SINGLE flat-out lap — low fuel, "
+        "fresh tyres, maximum attack. This is qualifying speed, and it is not "
+        "the same thing as race pace: a car can be quick here and fall away on "
+        "Sunday.",
+    "race pace": "How fast a car is over MANY laps in a row on a heavy fuel "
+        "load and wearing tyres — measured as the median of clean green-flag "
+        "laps, corrected for fuel burn and track evolution. The thing that "
+        "actually wins races, and often a different pecking order from "
+        "one-lap pace.",
+    "stint pace": "Race pace narrowed to one continuous run on one tyre "
+        "compound — it separates 'this car is quick' from 'this car is quick "
+        "on this particular tyre'.",
+    "median lap": "The middle lap time of a run: half the laps are faster, "
+        "half slower. Used instead of the average because one traffic lap or "
+        "one mistake can't drag it around — the honest read of sustained pace.",
+    "field median": "The middle car in the field that day. Expressing a gap "
+        "against it (rather than against the fastest car) means one team's bad "
+        "weekend doesn't shift everyone else's number — so a line that moves "
+        "is a team that actually moved.",
+    "session normalisation": "Correcting lap times for WHICH qualifying "
+        "segment they were set in. The track rubbers in and speeds up through "
+        "Q1→Q2→Q3, so comparing a Q1 lap directly against a Q3 pole flatters "
+        "the pole. Normalising puts every car on the same track state.",
     "gap": "The time difference between two cars or laps, in seconds. A '0.3s "
         "gap' means one is three-tenths of a second ahead of the other.",
     "delta": "The running time difference versus a reference (a rival, or the "
@@ -139,6 +158,13 @@ _ALIASES: dict[str, str] = {
     "pit-stop": "pit stop",
     "pitstop": "pit stop",
     "one lap pace": "one-lap pace",
+    "one-lap": "one-lap pace",
+    "long run": "race pace",
+    "long-run pace": "race pace",
+    "race-pace": "race pace",
+    "stint-pace": "stint pace",
+    "median lap time": "median lap",
+    "field-median": "field median",
     "constructors": "constructor",
     "teammates": "teammate",
     "power-unit": "power unit",

@@ -15,14 +15,17 @@ read than one-lap).
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from dash import html, dcc
 import dash_bootstrap_components as dbc
 
 import f1lib.state as state
-from f1lib.components import theme, card, kpi, GFX, abbr as _abbr
+from f1lib.components import theme, card, kpi, GFX, abbr as _abbr, BASE
 from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
 from f1lib.pace_model import PaceModel, canon
 from f1lib.race_forecast import RaceForecaster
@@ -36,6 +39,24 @@ _STAGE_SHORT = {"prior": "Prior", "after FP1": "FP1", "after FP2": "FP2",
 # so drawing it on the ONE-LAP progression would be a flat, misleading step.
 _STAGE_SEQUENCE = ["prior", "after FP1", "after FP2", "after FP3",
                    "after SprintQuali", "after Sprint"]
+
+# ── Season track record (scripts/backtest_pace_model.py) ─────
+# The per-event LEDGER below scores this weekend. That tells you whether the
+# model got THIS one right, which is not the same as whether to trust it on
+# Friday — for that you need its record over the season, which is what the
+# backtest writes and what _track_record_card renders. The CSV existed for a
+# long time with nothing reading it.
+_BACKTEST_PATH = Path("data/backtest_pace_model.csv")
+_BASELINE_STAGES = {"raw-FP"}
+
+
+def _backtest_df() -> pd.DataFrame:
+    if not _BACKTEST_PATH.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(_BACKTEST_PATH)
+    except Exception:
+        return pd.DataFrame()
 
 # One model instance for the process (reads the pace CSV once).
 _MODEL: PaceModel | None = None
@@ -75,6 +96,138 @@ def _clr(team: str) -> str:
 # ─────────────────────────────────────────────────────────────
 # Figures
 # ─────────────────────────────────────────────────────────────
+
+def _track_record_fig(b: pd.DataFrame, height: int = 400) -> go.Figure:
+    """MAE and rank correlation by prediction stage, with the two baselines
+    the model has to beat drawn alongside."""
+    order = [s for s in _STAGE_SEQUENCE if s in set(b["stage"])]
+    order += [s for s in sorted(_BASELINE_STAGES) if s in set(b["stage"])]
+    fig = make_subplots(
+        rows=1, cols=2, horizontal_spacing=0.12,
+        subplot_titles=("Average error (lower is better)",
+                        "Order got right (higher is better)"))
+    for kind, clr in (("onelap", "#FF8A3D"), ("longrun", "#3DD6C4")):
+        d = b[b["kind"] == kind]
+        if d.empty:
+            continue
+        g = d.groupby("stage").agg(mae=("mae", "mean"), rho=("rho", "mean"),
+                                   n=("event", "nunique"))
+        xs = [s for s in order if s in g.index]
+        if not xs:
+            continue
+        lbl = [_STAGE_SHORT.get(s, s) for s in xs]
+        # the baseline bars are hollow so they read as "the thing to beat"
+        # rather than as another step in the model's progression
+        fills = [clr if s not in _BASELINE_STAGES else "rgba(0,0,0,0)"
+                 for s in xs]
+        lines = dict(color=clr, width=2)
+        for metric, panel in (("mae", 1), ("rho", 2)):
+            fmt = ("MAE %{y:.3f}%" if metric == "mae" else "rank ρ %{y:.2f}")
+            fig.add_trace(go.Bar(
+                x=lbl, y=[g.loc[s, metric] for s in xs],
+                name=_KIND_LABEL[kind], legendgroup=kind,
+                showlegend=(metric == "mae"),
+                marker=dict(color=fills, line=lines),
+                customdata=[[int(g.loc[s, "n"]), s] for s in xs],
+                hovertemplate=(f"<b>{_KIND_LABEL[kind]}</b> · %{{customdata[1]}}"
+                               f"<br>{fmt}"
+                               "<br>%{customdata[0]} events<extra></extra>"),
+            ), row=1, col=panel)
+    fig.update_layout(**{k: v for k, v in BASE.items()
+                         if k not in ("xaxis", "yaxis")}, height=height)
+    fig.update_xaxes(gridcolor=GRID_CLR)
+    fig.update_yaxes(title_text="MAE (%)", gridcolor=GRID_CLR, row=1, col=1)
+    fig.update_yaxes(title_text="Spearman ρ", gridcolor=GRID_CLR,
+                     range=[0, 1], row=1, col=2)
+    fig.update_layout(barmode="group", bargap=0.28,
+                      legend=dict(orientation="h", yanchor="bottom", y=1.12,
+                                  xanchor="left", x=0, font=dict(size=10)),
+                      margin=dict(l=60, r=20, t=70, b=40))
+    for a in fig.layout.annotations:
+        a.font.size = 11
+        a.font.color = TEXT_MAIN
+    return fig
+
+
+def _track_record_card(season: int | None = None):
+    """How the pace model has actually done — over the season, not this event.
+
+    Returns None when the backtest has never been run.
+    """
+    b = _backtest_df()
+    if b.empty:
+        return None
+    if season is not None and (b["season"] == season).any():
+        b = b[b["season"] == season]
+    season_shown = int(b["season"].max())
+    b = b[b["season"] == season_shown]
+    if b.empty:
+        return None
+    n_events = int(b["event"].nunique())
+    rounds = sorted(b["round"].dropna().unique())
+    last_round = int(rounds[-1]) if len(rounds) else None
+
+    # headline: best pre-quali stage vs the "just read the timing screen" baseline
+    one = b[b["kind"] == "onelap"]
+    verdict = None
+    if not one.empty:
+        agg = one.groupby("stage").agg(mae=("mae", "mean"),
+                                       n=("event", "nunique"))
+        by_stage = agg["mae"]
+        # Judge the headline on a NORMAL weekend's practice progression only.
+        # Sprint weekends hand the model a timed session before qualifying, so
+        # quoting their stage as "at its sharpest" would flatter it — and they
+        # are a handful of events, so the mean is thin as well.
+        model_stages = [s for s in ("prior", "after FP1", "after FP2",
+                                    "after FP3")
+                        if s in agg.index and agg.loc[s, "n"] >= 4]
+        if model_stages and "raw-FP" in by_stage.index:
+            best = min(model_stages, key=lambda s: by_stage[s])
+            gain = (by_stage["raw-FP"] - by_stage[best]) / by_stage["raw-FP"] * 100
+            verdict = (
+                f"At its sharpest ({_STAGE_SHORT.get(best, best)}) the model's "
+                f"one-lap error is {by_stage[best]:.2f}% — "
+                + (f"{gain:.0f}% better than" if gain > 2 else
+                   f"about the same as" if gain > -2 else
+                   f"{abs(gain):.0f}% WORSE than")
+                + " simply taking the fastest practice session at face value.")
+
+    body = [dcc.Graph(figure=_track_record_fig(b), config=GFX)]
+    if verdict:
+        body.append(html.Div(verdict, style={
+            "color": TEXT_MAIN, "fontSize": "0.8rem", "marginTop": "8px",
+            "borderLeft": f"3px solid {ACCENT}", "background": "#0E0E1F",
+            "padding": "8px 12px", "borderRadius": "4px"}))
+    body.append(html.Div(
+        f"{season_shown} season · {n_events} events replayed"
+        + (f", through round {last_round}" if last_round else ""),
+        style={"color": TEXT_DIM, "fontSize": "0.72rem", "marginTop": "6px"}))
+
+    return card(
+        f"MODEL TRACK RECORD · {season_shown} SEASON",
+        html.Div(body),
+        measure="predicted",
+        info=("Data: scripts/backtest_pace_model.py replays every cached "
+              "weekend of the season — freezing the prediction at the prior "
+              "and after each practice session, then scoring it against what "
+              "actually happened. MAE is the average error in pace-gap "
+              "percentage points; Spearman ρ is whether the ORDER was right, "
+              "which is what a preview really cares about. Solid bars are the "
+              "model at each stage; the HOLLOW bar is the 'raw-FP' baseline — "
+              "the latest practice session taken literally, with no prior and "
+              "no blending. If the solid bars don't beat the hollow one, the "
+              "machinery is not earning its keep. Why: the ledger above scores "
+              "THIS weekend, which is a sample of one; this is the record that "
+              "tells you how much to trust Friday's call. Both the model's "
+              "prior and this scorecard read the session-normalised pace "
+              "columns, so the error shown is real prediction error rather "
+              "than Q1→Q3 track evolution the model could never have seen. "
+              "Caveat: 2026 is a NEW FORMULA — its numbers are not expected "
+              "to match the ground-effect seasons, and the comparison that "
+              "travels across eras is the model-vs-baseline gap, not the raw "
+              "error."),
+    )
+
 
 def _order_fig(stage: pd.DataFrame, kind: str) -> go.Figure:
     """Predicted gap to field mean with ±1sd bars, best at top. Axes fit
@@ -390,7 +543,9 @@ def tab_brief(sel_drivers=None, sel_teams=None):
             info="Predicted qualifying pace as a gap to the field mean, at "
                  "the last PRE-quali stage — this chart never uses the quali "
                  "result itself, so it stays an honest prediction. Whiskers "
-                 "are ±1sd. Team pace = the team's faster driver."), md=6),
+                 "are ±1sd. Team pace = the team's faster driver. This is "
+                 "ONE-LAP pace: a single flat-out lap, not race pace.",
+            measure="predicted"), md=6),
         dbc.Col(card(f"PREDICTED ORDER · {_KIND_LABEL['longrun'].upper()}",
             dcc.Graph(figure=_order_fig(final_show, "longrun"), config=GFX),
             info="Predicted race pace as a gap to the field mean. Long-run "
@@ -479,7 +634,10 @@ def tab_brief(sel_drivers=None, sel_teams=None):
                     info="Per-driver predicted race-pace gap to the field mean. "
                          "Bar colour = team; teammates share the car so their "
                          "difference is the driver rating. Whiskers ±1sd combine "
-                         "car and driver-rating uncertainty."), md=6),
+                         "car and driver-rating uncertainty. RACE pace = the "
+                         "median of clean green-flag laps on race fuel — not a "
+                         "qualifying lap.",
+                    measure="predicted"), md=6),
                 dbc.Col(card("RACE-PACE PROBABILITIES (per driver)",
                     dash_table.DataTable(data=drows,
                         columns=[{"name": c, "id": c} for c in drows[0]],
@@ -488,7 +646,8 @@ def tab_brief(sel_drivers=None, sel_teams=None):
                          "pace) per driver. Teammates share their car's draw "
                          "(a strong car lifts both), so their odds move "
                          "together. Pace only — not race-day strategy, "
-                         "reliability or incidents."), md=6),
+                         "reliability or incidents.",
+                    measure="predicted"), md=6),
             ]),
         ]))
 
@@ -569,14 +728,16 @@ def tab_brief(sel_drivers=None, sel_teams=None):
                         info="Per-driver probability of winning (solid), a "
                              "podium (mid) and points (faint), ordered by "
                              "expected finish. Teammates share their car's "
-                             "simulated pace, so their odds move together."),
+                             "simulated pace, so their odds move together.",
+                        measure="predicted"),
                         md=7),
                     dbc.Col(card("FORECAST TABLE",
                         dash_table.DataTable(data=frows,
                             columns=[{"name": c, "id": c} for c in frows[0]],
                             **TABLE_STYLE),
                         info="Expected finishing position and win/podium/points/"
-                             "DNF probabilities per driver."), md=5),
+                             "DNF probabilities per driver.",
+                        measure="predicted"), md=5),
                 ]),
             ]))
 
@@ -646,11 +807,24 @@ def tab_brief(sel_drivers=None, sel_teams=None):
                     md=6))
     if ledger_cards:
         body.append(html.Div([
-            html.H4("PREDICTION LEDGER", style={
+            html.H4("PREDICTION LEDGER · THIS EVENT", style={
                 "color": TEXT_MAIN, "fontWeight": "800", "letterSpacing": "2px",
                 "fontSize": "1.0rem", "marginTop": "8px", "marginBottom": "10px",
                 "borderBottom": f"2px solid {ACCENT}", "paddingBottom": "6px"}),
             dbc.Row(ledger_cards),
+        ]))
+
+    # The season-long scorecard closes the tab: the ledger above is a sample of
+    # one, and this is what says how much to trust the prediction at the top.
+    ev = _loaded_event()
+    tr = _track_record_card(ev[0] if ev else None)
+    if tr is not None:
+        body.append(html.Div([
+            html.H4("TRACK RECORD · THE WHOLE SEASON", style={
+                "color": TEXT_MAIN, "fontWeight": "800", "letterSpacing": "2px",
+                "fontSize": "1.0rem", "marginTop": "18px", "marginBottom": "10px",
+                "borderBottom": f"2px solid {ACCENT}", "paddingBottom": "6px"}),
+            tr,
         ]))
 
     return html.Div(body)

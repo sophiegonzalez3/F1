@@ -440,6 +440,40 @@ def _longrun_measurements(sl: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]
     return _team_rows(drv), drv
 
 
+def speed_reserve(sl: pd.DataFrame) -> pd.Series:
+    """Per team, how much faster its speed-trap reading is on quali-sim laps
+    than on long-run laps, centred on the field (km/h).
+
+    High = the team's long runs were done with something held back — engine
+    mode turned down, or simply more fuel on board (both move the trap the
+    same way, and the two cannot be separated from public data). Either way
+    it marks a long-run measurement that overstates how slow the car is.
+
+    Emitted as a COLUMN on the measurement rather than applied here, so the
+    model decides how much to trust it (`sandbag_beta`) and the choice is
+    visible and tunable instead of baked into the feature.
+    """
+    if "Speed_ST" not in sl.columns or "Is_Quali_Sim" not in sl.columns:
+        return pd.Series(dtype=float)
+    stint_len = sl.groupby(["session_name", "DriverNo", "Stint"])["LapInStint"] \
+                  .transform("max")
+    dry = sl["Compound"].astype(str).isin(DRY_COMPOUNDS)
+    lp = sl[_clean_mask(sl) & ~sl["Is_Quali_Sim"] & dry
+            & (stint_len >= LONGRUN_MIN_RUN) & (sl["LapInStint"] >= 2)]
+    qp = sl[_clean_mask(sl) & sl["Is_Quali_Sim"] & dry]
+    if lp.empty or qp.empty:
+        return pd.Series(dtype=float)
+    st_lr = lp.groupby(lp["Team"].map(canon))["Speed_ST"].median()
+    n_lr = lp.groupby(lp["Team"].map(canon))["Speed_ST"].count()
+    st_q = qp.groupby(qp["Team"].map(canon))["Speed_ST"].median()
+    common = [t for t in st_lr.index.intersection(st_q.index)
+              if n_lr.get(t, 0) >= LONGRUN_MIN_DRIVER]
+    if len(common) < MIN_TEAMS_SET:
+        return pd.Series(dtype=float)
+    res = (st_q[common] - st_q[common].mean()) - (st_lr[common] - st_lr[common].mean())
+    return res
+
+
 def session_measurements(laps: pd.DataFrame, session_name: str
                          ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Extract (team_measurements, driver_measurements) from ONE session of an
@@ -460,6 +494,11 @@ def session_measurements(laps: pd.DataFrame, session_name: str
     kinds = _SESSION_KINDS.get(str(sl["session"].iloc[0]), ("onelap", "longrun"))
     t1, d1 = _onelap_measurements(sl) if "onelap" in kinds else (empty, empty)
     t2, d2 = _longrun_measurements(sl) if "longrun" in kinds else (empty, empty)
+    if not t2.empty:
+        res = speed_reserve(sl)
+        t2 = t2.copy()
+        t2["reserve_kmh"] = (t2["team"].map(res).fillna(0.0) if len(res)
+                             else 0.0)
     team = pd.concat([t1, t2], ignore_index=True)
     driver = pd.concat([d1, d2], ignore_index=True)
     for df in (team, driver):

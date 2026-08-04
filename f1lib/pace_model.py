@@ -141,6 +141,22 @@ DEFAULTS: dict = {
         ("longrun", "Qualifying"): 0.55,
     },
     "default_base_noise": 0.6,
+    # ── sandbagging correction on practice long runs ──
+    # A team whose speed trap reads faster on quali sims than on long runs
+    # held something back in the long runs — engine mode, or fuel, which
+    # public data cannot separate. Its long-run gap therefore overstates how
+    # slow the car is. pace_features emits that gap as `reserve_kmh`; this is
+    # the pp of correction per km/h of it.
+    #
+    # Measured on the outcome error (race pace minus practice long-run gap)
+    # per season: 2022 -0.028, 2023 -0.021, 2024 -0.018, 2025 -0.048, all
+    # individually significant and agreeing on sign — and 2026 +0.018, not
+    # significant. The relationship holds across the whole ground-effect era
+    # and breaks at the 2026 power-unit change, which is exactly why it is
+    # DEFAULT 0.0: the seasons that support it are not the season being
+    # predicted. Enable only if a rolling holdout shows it earning its keep,
+    # and re-check once 2026 has enough events to test on its own.
+    "sandbag_beta": 0.0,
     # ── carry-over across a regulation break ──
     # The prior refuses to look across an era boundary, so at an era opener
     # every team gets the field mean: total amnesia. The archive says that
@@ -399,15 +415,24 @@ class PaceModel:
         if not known:
             return state.reset_index()
         anchor = float(np.mean([state.loc[i, "mean"] for i in known]))
+        # Long-run gaps can be corrected for what the team held back (see
+        # sandbag_beta). Applied here rather than in the feature so the
+        # coefficient stays visible and tunable; a zero coefficient or a
+        # measurement set without the column is an exact no-op.
+        beta = float(self.p.get("sandbag_beta", 0.0))
+        adjust = (beta != 0.0 and kind == "longrun"
+                  and "reserve_kmh" in mset.columns)
         for _, m in mset.iterrows():
+            gap = float(m["gap_pct"])
+            if adjust:
+                gap += beta * float(m.get("reserve_kmh", 0.0) or 0.0)
             key = (m["team"], kind)
             if key not in state.index:
                 # a team we have no state for (shouldn't happen mid-season)
                 state.loc[key, ["mean", "var"]] = (
-                    m["gap_pct"] + anchor,
-                    m["se_pct"] ** 2 + noise ** 2)
+                    gap + anchor, m["se_pct"] ** 2 + noise ** 2)
                 continue
-            y = m["gap_pct"] + anchor
+            y = gap + anchor
             r = m["se_pct"] ** 2 + noise ** 2
             mu, v = state.loc[key, "mean"], state.loc[key, "var"]
             k = v / (v + r)

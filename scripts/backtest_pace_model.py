@@ -145,8 +145,39 @@ def _raw_fp_prediction(meas: pd.DataFrame, kind: str) -> pd.DataFrame:
     return pd.DataFrame(columns=["team", "kind", "mean"])
 
 
+def _quali_gap(model: PaceModel, season: int, event: str) -> pd.Series | None:
+    """Session-normalised actual qualifying gap per team, centred on the
+    field mean — the same measurement PaceModel.actual_quali_gap produces
+    live, taken from the pace table so it exists for every archived season.
+    """
+    p = model.pace
+    row = (p[(p["season"] == season) & (p["event"] == event)]
+           .set_index("team")[model.col_onelap].dropna())
+    if len(row) < 4:
+        return None
+    return row - row.mean()
+
+
 def backtest(model: PaceModel, seasons: list[int],
              verbose: bool = True) -> pd.DataFrame:
+    """Replay every event and score each stage.
+
+    The post-quali stage IS scored, and doing so is leak-free — a point
+    worth spelling out, because this backtest used to skip it out of
+    caution and that left a constant used live on every race weekend with
+    nothing measuring it.
+
+    Qualifying happens BEFORE the race, so using its result to predict race
+    pace is an ordinary ex-ante prediction. The update touches only the
+    LONG-RUN latent, and the long-run target is race_pace_pct, measured from
+    race laps that do not exist yet at that point in the weekend. The prior
+    itself only ever reads strictly-earlier rounds.
+
+    What WOULD be circular is scoring the ONE-LAP target after feeding in the
+    qualifying result — qualifying predicting qualifying. The one-lap latent
+    is never touched by this update, so that stage is skipped for `onelap`
+    rather than reported as a free win.
+    """
     events = backtestable_events(model, seasons)
     rows = []
     for season, event, round_ in events:
@@ -154,12 +185,15 @@ def backtest(model: PaceModel, seasons: list[int],
         if meas is None or meas.empty:
             continue
         stages = model.predict_weekend(season, event,
-                                       measurements=meas, round_=round_)
+                                       measurements=meas, round_=round_,
+                                       quali_gap=_quali_gap(model, season, event))
         for kind in ("onelap", "longrun"):
             actual = _actual(model, season, event, kind)
             if actual.empty:
                 continue
             for stage_name, st in stages.items():
+                if stage_name == "after Quali" and kind == "onelap":
+                    continue        # circular — see the docstring
                 sc = _score(st, actual, kind)
                 if sc:
                     rows.append({"season": season, "era": era_of(season),
@@ -185,7 +219,7 @@ def backtest(model: PaceModel, seasons: list[int],
 _STAGE_LABEL_SHORT = {"Practice 1": "FP1", "Practice 2": "FP2",
                       "Practice 3": "FP3"}
 _STAGE_ORDER = ["prior", "after FP1", "after FP2", "after FP3",
-                "after SprintQuali", "after Sprint", "raw-FP"]
+                "after SprintQuali", "after Sprint", "after Quali", "raw-FP"]
 
 
 def summarize(bt: pd.DataFrame) -> pd.DataFrame:

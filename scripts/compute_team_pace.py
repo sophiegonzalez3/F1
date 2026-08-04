@@ -88,6 +88,7 @@ from f1lib.processing import (
     enrich_track_evolution,
 )
 from f1lib.quali_norm import n_sessions, normalised_gap_pct
+from f1lib.config import SESSIONS_LITE_DIR
 
 OUT_PATH = Path("data/team_pace_by_event.csv")
 HIST = Path("data/historical_results")
@@ -165,13 +166,33 @@ def quali_gaps(season: int) -> pd.DataFrame:
 # Race pace gap (cached race laps — corrected, clean-air medians)
 # ─────────────────────────────────────────────────────────────
 
+def _race_lap_path(season: int, event: str) -> tuple[Path | None, dict]:
+    """Race laps for an event, from the app's full cache or the laps-only
+    backfill store, plus that store's other paths.
+
+    Looking in sessions_lite is what lets race pace exist before 2023: the
+    full cache holds telemetry too and was never going to be backfilled for
+    whole seasons, so the long-run target column simply stopped there — the
+    ground-effect era was missing a quarter of itself for no better reason.
+    """
+    key = dl._session_key(str(season), event, "Race")
+    paths = dl._cache_paths(key)
+    if paths["laps"].exists():
+        return paths["laps"], paths
+    lite = Path(SESSIONS_LITE_DIR) / f"{key}__laps.parquet"
+    if lite.exists():
+        # the lite store carries no race-control messages; flag_perturbed_laps
+        # still catches safety cars and VSCs from the per-lap TrackStatus, it
+        # just misses short sector yellows that never reach it
+        return lite, {"laps": lite, "race_control": Path("nonexistent")}
+    return None, {}
+
+
 def race_pace_gaps(season: int, events: list[str]) -> pd.DataFrame:
     rows = []
     for event in events:
-        key = dl._session_key(str(season), event, "Race")
-        paths = dl._cache_paths(key)
-        p = paths["laps"]
-        if not p.exists():
+        p, paths = _race_lap_path(season, event)
+        if p is None:
             continue
         # Race-control messages are optional: without them flag_perturbed_laps
         # still catches safety cars and VSCs from the per-lap TrackStatus

@@ -65,6 +65,16 @@ _WANTED = ("Practice 1", "Practice 2", "Practice 3",
            # the sprint-only shootout, which FastF1 reports under both names.
            "Sprint Shootout")
 
+# OUTCOME sessions. Not model inputs — they are where the long-run TARGET
+# comes from. race_pace_pct needs cached race laps, and the app's full cache
+# only reaches back to 2023, so the long-run prior had no history at all
+# before then: the ground-effect era (2022-25) was missing a quarter of
+# itself. Backfilling the race here (laps + weather only, no telemetry) fills
+# the target column without the 25 MB/session cost of a full session.
+_TARGET_SESSIONS = ("Race",)
+
+_FETCHABLE = _WANTED + _TARGET_SESSIONS
+
 
 def _lite_paths(key: str) -> dict[str, Path]:
     return {"laps": LITE / f"{key}__laps.parquet",
@@ -133,16 +143,16 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--sessions", nargs="+", default=None, metavar="NAME",
                     help="restrict to these session names (default: all of "
-                         f"{', '.join(_WANTED)}). Use it to backfill one "
+                         f"{', '.join(_FETCHABLE)}). Use it to backfill one "
                          "session type without re-walking whole calendars, "
                          "e.g. --sessions 'Sprint Qualifying' Sprint "
                          "'Sprint Shootout'")
     args = ap.parse_args()
     wanted = tuple(args.sessions) if args.sessions else _WANTED
-    unknown = set(wanted) - set(_WANTED)
+    unknown = set(wanted) - set(_FETCHABLE)
     if unknown:
         print(f"Unknown session name(s): {sorted(unknown)}\n"
-              f"Known: {list(_WANTED)}")
+              f"Known: {list(_FETCHABLE)}")
         return 2
 
     LITE.mkdir(parents=True, exist_ok=True)

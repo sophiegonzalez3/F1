@@ -163,7 +163,21 @@ def main() -> int:
             val = float(v)
         except ValueError:
             val = v
-        variants[spec] = {k: val}
+        # base_noise is a dict keyed by (kind, session), so a plain scalar
+        # override cannot reach it — and it is the main tuning surface, so
+        # it needs a way in: "base_noise:onelap:Sprint Qualifying=0.2"
+        if k.startswith("base_noise:"):
+            _, kind, session = k.split(":", 2)
+            from f1lib.pace_model import DEFAULTS as _D
+            bn = dict(_D["base_noise"])
+            if (kind, session) not in bn:
+                print(f"Unknown base_noise key ({kind!r}, {session!r}); "
+                      f"known: {sorted(bn)}")
+                return 2
+            bn[(kind, session)] = float(val)
+            variants[spec] = {"base_noise": bn}
+        else:
+            variants[spec] = {k: val}
 
     print(f"Scoring {len(variants)} variant(s) over {args.seasons}\n")
     res = run(args.seasons, variants)

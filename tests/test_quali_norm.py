@@ -138,6 +138,59 @@ def test_input_clip_is_measured_within_the_car():
     assert e["SLOW_A"] < e["SLOW_B"]
 
 
+def test_raw_best_of_q_amplifies_the_field_spread():
+    """Why the post-quali stage had to be normalised too. Taking the plain
+    minimum across Q1/Q2/Q3 does not just add noise — the earliest-eliminated
+    teams are the slowest, so the green-track penalty lands in the SAME
+    direction as their real deficit and stretches the field. A scale error,
+    which no noise constant can fix."""
+    evo = 1.005
+    # true pace spread is exactly 1% fast-to-slow; the slow cars exit in Q1
+    g = _round({
+        "F1": {"Q1": 90.0 * evo * evo, "Q2": 90.0 * evo, "Q3": 90.0},
+        "F2": {"Q1": 90.1 * evo * evo, "Q2": 90.1 * evo, "Q3": 90.1},
+        "F3": {"Q1": 90.2 * evo * evo, "Q2": 90.2 * evo, "Q3": 90.2},
+        "M1": {"Q1": 90.5 * evo * evo, "Q2": 90.5 * evo},
+        "M2": {"Q1": 90.6 * evo * evo, "Q2": 90.6 * evo},
+        "M3": {"Q1": 90.7 * evo * evo, "Q2": 90.7 * evo},
+        "S1": {"Q1": 90.9 * evo * evo},
+        "S2": {"Q1": 91.0 * evo * evo},
+    })
+    raw = g[list(qn.Q_SESSIONS)].min(axis=1)
+    raw_pct = 100 * (raw / raw.mean() - 1)
+    norm = pd.Series(qn.normalised_gap_pct(g, "driver"))
+    norm = norm - norm.mean()
+    assert raw_pct.std() > norm.std() * 1.25, (
+        "expected the raw best-of-Q measure to inflate the field spread")
+    # and the normalised spread should match the TRUE one (1% fast to slow)
+    true_pct = 100 * (g[["Q1"]].min(axis=1) / g[["Q1"]].min(axis=1).mean() - 1)
+    assert norm.std() == pytest.approx(true_pct.std(), rel=0.15)
+
+
+def test_actual_quali_gap_uses_the_normalised_measure():
+    """The live post-quali update must get the normalised gap, not the raw
+    minimum. It reads the session's cached RESULTS for the Q1/Q2/Q3 split,
+    so this works the moment qualifying is loaded."""
+    from pathlib import Path
+    from f1lib.pace_model import PaceModel
+    from f1lib.processing import clean_and_enrich_laps
+
+    p = Path("data/sessions/2026__Hungarian_Grand_Prix__Qualifying__laps.parquet")
+    if not p.exists():
+        pytest.skip("qualifying laps not cached")
+    laps = clean_and_enrich_laps(pd.read_parquet(p))
+    got = PaceModel.actual_quali_gap(laps)
+    assert not got.empty
+    assert abs(got.mean()) < 1e-9, "contract is a gap to the field MEAN"
+
+    q = laps[(laps["session"] == "Qualifying") & laps.get("ValidLap", False)]
+    from f1lib.pace_features import canon
+    best = q.groupby(q["Team"].map(canon))["LapTime_s"].min().dropna()
+    raw = 100.0 * (best / best.mean() - 1)
+    assert got.std() < raw.std(), (
+        "actual_quali_gap is still returning the raw best-of-Q spread")
+
+
 def test_shipped_driver_table_is_field_median_centred():
     """Both kinds must straddle zero. A table anchored on pole or on the
     fastest driver is non-negative by construction — the tell that the

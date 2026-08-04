@@ -57,13 +57,26 @@ HIST = Path("data/historical_results")
 DEFAULTS = dict(
     n_sims=20000,
     race_noise=2.2,        # positions of race-day shuffle sd (strategy, traffic)
-    dnf_rate=0.11,         # base per-car retirement probability
+    # Base per-car retirement probability. MEASURED, not guessed: the
+    # pre-2026 archive gives 0.133 over 2993 classified starts (0.144 before
+    # 2023, 0.121 for 2023-25). It could not be measured until _is_finish was
+    # fixed — while lapped finishers counted as retirements the archive
+    # appeared to show a 50% retirement rate in 2026. Set to the recent-era
+    # figure rather than the long pooled one, since reliability has improved;
+    # the 2026 holdout runs hotter at 0.182 (new regulations), which is the
+    # right kind of thing for this constant NOT to chase.
+    dnf_rate=0.12,
     pull_lo=0.20,          # passability floor (even Monaco lets a little pace through)
     pull_hi=0.85,          # ceiling (even Monza isn't a pure pace sort)
     shrink_races=8.0,      # pseudo-races pulling circuit stickiness to the mean
 )
 
-_DNF_KEYWORDS = ("Accident", "Collision", "Spun", "Retired", "Withdrew",
+_DNF_KEYWORDS = (# "Did not start" / "Did not qualify" match no mechanical
+                 # keyword, so the catch-all clause below used to wave them
+                 # through as finishers. A car that never started cannot
+                 # inform how hard a circuit is to overtake on.
+                 "Did not",
+                 "Accident", "Collision", "Spun", "Retired", "Withdrew",
                  "Disqualified", "Engine", "Gearbox", "Hydraulics",
                  "Power", "Brakes", "Suspension", "Transmission", "Electrical",
                  "Overheating", "Mechanical", "Puncture", "Wheel", "Fuel",
@@ -72,10 +85,24 @@ _DNF_KEYWORDS = ("Accident", "Collision", "Spun", "Retired", "Withdrew",
 
 
 def _is_finish(status: pd.Series) -> pd.Series:
+    """Did the car see the flag? Lapped finishers count — they finished.
+
+    The archive changed vocabulary in 2023: a car a lap down used to be
+    "+1 Lap" and is now "Lapped". The old blanket exclusion of anything
+    containing "Lap" was harmless then (the `^\\+\\d` clause caught "+1 Lap"
+    first) and silently wrong afterwards — it reclassified 375 lapped
+    FINISHERS as retirements from 2023 on, which is why the archive appears
+    to show a 50% retirement rate in 2026. Passability is measured from
+    grid-vs-finish among classified finishers, so this dropped exactly the
+    backmarkers whose grid-to-finish relationship says most about how hard a
+    circuit is to overtake on.
+    """
     s = status.astype(str)
-    return (s.str.startswith("Finished") | s.str.match(r"^\+\d")) \
-        | (~s.str.contains("|".join(_DNF_KEYWORDS), case=False, na=False)
-           & ~s.str.contains("Lap", na=False))
+    return (s.str.startswith("Finished")
+            | s.str.startswith("Lapped")
+            | s.str.match(r"^\+\d")
+            | (~s.str.contains("|".join(_DNF_KEYWORDS), case=False, na=False)
+               & ~s.str.contains("Lap", na=False)))
 
 
 class RaceForecaster:

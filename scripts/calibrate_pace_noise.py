@@ -61,6 +61,65 @@ PACE_CSV = "data/team_pace_by_event.csv"
 TARGET = {"onelap": "onelap_speed_pct", "longrun": "race_pace_pct"}
 
 
+def collect_post_quali() -> pd.DataFrame:
+    """The post-quali stage, which no other tool scores.
+
+    `predict_weekend(quali_gap=...)` feeds the ACTUAL qualifying result into
+    the LONG-RUN latent, weighted by base_noise[("longrun", "Qualifying")].
+    The backtests deliberately never pass quali_gap (so they stay leak-free),
+    and event_measurements only covers practice — so that constant is used
+    live on every race weekend and validated by nothing. It is calibrated
+    here from the archive.
+
+    Two versions of the measurement are returned so the cost of the current
+    one is visible: `Qualifying` reproduces what PaceModel.actual_quali_gap
+    computes today (raw best lap across Q1/Q2/Q3, field-mean centred), and
+    `Qualifying-normalised` applies the session correction the team table and
+    the driver ratings already use.
+    """
+    from f1lib.quali_norm import normalised_gap_pct
+
+    pace = apply_pace_legacy_columns(pd.read_csv(PACE_CSV))
+    pace["team"] = pace["team"].map(canon)
+    q = pd.read_parquet("data/historical_results/quali_results_all.parquet")
+    q["best"] = q[["Q1", "Q2", "Q3"]].min(axis=1)
+    q = q.dropna(subset=["best"])
+    q["team"] = q["TeamName"].map(canon)
+
+    rows = []
+    for (season, event), g in q.groupby(["season", "event_name"]):
+        ev = pace[(pace["season"] == season) & (pace["event"] == event)]
+        tgt = ev.set_index("team")["race_pace_pct"].dropna()
+        if tgt.empty:
+            continue
+        raw = g.groupby("team")["best"].min().dropna()
+        if len(raw) < 6:
+            continue
+        raw_pct = 100.0 * (raw / raw.mean() - 1)
+        norm = normalised_gap_pct(g, entity="team", reducer="min")
+        for label, series in (("Qualifying", raw_pct),
+                              ("Qualifying-normalised",
+                               pd.Series(norm) if norm else None)):
+            if series is None or series.empty:
+                continue
+            common = sorted(set(series.index) & set(tgt.index))
+            if len(common) < 6:
+                continue
+            m = series.loc[common]
+            o = tgt.loc[common]
+            rows.append(pd.DataFrame({
+                "season": season, "event": event, "session": label,
+                "kind": "longrun", "team": common,
+                "m": (m - m.mean()).values,
+                # the model treats this measurement as near-exact (se=0.05):
+                # the gap itself is a timing-screen fact, so essentially all
+                # of the noise is one-lap -> race-pace translation error
+                "se": 0.05,
+                "r": (o - o.mean()).values,
+            }))
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
+
 def collect() -> pd.DataFrame:
     """One row per (season, event, session, kind, team): the measurement, its
     standard error, and the outcome it was trying to predict — both centred
@@ -128,6 +187,9 @@ def main() -> int:
     args = ap.parse_args()
 
     d = collect()
+    pq = collect_post_quali()
+    if not pq.empty:
+        d = pd.concat([d, pq], ignore_index=True)
     if d.empty:
         print("No measurements collected.")
         return 1

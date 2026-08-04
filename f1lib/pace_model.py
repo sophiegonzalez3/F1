@@ -44,7 +44,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from f1lib.config import apply_pace_legacy_columns
+from f1lib.config import (
+    apply_pace_legacy_columns, SESSIONS_DIR, SESSIONS_LITE_DIR,
+)
 from f1lib.pace_features import event_measurements, canon
 
 logger = logging.getLogger(__name__)
@@ -122,6 +124,20 @@ DEFAULTS: dict = {
         # this noise is pure one-lap → race-pace translation error. Matches
         # the prior's stand-in term (sqrt(longrun_from_onelap_var) ≈ 0.55):
         # stronger than any practice race sim, weaker than a real Sprint.
+        #
+        # This stage is used LIVE but no backtest scores it — they omit
+        # quali_gap on purpose to stay leak-free — so it went a long time
+        # with no estimation sample at all. calibrate_pace_noise.py now
+        # covers it (collect_post_quali). The audit it triggered found a
+        # SCALE error rather than a noise error: against the raw
+        # best-of-Q1/Q2/Q3 gap the outcome regressed with slope 0.29 over 675
+        # pre-2026 team-events, because the earliest-eliminated teams are also
+        # the slowest and the green-track penalty compounds their real
+        # deficit. Fixed in actual_quali_gap by session-normalising the
+        # measurement (slope 1.00 after). With the scale corrected the
+        # attenuation identity can no longer identify a positive noise here,
+        # so 0.55 stays as the conservative choice rather than being lowered
+        # on an estimate that says "zero".
         ("longrun", "Qualifying"): 0.55,
     },
     "default_base_noise": 0.6,
@@ -449,18 +465,74 @@ class PaceModel:
     @staticmethod
     def actual_quali_gap(laps: pd.DataFrame) -> pd.Series:
         """Per-team qualifying gap to the field MEAN (%), from a loaded
-        Qualifying session's laps. Matches the onelap prediction's units so
-        the ledger can subtract them. Empty if no qualifying laps present."""
+        Qualifying session. Matches the onelap prediction's units so the
+        ledger can subtract them. Empty if no qualifying laps present.
+
+        SESSION-NORMALISED where possible. Taking the plain minimum across
+        Q1/Q2/Q3 does not merely add noise, it AMPLIFIES the field: the teams
+        knocked out earliest are also the slowest, so the green-track penalty
+        lands in the same direction as their real deficit. Measured over 675
+        pre-2026 team-events, race pace regresses on the raw gap with a slope
+        of 0.29 — the raw measure overstates the spread roughly threefold —
+        against 1.00 for the normalised one. Feeding the raw version into the
+        long-run update therefore pushed the latent apart, and no amount of
+        tuning base_noise fixes a scale error.
+
+        The Q1/Q2/Q3 split is not in the lap frame, but the session's cached
+        RESULTS carry it and are written at load time, so this works live the
+        moment qualifying is loaded. Falls back to the raw minimum when the
+        results are unavailable.
+        """
         if laps is None or laps.empty or "session" not in laps.columns:
             return pd.Series(dtype=float)
         q = laps[laps["session"].isin(["Qualifying", "Sprint Qualifying"])
                  & laps.get("ValidLap", False)]
         if q.empty:
             return pd.Series(dtype=float)
+
+        norm = PaceModel._normalised_quali_gap(q)
+        if norm is not None and len(norm) >= 4:
+            return norm
+
         best = q.groupby(q["Team"].map(canon))["LapTime_s"].min().dropna()
         if len(best) < 4:
             return pd.Series(dtype=float)
         return 100.0 * (best / best.mean() - 1)
+
+    @staticmethod
+    def _normalised_quali_gap(q: pd.DataFrame) -> pd.Series | None:
+        """Session-normalised team gap from the cached results of the session
+        `q` came from, or None when that isn't available."""
+        from f1lib.quali_norm import normalised_gap_pct
+        import f1lib.data_loader as dl
+
+        try:
+            season = str(q["season"].iloc[0])
+            meeting = str(q["meeting"].iloc[0])
+            session = str(q["session"].iloc[0])
+        except (KeyError, IndexError):
+            return None
+        key = dl._session_key(season, meeting, session)
+        for base in (Path(SESSIONS_DIR), Path(SESSIONS_LITE_DIR)):
+            path = base / f"{key}__results.parquet"
+            if not path.exists():
+                continue
+            try:
+                res = pd.read_parquet(path)
+            except Exception:
+                continue
+            if not {"Q1", "Q2", "Q3", "TeamName"} <= set(res.columns):
+                continue
+            g = res.copy()
+            g["team"] = g["TeamName"].map(canon)
+            gaps = normalised_gap_pct(g, entity="team", reducer="min")
+            if not gaps:
+                return None
+            s = pd.Series(gaps, dtype=float)
+            # normalised_gap_pct centres on the field MEDIAN; this method's
+            # contract (and the ledger that subtracts it) is the field MEAN
+            return s - s.mean()
+        return None
 
     @staticmethod
     def actual_driver_race_gap(laps: pd.DataFrame) -> pd.Series:

@@ -141,6 +141,27 @@ DEFAULTS: dict = {
         ("longrun", "Qualifying"): 0.55,
     },
     "default_base_noise": 0.6,
+    # ── carry-over across a regulation break ──
+    # The prior refuses to look across an era boundary, so at an era opener
+    # every team gets the field mean: total amnesia. The archive says that
+    # throws away real information — the competitive order survives a
+    # regulation change at rho +0.53 (2021->22) and +0.58 (2025->26), against
+    # +0.80 for an ordinary winter. Scaling the previous era's closing form by
+    # `era_carryover` beat a flat prior at both openings (2022 MAE 0.548 ->
+    # 0.503 at k=0.2; 2026 0.748 -> 0.607 at k=1.0).
+    #
+    # DEFAULT 0.0 — deliberately OFF. The optimum differs wildly between the
+    # two openings (0.2 vs 1.0) and there are only two of them ever, so k
+    # cannot be fitted, only shown to be positive. Turn it on with a value
+    # calibrated on 2022 and validated on 2026, never the reverse. Only ever
+    # applies to a team with NO history in the current era; one round in and
+    # the normal path takes over.
+    #
+    # The VARIANCE is deliberately not reduced when this is on: a better
+    # guess at the mean is not a reason to claim more confidence, and the
+    # measured carry-over is far from perfect.
+    "era_carryover": 0.0,
+    "era_carryover_rounds": 5,   # closing rounds of the old era to average
     # ── upgrade-aware prior widening ──
     # A team that brings a performance package is less predictable from its
     # own form line than one running a stable car — the whole point of the
@@ -278,16 +299,45 @@ class PaceModel:
             + (season - h["season"]) * self.p["season_gap_rounds"]
         return h
 
+    def _prev_era_form(self, season: int, col: str) -> dict[str, float]:
+        """Each team's centred gap over the closing rounds of the PREVIOUS
+        era, scaled by `era_carryover`. Empty when carry-over is off or there
+        is no earlier era. See the constant's note for why it is off by
+        default."""
+        k = float(self.p.get("era_carryover", 0.0))
+        if k <= 0:
+            return {}
+        cur = era_of(season)
+        prev = self.pace[(self.pace["era"] != cur)
+                         & (self.pace["season"] < season)
+                         & self.pace[col].notna()]
+        if prev.empty:
+            return {}
+        last_season = int(prev["season"].max())
+        tail = prev[prev["season"] == last_season]
+        cutoff = tail["round"].max() - int(self.p["era_carryover_rounds"]) + 1
+        tail = tail[tail["round"] >= cutoff]
+        if tail.empty:
+            return {}
+        centred = tail[col] - tail.groupby("round")[col].transform("mean")
+        form = centred.groupby(tail["team"]).mean()
+        form = form - form.mean()
+        return (k * form).to_dict()
+
     def _prior_kind(self, season: int, round_: int, col: str,
                     teams: list[str]) -> pd.DataFrame:
-        """EW form prior for one gap column. Teams without history get a
-        wide field-mean prior."""
+        """EW form prior for one gap column. Teams without history in this
+        era fall back to the field mean, or to the previous era's closing
+        form when `era_carryover` is enabled."""
         h = self._centered_history(season, round_, col)
+        # computed per call, not per team: a team can lack era history while
+        # others have plenty (a newcomer mid-era), and the lookup is cheap
+        carry = self._prev_era_form(season, col)
         rows = []
         for team in teams:
             g = h[h["team"] == team] if not h.empty else pd.DataFrame()
             if g.empty:
-                rows.append({"team": team, "mean": 0.0,
+                rows.append({"team": team, "mean": carry.get(team, 0.0),
                              "var": self.p["new_team_sd"] ** 2, "n_eff": 0.0})
                 continue
             w = 0.5 ** (g["dist"] / self.p["half_life_rounds"])

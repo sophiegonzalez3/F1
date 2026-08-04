@@ -61,6 +61,7 @@ import pandas as pd
 import f1lib.data_loader as dl
 from f1lib.pace_features import canon
 from f1lib.quali_norm import n_sessions, normalised_gap_pct
+from f1lib.config import SESSIONS_LITE_DIR
 from f1lib.processing import (
     clean_and_enrich_laps, flag_dirty_air, flag_perturbed_laps,
     enrich_track_evolution,
@@ -149,10 +150,24 @@ def _quali_driver_gaps() -> pd.DataFrame:
 
 
 def _race_driver_gaps() -> pd.DataFrame:
-    """Median clean-air corrected race lap per driver as % gap to the event's
-    fastest such driver. Only cached races contribute."""
+    """Median clean-air corrected race lap per driver as % vs the event's
+    field median. Only cached races contribute.
+
+    Reads the laps-only backfill store as well as the app's full cache. The
+    full cache stops at 2023 because it carries telemetry and was never
+    going to hold whole seasons, so without this the driver ratings simply
+    had no race evidence before then — the same blind spot the team pace
+    table had.
+    """
     rows = []
-    metas = sorted(Path(dl.SESSIONS_DIR).glob("*__Race__laps.parquet"))
+    seen: set[str] = set()
+    metas = []
+    for base in (Path(dl.SESSIONS_DIR), Path(SESSIONS_LITE_DIR)):
+        for p in sorted(Path(base).glob("*__Race__laps.parquet")):
+            if p.name in seen:
+                continue        # the full cache wins for the same event
+            seen.add(p.name)
+            metas.append(p)
     for p in metas:
         key = p.name.replace("__laps.parquet", "")
         season_s, event_s, _ = key.split("__", 2)

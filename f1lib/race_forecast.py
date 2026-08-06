@@ -28,9 +28,23 @@ archive as the rank correlation between grid and finish among classified
 finishers (high correlation = sticky = hard to pass), shrunk toward the field
 average for circuits with little history.
 
-What this does NOT model: pit-strategy calls, weather changes mid-race,
-per-team reliability differences, and specific incidents. DNFs are a single
-field-average rate. It is a PACE-and-track forecast, honest about that.
+Retirements are modelled at two levels, both measured rather than assumed:
+the base rate is scaled by a per-CIRCUIT multiplier (0.71x Barcelona to 1.38x
+Australia, a 1.9x spread over 3235 starts), and teammates' failures are
+CORRELATED via a shared per-team shock, because they demonstrably are —
+P(both cars out) is 3.06% against 2.02% under independence.
+
+What this does NOT model: pit-strategy calls, weather changes mid-race, and
+per-TEAM reliability differences (only per-circuit). It is a PACE-and-track
+forecast, honest about that.
+
+Deliberately NOT modelled, having been measured and found unsupported: a
+per-DRIVER retirement rate (chi2 = 23.9, df = 19, p = 0.20 — indistinguishable
+from binomial noise), and a per-GRID-SLOT rate. The raw grid gradient is
+strong (8.6% at P1-3 rising to 17.9% at P15+) but it is CAR QUALITY, not
+track position: comparing the two cars of the SAME team at the same race, the
+one starting further back retires only 15.1% of the time against 13.3%
+(McNemar p = 0.15). Slow cars start at the back and slow cars break.
 
 Entry point
 -----------
@@ -46,8 +60,9 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
+from scipy.stats import norm, spearmanr
 
+from f1lib.circuits import circuit_id
 from f1lib.pace_features import canon
 
 logger = logging.getLogger(__name__)
@@ -66,6 +81,27 @@ DEFAULTS = dict(
     # the 2026 holdout runs hotter at 0.182 (new regulations), which is the
     # right kind of thing for this constant NOT to chase.
     dnf_rate=0.12,
+    # Retirement risk is NOT flat across circuits. Measured over 3235
+    # classified starts, the shrunk per-circuit rate runs from 0.101
+    # (Barcelona) to 0.196 (Australia) around a 0.142 pooled mean — a 1.9x
+    # spread, and one of the cleanest signals in the archive.
+    #
+    # Applied as a MULTIPLIER on dnf_rate rather than as an absolute rate, so
+    # the deliberate choice of base level above (recent-era 0.12, not the
+    # long-run 0.142) survives. Multipliers therefore run ~0.71 to ~1.38.
+    dnf_shrink_starts=80.0,   # pseudo-starts pulling a circuit toward the mean
+    # Teammates retire together more often than chance: P(both) is 3.06%
+    # against 2.02% under independence over 1599 team-races (chi2 = 11.3,
+    # p = 0.0008), i.e. P(B retires | A retired) = 22.6% vs 14.8%
+    # unconditional, a 1.5x lift. Shared batches, shared design flaws, shared
+    # first-lap incidents. Independent Bernoulli draws understate double
+    # retirements by half, which biases every OTHER driver's podium and
+    # points probability upward.
+    #
+    # Implemented as a Gaussian copula: this is the LATENT correlation that
+    # reproduces the observed P(both) exactly at the measured marginals, not
+    # the phi coefficient of the 2x2 (0.084), which is a different quantity.
+    dnf_corr=0.19,
     pull_lo=0.20,          # passability floor (even Monaco lets a little pace through)
     pull_hi=0.85,          # ceiling (even Monza isn't a pure pace sort)
     shrink_races=8.0,      # pseudo-races pulling circuit stickiness to the mean
@@ -111,6 +147,7 @@ class RaceForecaster:
         self._results = self._load_results()
         self._pull, self._global_pull = self._circuit_passability()
         self._event_to_circuit = self._event_map()
+        self._circuit_dnf_map = self._circuit_dnf()
 
     # ── historical calibration ────────────────────────────────
 
@@ -124,14 +161,30 @@ class RaceForecaster:
             return pd.DataFrame()
         r = pd.concat(frames, ignore_index=True)
         r = r.dropna(subset=["GridPosition", "Position"])
-        return r[r["GridPosition"] > 0].copy()
+        r = r[r["GridPosition"] > 0].copy()
+        # Key every multi-season circuit statistic on circuit_id, never on the
+        # archive's circuit_key (which is derived from the EVENT name). Five
+        # circuits are split across two keys — Barcelona sits under both
+        # `spanish_grand_prix` and `barcelona_grand_prix`, and Interlagos,
+        # Mexico City, the Red Bull Ring and Silverstone likewise — so keying
+        # on circuit_key silently fragments their history and hands the
+        # renamed half a thin, shrunk-to-the-mean estimate. Barcelona's
+        # retirement multiplier came out 1.27 under circuit_key against 0.71
+        # under circuit_id: it is the SAFEST circuit in the archive and was
+        # being reported as one of the harshest.
+        r["circuit_id"] = [circuit_id(e, s)
+                           for e, s in zip(r["event_name"], r["season"])]
+        return r
 
     def _event_map(self) -> dict[str, str]:
-        if self._results.empty or "circuit_key" not in self._results.columns:
+        """event name -> circuit_id. Must agree with the key the per-circuit
+        statistics are grouped on, or every lookup silently falls back to the
+        global default."""
+        if self._results.empty or "circuit_id" not in self._results.columns:
             return {}
-        return (self._results.dropna(subset=["circuit_key"])
+        return (self._results.dropna(subset=["circuit_id"])
                 .drop_duplicates("event_name")
-                .set_index("event_name")["circuit_key"].to_dict())
+                .set_index("event_name")["circuit_id"].to_dict())
 
     def _circuit_passability(self) -> tuple[dict[str, float], float]:
         """pull ∈ [pull_lo, pull_hi] per circuit_key: how much pace overcomes
@@ -141,7 +194,7 @@ class RaceForecaster:
         if r.empty:
             return {}, (self.p["pull_lo"] + self.p["pull_hi"]) / 2
         fin = r[_is_finish(r["Status"])]
-        key = "circuit_key" if "circuit_key" in r.columns else "event_name"
+        key = "circuit_id" if "circuit_id" in r.columns else "event_name"
 
         def _stick(g: pd.DataFrame) -> float:
             if g["GridPosition"].nunique() < 4 or len(g) < 6:
@@ -149,7 +202,13 @@ class RaceForecaster:
             rho = spearmanr(g["GridPosition"], g["Position"]).correlation
             return rho if np.isfinite(rho) else np.nan
 
-        per = fin.groupby([key, "season", "round_number"]).apply(_stick).dropna()
+        # Select the two columns _stick needs BEFORE applying: passing the
+        # whole frame makes pandas hand the grouping columns to the callable
+        # too, which is deprecated (and the suite treats FutureWarning as an
+        # error precisely to catch that early).
+        per = (fin.groupby([key, "season", "round_number"])[
+                   ["GridPosition", "Position"]]
+               .apply(_stick).dropna())
         glob = float(per.mean())
         n = per.groupby(level=0).size()
         stick = per.groupby(level=0).mean()
@@ -170,6 +229,32 @@ class RaceForecaster:
         pull = {c: float(_to_pull(s)) for c, s in stick_sh.items()}
         global_pull = float(_to_pull(glob))
         return pull, global_pull
+
+    def _circuit_dnf(self) -> dict[str, float]:
+        """Per-circuit retirement MULTIPLIER on `dnf_rate`, shrunk to 1.0.
+
+        Measured from classified starts, not guessed. Returned as a ratio so
+        the configured base rate keeps setting the level and the circuit only
+        sets the shape — otherwise this would silently overwrite the
+        deliberate choice of a recent-era base over the long-run pooled one.
+        """
+        r = self._results
+        if r.empty or "Status" not in r.columns:
+            return {}
+        key = "circuit_id" if "circuit_id" in r.columns else "event_name"
+        dnf = (~_is_finish(r["Status"])).astype(float)
+        glob = float(dnf.mean())
+        if not np.isfinite(glob) or glob <= 0:
+            return {}
+        g = dnf.groupby(r[key]).agg(["size", "mean"])
+        k = self.p["dnf_shrink_starts"]
+        shrunk = (g["size"] * g["mean"] + k * glob) / (g["size"] + k)
+        return (shrunk / glob).to_dict()
+
+    def dnf_multiplier(self, event: str) -> float:
+        """Circuit retirement multiplier for an event name; 1.0 if unknown."""
+        ck = self._event_to_circuit.get(event, event)
+        return float(self._circuit_dnf_map.get(ck, 1.0))
 
     def passability(self, event: str) -> float:
         """pull for an event name (via its circuit), global fallback."""
@@ -241,13 +326,34 @@ class RaceForecaster:
         score = grid_rank + pull * (pace_rank - grid_rank)
         score = score + rng.standard_normal((n, k)) * noise
 
-        # retirements: knock cars far back this sim
+        # ── retirements ───────────────────────────────────────
+        # Rate: the configured base, scaled by how hard this circuit is on
+        # cars (measured, 0.71x Barcelona to 1.38x Australia). An explicit
+        # dnf_rates mapping overrides both.
+        mult = self.dnf_multiplier(event)
         if dnf_rates is not None:
-            rates = np.array([dnf_rates.get(dr, self.p["dnf_rate"])
-                              for dr in drivers])[None, :]
+            rates = np.array([dnf_rates.get(dr, self.p["dnf_rate"] * mult)
+                              for dr in drivers], dtype=float)
         else:
-            rates = self.p["dnf_rate"]
-        dnf = rng.random((n, k)) < rates
+            rates = np.full(k, self.p["dnf_rate"] * mult, dtype=float)
+        rates = np.clip(rates, 1e-6, 1 - 1e-6)
+
+        # Correlation: teammates fail together more often than chance, so the
+        # draw is a Gaussian copula with a shared per-team shock rather than
+        # k independent Bernoullis. Same device as the shared car draw in
+        # _sample_pace, and for the same reason — the thing being shared is
+        # real (a batch, a design flaw, a first-lap incident that takes both
+        # cars). Independent draws halve the odds of a double retirement.
+        corr = float(np.clip(self.p.get("dnf_corr", 0.0), 0.0, 0.99))
+        if corr > 0:
+            shared = {t: rng.standard_normal(n) for t in set(d["team"])}
+            z = np.empty((n, k))
+            a, b = np.sqrt(corr), np.sqrt(1.0 - corr)
+            for i, t in enumerate(d["team"]):
+                z[:, i] = a * shared[t] + b * rng.standard_normal(n)
+        else:
+            z = rng.standard_normal((n, k))
+        dnf = z < norm.ppf(rates)[None, :]
         score = np.where(dnf, 1e6 + rng.random((n, k)), score)
 
         finish = score.argsort(axis=1).argsort(axis=1) + 1   # 1=win

@@ -181,10 +181,15 @@ def _race_lap_path(season: int, event: str) -> tuple[Path | None, dict]:
         return paths["laps"], paths
     lite = Path(SESSIONS_LITE_DIR) / f"{key}__laps.parquet"
     if lite.exists():
-        # the lite store carries no race-control messages; flag_perturbed_laps
-        # still catches safety cars and VSCs from the per-lap TrackStatus, it
-        # just misses short sector yellows that never reach it
-        return lite, {"laps": lite, "race_control": Path("nonexistent")}
+        # The lite store used to carry no race-control messages at all, and
+        # this returned a hardcoded nonexistent path — so even once they were
+        # fetched they would have been ignored. scripts/fetch_race_control.py
+        # backfills them here; without one flag_perturbed_laps still catches
+        # safety cars and VSCs from the per-lap TrackStatus, it just misses
+        # the short sector yellows that never reach it.
+        return lite, {"laps": lite,
+                      "race_control": Path(SESSIONS_LITE_DIR)
+                      / f"{key}__race_control.parquet"}
     return None, {}
 
 

@@ -1518,7 +1518,26 @@ def detect_wet_crossover(
 # enrich_track_limits, enrich_blue_flags)
 # ─────────────────────────────────────────────────────────────
 
-def _normalize_rcm(rcm: pd.DataFrame) -> pd.DataFrame:
+def _session_t0(df: pd.DataFrame) -> "pd.Timestamp | None":
+    """The session's start instant, recovered from the laps frame.
+
+    Every lap carries both an absolute LapStartDate and a session-relative
+    LapStartTime, so their difference is the session origin — and it is exact:
+    across a full race the derived value has zero spread. This is what lets
+    race-control messages (absolute datetimes) be placed on the same clock as
+    lap windows (session seconds).
+    """
+    if not {"LapStartDate", "LapStartTime"} <= set(df.columns):
+        return None
+    start = pd.to_datetime(df["LapStartDate"], errors="coerce")
+    offset = pd.to_timedelta(
+        pd.to_numeric(df["LapStartTime"], errors="coerce"), unit="s")
+    t0 = (start - offset).dropna()
+    return t0.median() if len(t0) else None
+
+
+def _normalize_rcm(rcm: pd.DataFrame,
+                   t0: "pd.Timestamp | None" = None) -> pd.DataFrame:
     """
     Normalise a raw race-control-messages DataFrame for downstream use.
 
@@ -1529,6 +1548,20 @@ def _normalize_rcm(rcm: pd.DataFrame) -> pd.DataFrame:
     - Sector → float (NaN when absent)
     - RacingNumber → str, stripped (leading zeros preserved; "" when absent)
 
+    `t0` is the session's start instant, needed only when Time is an absolute
+    datetime — which is what FastF1 actually hands back. Callers derive it
+    from the laps frame (see `_session_t0`).
+
+    THE DATETIME CASE USED TO FALL THROUGH TO pd.to_numeric, and that is a
+    bug worth spelling out because it failed silently for years. On a
+    datetime64 column pd.to_numeric returns NANOSECONDS SINCE THE EPOCH —
+    around 1.7e18. Every consumer compares Time_s against lap windows
+    measured in session seconds (0 to ~9000), so nothing ever matched, no
+    error was raised, and `RCM_Perturbed` came back 0 for every session of
+    every season. The race-control signal in flag_perturbed_laps has
+    therefore never contributed anything, despite being wired up and passed
+    real data throughout.
+
     Returns a copy; the original is unmodified.
     """
     rcm = rcm.copy()
@@ -1537,6 +1570,15 @@ def _normalize_rcm(rcm: pd.DataFrame) -> pd.DataFrame:
     if "Time" in rcm.columns:
         if pd.api.types.is_timedelta64_dtype(rcm["Time"]):
             rcm["Time_s"] = rcm["Time"].dt.total_seconds()
+        elif pd.api.types.is_datetime64_any_dtype(rcm["Time"]):
+            if t0 is None:
+                logger.warning(
+                    "_normalize_rcm: Time is an absolute datetime but no "
+                    "session start was supplied — RCM timing signals will be "
+                    "inactive for this session.")
+                rcm["Time_s"] = np.nan
+            else:
+                rcm["Time_s"] = (rcm["Time"] - t0).dt.total_seconds()
         elif rcm["Time"].dtype == object:
             def _t(v):
                 if hasattr(v, "total_seconds"):
@@ -1714,7 +1756,7 @@ def flag_perturbed_laps(
     n_rcm_events    = 0
 
     if rcm is not None and not rcm.empty:
-        rcm_c = _normalize_rcm(rcm)
+        rcm_c = _normalize_rcm(rcm, t0=_session_t0(df))
 
         # Select events that actually disrupt lap times
         _flag_match = rcm_c["Flag"].str.upper().isin(_RCM_PERTURB_FLAGS)
@@ -2029,7 +2071,7 @@ def enrich_track_limits(laps: pd.DataFrame, rcm: pd.DataFrame) -> pd.DataFrame:
     if rcm is None or rcm.empty:
         return laps
 
-    rcm_c = _normalize_rcm(rcm)
+    rcm_c = _normalize_rcm(rcm, t0=_session_t0(laps))
 
     # ── Detect track-limits events ───────────────────────────
     _cat_match = (
@@ -2126,7 +2168,7 @@ def enrich_blue_flags(laps: pd.DataFrame, rcm: pd.DataFrame) -> pd.DataFrame:
     if rcm is None or rcm.empty:
         return laps
 
-    rcm_c = _normalize_rcm(rcm)
+    rcm_c = _normalize_rcm(rcm, t0=_session_t0(laps))
 
     blue_events = rcm_c[rcm_c["Flag"].str.upper() == "BLUE"].copy()
 

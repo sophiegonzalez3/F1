@@ -29,6 +29,49 @@ thing (fuel/engine-mode games, programme differences) over and above lap-time
 scatter. Those constants are the model's only real tuning knobs and are
 validated by backtest_pace_model.py.
 
+REJECTED: widening the variance for rain
+----------------------------------------
+The model's fat tail is wet races, and the diagnosis is not in doubt. Split
+the backtest by whether the race had rain on more than 10% of laps:
+
+    long-run   dry  MAE 0.396  z_sd 1.77  cov68 47.6%   (n = 1226 team-rows)
+               WET  MAE 0.756  z_sd 3.83  cov68 35.8%   (n =  106)
+    one-lap    dry  MAE 0.256  z_sd 1.13  cov68 68.5%
+               WET  MAE 0.346  z_sd 2.22  cov68 53.3%
+
+A wet race nearly doubles the long-run error and more than doubles the
+z-score spread. The ten worst single-team errors in the whole archive are
+dominated by two events, British 2024 (35% of race laps wet) and British 2025
+(18%).
+
+What does NOT exist is a leak-free way to see it coming. Using the race's own
+rainfall to widen the interval is reading the answer. Two ex-ante candidates
+were tested and neither survives:
+
+  * per-circuit historical wet frequency (leave-one-season-out). It does not
+    even predict RAIN, let alone error: rho +0.030, p = 0.70 over 164 races.
+    Circuits with no wet race in their history went on to be wet 8% of the
+    time; circuits above a 25% historical rate, 13%. F1 does not visit the
+    same track in the same week each year, and that is enough to destroy it.
+  * rain in THIS weekend's practice sessions, which is genuinely known by
+    Friday evening. Correct sign every time and never significant:
+    rho +0.14 to +0.35, p = 0.12 to 0.30, on 21-57 events of which only 6-12
+    had any practice rain at all.
+
+So the mechanism is real, the direction is known, and the magnitude cannot be
+estimated from what is cached. Shipping a widening factor here would be the
+same mistake as the speed-trap sandbagging correction (see pace_features.py):
+a plausible physical story fitted on a sample too thin to size it.
+
+The principled fix, when there is data for it, is not a switch at all: the
+predictive distribution is a MIXTURE — roughly 90% "dry race, Gaussian and
+well behaved" and 10% "rain, all bets off" (18 of 168 archived races cleared
+the 10%-of-laps bar). That mixture is fatter-tailed than any single Gaussian,
+which is exactly what the RMSE/MAE ratio of ~1.45 has been reporting all
+along, and it needs no forecast of WHICH race is wet — only the base rate.
+Implementing it means outcome_probs and race_forecast stop being Gaussian,
+which is a larger change than a constant.
+
 Main entry point
 ----------------
     model = PaceModel()
@@ -57,7 +100,13 @@ DEFAULTS: dict = {
     # ── prior construction ──
     "half_life_rounds": 4.0,     # EW decay of past rounds' influence
     "season_gap_rounds": 6.0,    # extra pseudo-rounds of distance across winter
-    "min_prior_var": 0.06,       # %² — form is never a perfect predictor
+    # %² floor. Its job CHANGED when _prior_kind moved to the predictive
+    # variance: race-to-race scatter is now counted explicitly, so this is no
+    # longer standing in for it. What it still guards is the metronomic team
+    # — nine near-identical results give resid_var ~ 0 and would otherwise
+    # claim near-perfect knowledge of a car that can still be developed,
+    # crashed, or rained on.
+    "min_prior_var": 0.06,
     "max_prior_var": 4.0,        # %² — cap so one team can't go fully diffuse
     "new_team_sd": 1.5,          # % — prior sd with no era history
     "longrun_from_onelap_var": 0.30,  # %² added when race form is missing and
@@ -87,10 +136,38 @@ DEFAULTS: dict = {
     # practice sim, and the measurement disagrees — a green Friday-evening
     # track with a single practice of setup behind it is not a Saturday
     # quali. See its own note below.
+    # ── RAISED ACROSS THE BOARD (Aug 2026) when _prior_kind moved to the
+    # predictive variance. That fix roughly doubles the prior variance, and
+    # the Kalman gain is v/(v+r) — so leaving r alone silently handed practice
+    # about twice its former influence. The measurements said practice had
+    # ALREADY been over-trusted before that: on the 2025 validation season the
+    # old constants made practice actively HARMFUL (one-lap MAE 0.216 at the
+    # prior, 0.249 after FP3; long-run 0.437 -> 0.476).
+    #
+    # How these were chosen, and why they are not the grid search's answer:
+    # three searches were run (NLL on 2022-24, CRPS on 2023-24 twice) and all
+    # three pinned one-lap to whatever ceiling the grid offered — 0.55, then
+    # 0.60, then 0.95. A boundary result is a search reporting that it ran out
+    # of room, not an optimum, and `_warn_if_on_boundary` now says so out
+    # loud. What the boundary DID establish is the direction, and the 2026
+    # holdout confirmed it: every metric improved and practice contributed
+    # MORE, not less (one-lap paired 0.385->0.285 against 0.385->0.302).
+    #
+    # So the values were picked from an explicit candidate comparison rather
+    # than pasted. CRPS turns out to be nearly flat across the plausible range
+    # (0.214-0.218 on the holdout), which means the exact number matters far
+    # less than the direction — and that flatness is what buys the freedom to
+    # keep the physically meaningful ordering FP1 > FP2 > FP3. The grid edge
+    # wanted 0.95/0.95/0.95, i.e. FP1 and FP3 equally uninformative, which is
+    # false: FP3 runs an hour before qualifying in near-quali trim. These sit
+    # within 0.008 MAE of that flat optimum and keep the ordering.
+    #
+    # Upper bounds come from tests/test_pace_noise_calibration.py, which pins
+    # the band the attenuation calibration supports.
     "base_noise": {
-        ("onelap", "Practice 1"): 0.55,
-        ("onelap", "Practice 2"): 0.35,
-        ("onelap", "Practice 3"): 0.25,
+        ("onelap", "Practice 1"): 0.95,
+        ("onelap", "Practice 2"): 0.80,
+        ("onelap", "Practice 3"): 0.65,
         # RAISED from 0.20 (Aug 2026). The old value was fitted on 2026's four
         # sprint weekends — the holdout — because nothing had ever backfilled
         # sprint sessions from earlier seasons, so there was no other sample.
@@ -101,9 +178,15 @@ DEFAULTS: dict = {
         # three times more than it earns. Sensible in hindsight: SQ is a
         # low-fuel qualifying run on a green Friday-evening track with one
         # practice session of setup work behind it, not a Saturday quali.
+        # LEFT AT 0.60 while everything around it went up, and the measurement
+        # is the reason. Sprint Qualifying is the one stage that was already
+        # slightly UNDER-confident (z_sd 0.80, 80% inside a 68% band on the
+        # 2025 sprint weekends); raising it in step with the practice
+        # constants made it worse, not better (0.80 -> 0.75). Two independent
+        # attenuation samples put it near 0.61 and this is that value.
         ("onelap", "Sprint Qualifying"): 0.60,
-        ("longrun", "Practice 1"): 0.85,
-        ("longrun", "Practice 2"): 0.70,
+        ("longrun", "Practice 1"): 1.50,
+        ("longrun", "Practice 2"): 1.35,
         # LEFT AT 0.85 DELIBERATELY. The attenuation calibration
         # (scripts/calibrate_pace_noise.py) is the one place that disagrees
         # with this table: on pre-2026 data the outcome regresses on the FP3
@@ -117,8 +200,11 @@ DEFAULTS: dict = {
         # works in use for one an underpowered test cannot confirm is how
         # tuning noise gets baked in. Revisit when FP3 long-run coverage
         # grows; the calibration re-runs in one command.
-        ("longrun", "Practice 3"): 0.85,
-        ("longrun", "Sprint"): 0.45,
+        ("longrun", "Practice 3"): 1.35,
+        # Raised from 0.45. Still the strongest long-run source there is — a
+        # Sprint is a real race on race fuel — but it was over-trusted against
+        # the widened prior: z_sd 1.14 at 0.45 against 0.97 here.
+        ("longrun", "Sprint"): 0.65,
         # Actual qualifying gaps used as a LONG-RUN measurement (the optional
         # post-quali stage): the gap itself is measured almost exactly, so
         # this noise is pure one-lap → race-pace translation error. Matches
@@ -138,7 +224,15 @@ DEFAULTS: dict = {
         # attenuation identity can no longer identify a positive noise here,
         # so 0.55 stays as the conservative choice rather than being lowered
         # on an estimate that says "zero".
-        ("longrun", "Qualifying"): 0.55,
+        # RAISED 0.55 -> 0.95 (Aug 2026). This was the worst-calibrated stage
+        # in the whole model once calibration was finally measured: z_sd 1.57
+        # on 24 validation events, with barely half the outcomes inside a band
+        # meant to hold 68%. Qualifying is hard evidence about ONE LAP and the
+        # translation to race pace is the loose part, so the noise belongs
+        # here rather than in the measurement. At 0.95 it reaches z_sd 1.30 —
+        # better, and still the least honest stage in the model, which is
+        # worth knowing when reading a post-quali race-pace number.
+        ("longrun", "Qualifying"): 0.95,
     },
     "default_base_noise": 0.6,
     # ── sandbagging correction on practice long runs ──
@@ -190,6 +284,39 @@ DEFAULTS: dict = {
     # 2026 — the holdout season — so any tuning would be holdout leakage.
     "upgrade_var_per_item": 0.04,   # %² per declared performance component
     "upgrade_var_cap": 0.36,        # %² ceiling per event
+    # ── process noise (drift between sessions) ──
+    # A Kalman update is v' = v(1 - K), which ONLY ever shrinks. That is
+    # correct for estimating a quantity that is genuinely constant, and a
+    # car's pace is not: setup changes overnight, the track rubbers in, the
+    # temperature moves twenty degrees between FP2 and the race. With nothing
+    # re-inflating the variance the filter talks itself into confidence it has
+    # not earned — measured as z_sd climbing 0.94 -> 1.23 -> 1.55 across
+    # prior -> FP3 -> quali even after the prior variance was corrected.
+    #
+    # This is the standard predict step: v <- v + Q before each measurement.
+    # Units are %^2 per stage, so the sd contribution over three sessions is
+    # sqrt(3 * Q).
+    #
+    # DEFAULT 0.0 — the mechanism is real and correct, and it turned out not
+    # to be needed, which is only knowable in this order. The drift was
+    # diagnosed against the OLD base_noise; re-tuning those constants against
+    # the corrected prior removed the symptom on its own. At Q=0 the model now
+    # sits at z_sd 0.94-1.19 across every 2026 stage and 0.89-1.25 for
+    # ground-effect one-lap, i.e. already near the 1.00 target.
+    #
+    # Swept 0.0 / 0.02 / 0.05 / 0.08 / 0.12 on 103 events. Adding drift now
+    # OVERSHOOTS into under-confidence and costs accuracy:
+    #     2026 one-lap FP3      z 1.05 -> 0.85, CRPS 0.214 -> 0.222
+    #     ground-effect FP3     z 0.89 -> 0.74, CRPS 0.191 -> 0.205
+    # The one place it helps is ground-effect long-run (z 2.34 -> 1.78), and
+    # that block is dominated by 2022's wet races (Monaco alone scores
+    # mean|z| 10.6) — a weather tail, not drift, so inflating variance every
+    # weekend to cover it would be paying the wrong premium.
+    #
+    # Turn it on only if a future measurement shows calibration decaying
+    # ACROSS a weekend on dry events specifically; that is the signature this
+    # knob is for.
+    "process_var_per_stage": 0.0,
     # ── outcome simulation ──
     "exec_sd": 0.18,             # % — event-day execution noise per team
     "n_sims": 20000,
@@ -361,7 +488,26 @@ class PaceModel:
             n_eff = float(w.sum() ** 2 / (w ** 2).sum())
             if n_eff > 1.5:
                 resid_var = float(np.average((g["gap_c"] - mean) ** 2, weights=w))
-                var = resid_var / n_eff
+                # PREDICTIVE variance, not the variance of the mean.
+                #
+                # This used to be resid_var / n_eff, which is the uncertainty
+                # in the AVERAGE of the team's past races. But the average of
+                # past races is not what is being predicted — the NEXT race
+                # is, and it carries the full race-to-race scatter on top of
+                # whatever uncertainty the average has. The textbook
+                # predictive variance for a new draw is
+                #     resid_var * (1 + 1/n_eff)
+                # and at a typical n_eff of 7.5 that is 8.5x larger than
+                # resid_var / n_eff.
+                #
+                # Measured, not argued (backtest_pace_model.py, 59 events):
+                # the long-run prior scored z_sd 1.93 with only 49% of
+                # outcomes inside its own 1-sigma band, against a target of
+                # 68%. The error bars were about half as wide as they had
+                # earned. Switching this one line moved it to z_sd 1.10 /
+                # 75% coverage, with the MAE byte-identical — the mean does
+                # not change, only the honesty of the interval around it.
+                var = resid_var * (1.0 + 1.0 / n_eff)
             else:
                 var = self.p["new_team_sd"] ** 2 / 2
             var = float(np.clip(var + self.p["min_prior_var"],
@@ -439,6 +585,21 @@ class PaceModel:
             state.loc[key, "mean"] = mu + k * (y - mu)
             state.loc[key, "var"] = v * (1 - k)
         return state.reset_index()
+
+    def _drift(self, state: pd.DataFrame) -> pd.DataFrame:
+        """Kalman PREDICT step: let the latent drift before the next
+        measurement lands. `v <- v + Q`, capped at max_prior_var.
+
+        Deliberately kept out of `update()` so that method stays a pure
+        measurement operation — drift is a property of TIME PASSING between
+        sessions, not of observing one.
+        """
+        q = float(self.p.get("process_var_per_stage", 0.0))
+        if q <= 0:
+            return state
+        state = state.copy()
+        state["var"] = np.minimum(state["var"] + q, self.p["max_prior_var"])
+        return state
 
     def update(self, state: pd.DataFrame,
                measurements: pd.DataFrame) -> pd.DataFrame:
@@ -518,7 +679,7 @@ class PaceModel:
                 msess = measurements[measurements["session"] == session]
                 if msess.empty:
                     continue
-                state = self.update(state, msess)
+                state = self.update(self._drift(state), msess)
                 _snap(f"after {_STAGE_LABEL.get(session, session)}", state)
         if quali_gap is not None and len(quali_gap) >= 4:
             g = quali_gap.dropna()
@@ -531,7 +692,7 @@ class PaceModel:
                 "se_pct": 0.05,
                 "session": "Qualifying",
             })
-            state = self._update_with_set(state, mset)
+            state = self._update_with_set(self._drift(state), mset)
             _snap("after Quali", state)
         return stages
 

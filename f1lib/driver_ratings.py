@@ -41,7 +41,11 @@ input); `DriverRatings` fits and serves the effects.
 
 Usage
 -----
-    python driver_ratings.py            # (re)build the per-event table
+    python -m f1lib.driver_ratings      # (re)build the per-event table
+                                        # (as a MODULE from the repo root —
+                                        #  running the file by path leaves the
+                                        #  root off sys.path and the f1lib
+                                        #  imports below fail)
     from f1lib.driver_ratings import DriverRatings
     dr = DriverRatings()
     eff = dr.effects("race", as_of=(2026, 8))   # driver, effect, se, n_events
@@ -171,13 +175,26 @@ def _race_driver_gaps() -> pd.DataFrame:
     for p in metas:
         key = p.name.replace("__laps.parquet", "")
         season_s, event_s, _ = key.split("__", 2)
+        # Race-control messages, when the session has them. Without these
+        # flag_perturbed_laps sees only the per-lap TrackStatus column and
+        # misses SHORT SECTOR YELLOWS, leaving slow laps in the median that
+        # this rating is built from. compute_team_pace.py has always passed
+        # them and this did not, so the driver layer and the team layer were
+        # cleaning race laps to different standards off the same files.
+        rcm = None
+        rcm_path = p.parent / f"{key}__race_control.parquet"
+        if rcm_path.exists():
+            try:
+                rcm = pd.read_parquet(rcm_path)
+            except Exception as exc:
+                logger.warning("race control unreadable for %s: %s", key, exc)
         try:
             fl = clean_and_enrich_laps(pd.read_parquet(p))
             # ORDER MATTERS — flag_perturbed_laps before enrich_track_evolution,
             # or the evolution fit runs on safety-car laps. See the same note in
             # scripts/compute_team_pace.py.
             fl = enrich_track_evolution(
-                flag_dirty_air(flag_perturbed_laps(fl)))
+                flag_dirty_air(flag_perturbed_laps(fl, rcm=rcm)))
         except Exception as exc:
             logger.warning("race pipeline failed for %s: %s", key, exc)
             continue

@@ -31,18 +31,21 @@ validated by backtest_pace_model.py.
 
 REJECTED: widening the variance for rain
 ----------------------------------------
-The model's fat tail is wet races, and the diagnosis is not in doubt. Split
-the backtest by whether the race had rain on more than 10% of laps:
+The model's fat tail is wet races. Re-measured after the predictive-variance
+prior, the base_noise recalibration and the race-control fix, splitting the
+backtest by whether the race had rain on more than 10% of laps:
 
-    long-run   dry  MAE 0.396  z_sd 1.77  cov68 47.6%   (n = 1226 team-rows)
-               WET  MAE 0.756  z_sd 3.83  cov68 35.8%   (n =  106)
-    one-lap    dry  MAE 0.256  z_sd 1.13  cov68 68.5%
-               WET  MAE 0.346  z_sd 2.22  cov68 53.3%
+    long-run   dry  MAE 0.398  z_sd 1.02  cov68 75.0%   (n = 2097 team-rows)
+               WET  MAE 1.135  z_sd 4.66  cov68 53.4%   (n =  247)
+    one-lap    dry  MAE 0.282  z_sd 0.89  cov68 78.4%
+               WET  MAE 0.319  z_sd 1.18  cov68 78.0%
 
-A wet race nearly doubles the long-run error and more than doubles the
-z-score spread. The ten worst single-team errors in the whole archive are
-dominated by two events, British 2024 (35% of race laps wet) and British 2025
-(18%).
+The headline is not that wet races are bad — it is that DRY RACES ARE NOW
+ESSENTIALLY PERFECT (z_sd 1.02 against a target of 1.00) and every scrap of
+residual miscalibration lives in the wet 11%. The wet/dry gap in z_sd widened
+from 2.2x to 4.6x across this work purely because the dry half got fixed.
+One-lap barely notices rain, which fits: qualifying is a single lap and is
+usually run in whatever conditions everyone shares.
 
 What does NOT exist is a leak-free way to see it coming. Using the race's own
 rainfall to widen the interval is reading the answer. Two ex-ante candidates
@@ -54,23 +57,34 @@ were tested and neither survives:
     time; circuits above a 25% historical rate, 13%. F1 does not visit the
     same track in the same week each year, and that is enough to destroy it.
   * rain in THIS weekend's practice sessions, which is genuinely known by
-    Friday evening. Correct sign every time and never significant:
-    rho +0.14 to +0.35, p = 0.12 to 0.30, on 21-57 events of which only 6-12
-    had any practice rain at all.
+    Friday evening. rho +0.115, p = 0.26 over 98 events, 29 of them with
+    practice rain.
+
+Both were re-tested on the corrected data at the end of the work above, on
+roughly three times the sample of the first pass — and the practice-rain
+correlation got WEAKER as the sample grew (+0.14/+0.35 at n = 21-57, down to
++0.115 at n = 98). A relationship that fades as power increases is a null,
+not an underpowered effect; contrast the sandbagging proxy, which held its
+sign across four independent seasons.
 
 So the mechanism is real, the direction is known, and the magnitude cannot be
 estimated from what is cached. Shipping a widening factor here would be the
 same mistake as the speed-trap sandbagging correction (see pace_features.py):
 a plausible physical story fitted on a sample too thin to size it.
 
-The principled fix, when there is data for it, is not a switch at all: the
-predictive distribution is a MIXTURE — roughly 90% "dry race, Gaussian and
-well behaved" and 10% "rain, all bets off" (18 of 168 archived races cleared
-the 10%-of-laps bar). That mixture is fatter-tailed than any single Gaussian,
-which is exactly what the RMSE/MAE ratio of ~1.45 has been reporting all
-along, and it needs no forecast of WHICH race is wet — only the base rate.
-Implementing it means outcome_probs and race_forecast stop being Gaussian,
-which is a larger change than a constant.
+The principled fix is not a switch at all: the predictive distribution is a
+MIXTURE — 89% "dry race, Gaussian and well behaved" and 11% "rain, all bets
+off" (18 of 168 archived races cleared the 10%-of-laps bar). It needs no
+forecast of WHICH race is wet, only the base rate, which is why it survives
+the two dead predictors above.
+
+That is now PARAMETERISABLE in a way it was not when first written, because
+the two components have been measured separately: the dry component's scale
+is already correct (z_sd 1.02, so leave it alone) and the wet component runs
+about 2.85x wider on MAE. The remaining cost is not statistical but
+structural — outcome_probs and race_forecast both assume a Gaussian latent,
+and a mixture makes P(fastest) and the finishing-order simulation
+two-component draws.
 
 Main entry point
 ----------------
@@ -769,6 +783,50 @@ class PaceModel:
             # contract (and the ledger that subtracts it) is the field MEAN
             return s - s.mean()
         return None
+
+    @staticmethod
+    def actual_driver_quali_gap(laps: pd.DataFrame) -> pd.Series:
+        """Per-DRIVER qualifying gap to the field mean (%), from a loaded
+        Qualifying session. Indexed by driver abbreviation.
+
+        The per-driver twin of actual_quali_gap, so the one-lap prediction can
+        be scored at the same grain the model actually predicts at. Session-
+        normalised for exactly the reason set out on actual_quali_gap: a raw
+        best-of-Q1/Q2/Q3 amplifies the field rather than merely adding noise,
+        because the earliest-eliminated drivers are also the slowest and the
+        green-track penalty lands in the same direction as their real deficit.
+        """
+        if laps is None or laps.empty or "session" not in laps.columns:
+            return pd.Series(dtype=float)
+        q = laps[laps["session"].isin(["Qualifying", "Sprint Qualifying"])]
+        if q.empty:
+            return pd.Series(dtype=float)
+        from f1lib.quali_norm import normalised_gap_pct
+        import f1lib.data_loader as dl
+        try:
+            key = dl._session_key(str(q["season"].iloc[0]),
+                                  str(q["meeting"].iloc[0]),
+                                  str(q["session"].iloc[0]))
+        except (KeyError, IndexError):
+            return pd.Series(dtype=float)
+        for base in (Path(SESSIONS_DIR), Path(SESSIONS_LITE_DIR)):
+            path = base / f"{key}__results.parquet"
+            if not path.exists():
+                continue
+            try:
+                res = pd.read_parquet(path)
+            except Exception:
+                continue
+            if not {"Q1", "Q2", "Q3", "Abbreviation"} <= set(res.columns):
+                continue
+            g = res.copy()
+            g["driver"] = g["Abbreviation"]
+            gaps = normalised_gap_pct(g, entity="driver", reducer="min")
+            if not gaps or len(gaps) < 4:
+                return pd.Series(dtype=float)
+            s = pd.Series(gaps, dtype=float)
+            return s - s.mean()          # contract is the field MEAN
+        return pd.Series(dtype=float)
 
     @staticmethod
     def actual_driver_race_gap(laps: pd.DataFrame) -> pd.Series:

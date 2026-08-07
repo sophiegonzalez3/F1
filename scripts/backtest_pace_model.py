@@ -89,7 +89,9 @@ from scipy.stats import kendalltau, norm, spearmanr
 
 import f1lib.data_loader as dl
 from f1lib.config import SESSIONS_DIR, SESSIONS_LITE_DIR
-from f1lib.pace_features import event_measurements, PRACTICE_SESSIONS
+from f1lib.pace_features import (
+    event_measurements, INPUT_SESSIONS, PRACTICE_SESSIONS,
+)
 from f1lib.pace_model import PaceModel, era_of, DEFAULTS
 
 OUT = Path("data/backtest_pace_model.csv")
@@ -274,9 +276,23 @@ def _detail_rows(pred: pd.DataFrame, actual: pd.Series, kind: str,
 
 
 def _raw_fp_prediction(meas: pd.DataFrame, kind: str) -> pd.DataFrame:
-    """Latest practice session's measurement of `kind`, taken literally."""
+    """Latest pre-outcome session's measurement of `kind`, taken literally.
+
+    Walks INPUT_SESSIONS, not PRACTICE_SESSIONS. That was a real hole: a
+    sprint weekend has no FP2 or FP3, and the list stopped at the three
+    practices — so SPRINT QUALIFYING, which is an actual qualifying session
+    and by far the best one-lap read of that weekend, was skipped entirely.
+    The result was no one-lap baseline at all for every sprint round (China,
+    Canada and Britain in 2026), which then reads on the per-event chart as
+    the model failing to beat a baseline that was never computed.
+
+    Reversed INPUT_SESSIONS gives the right "latest available" semantics for
+    both kinds without special-casing: the Sprint carries no one-lap
+    measurement so one-lap falls through to Sprint Qualifying, and the Sprint
+    is the newest long-run source when it exists.
+    """
     mk = meas[meas["kind"] == kind]
-    for sess in reversed(PRACTICE_SESSIONS):
+    for sess in reversed(INPUT_SESSIONS):
         m = mk[mk["session"] == sess]
         if not m.empty:
             return pd.DataFrame({"team": m["team"], "kind": kind,

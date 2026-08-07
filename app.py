@@ -4,7 +4,7 @@ Run:   python app.py
 Open:  http://127.0.0.1:8050
 """
 from __future__ import annotations
-import logging, sys, warnings, re
+import logging, os, sys, warnings, re
 
 # Register this module under its import name immediately. The app runs as
 # `python app.py`, so this module is "__main__" — without the alias, the lazy
@@ -302,6 +302,16 @@ def _memo_key(tab, ss, sd, st):
         # layout memoized under an older pair must not be served
         import tabs.duel as _duel_mod
         key = key + (_duel_mod.LAST_PAIR,)
+    elif tab == "tab-weekend":
+        # The post-race review card is HAND-EDITED between sessions, so it is
+        # the one input to a tab that changes without DATA_GENERATION moving.
+        # Without its mtime in the key, a note written after a race stays
+        # invisible until the app is restarted — which is exactly the workflow
+        # the card exists to support.
+        try:
+            key = key + (os.path.getmtime("data/model_review.csv"),)
+        except OSError:
+            key = key + (0.0,)
     return key
 
 

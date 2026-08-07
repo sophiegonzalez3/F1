@@ -80,9 +80,18 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "scripts/compute_upgrade_study.py"]),
     ("mistakes",  "micro-mistakes",
      [sys.executable, "compute_mistakes.py"]),
+    # LAST, because it needs the rebuilt pace + driver tables above to work
+    # out who fell outside their error bar. Writes only the skeleton rows;
+    # the cause and the note are written by hand afterwards (see FOLLOW_UPS).
+    ("review",    "post-race review rows",
+     [sys.executable, "scripts/seed_model_review.py", "--latest"]),
 ]
 
 FOLLOW_UPS = [
+    "model review    open data/model_review.csv and fill in `category` +",
+    "                `note` for the rows just seeded (3-12 a race). The",
+    "                category vocabulary is listed by",
+    "                python scripts/seed_model_review.py --help",
     "radio review    /radio-review <Meeting>   (fetch the audio SOON - mp3s are",
     "                purged upstream after a few weeks)",
     'quali 3D scene  python scripts/build_quali_scenes.py <season> "<Meeting>"',

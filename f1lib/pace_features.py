@@ -123,6 +123,51 @@ DRY_COMPOUNDS = {"SOFT", "MEDIUM", "HARD"}
 
 ONELAP_MIN_POOL = 8      # min clean quali-sim laps in a session to fit at all
 ONELAP_MIN_TEAMS = 4
+# Minimum RESIDUAL degrees of freedom (laps - fitted parameters) for a one-lap
+# fit to be emitted at all.
+#
+# The one-lap design is inherently near-saturated: teams run one or two timed
+# laps per driver, so across 148 archived measurement sets the median is 1.4-1.6
+# laps per DRIVER and 88% sit under 2. A driver dummy fitted on a single lap
+# has one job — reproduce that lap — so whatever was in it (a tow, a gust)
+# becomes that driver's "pace" with nothing left over to contradict it. The
+# residual is zero by construction, the fit looks excellent, and the SE comes
+# out around 0.5%, comfortably inside MAX_SE.
+#
+# Two things then compound it: the team estimate is the MIN over its drivers,
+# so it actively selects the most favourable noise in the team; and nothing
+# downstream can tell the difference.
+#
+# Worked example — Hungary 2026 FP3: 24 laps, 20 parameters, dof 4, 14 of 19
+# drivers on exactly one lap, and the compound correction (+1.48%) fitted on
+# 4 laps. Racing Bulls came out at -4.78% and led the predicted qualifying
+# order; they qualified 8th. The old guard (n <= p + 2 inside _ols_effects)
+# waved it through.
+#
+# DISABLED (0) — TRIED AT 5 AND MEASURED WORSE. Kept as a named, documented
+# no-op rather than deleted, because the diagnosis above is correct and the
+# obvious fix will suggest itself again.
+#
+# At 5 the guard rejected 30 of 148 one-lap sets (20%) and did catch Hungary.
+# But rejecting a set means no update at that session, so the weekend's final
+# read falls back to FP2 or to the prior — and that is WORSE on average than
+# keeping the noisy measurement. Scored on the SAME events (the aggregate
+# per-stage numbers flatter the guard by dropping the hard events out of the
+# FP3 row entirely, which is not a fair comparison):
+#
+#     one-lap, prior -> final read      guard OFF        guard ON
+#     2026                              0.385 -> 0.290   0.385 -> 0.313
+#     ground-effect                     0.360 -> 0.307   0.360 -> 0.308
+#     rank correlation, 2026            0.931 -> 0.922   0.931 -> 0.914
+#
+# A thin measurement is still information, and base_noise (0.65-0.95 for
+# one-lap since the Aug 2026 recalibration) already discounts it heavily —
+# discounting and discarding are not the same lever, and the model was
+# already pulling the right one. No looser threshold escapes this either:
+# Hungary FP3 sat at dof 4, so anything catching it also rejects ~18% of all
+# sets. A per-DRIVER lap minimum is worse still — at >=2 laps/driver it would
+# delete 88% of one-lap measurements, i.e. the feature.
+ONELAP_MIN_DOF = 0
 LONGRUN_MIN_RUN = 5      # a "long run" is a stint with ≥ this many laps
 LONGRUN_MIN_POOL = 25
 LONGRUN_MIN_DRIVER = 4   # drop drivers with fewer clean long-run laps
@@ -379,6 +424,11 @@ def _onelap_measurements(sl: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     ref = pool[ycol].median()
     y = (100.0 * (pool[ycol] / ref - 1)).values
     X = _design(pool, {})
+    if len(pool) - X.shape[1] < ONELAP_MIN_DOF:
+        logger.info("one-lap fit skipped: %d laps vs %d parameters leaves "
+                    "dof %d (< %d)", len(pool), X.shape[1],
+                    len(pool) - X.shape[1], ONELAP_MIN_DOF)
+        return empty, empty
     fit = _ols_effects(y, X)
     if fit is None:
         return empty, empty

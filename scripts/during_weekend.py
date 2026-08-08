@@ -166,6 +166,50 @@ def ensure_calendar(season: int) -> None:
 # 4. hand-curated checklist
 # ─────────────────────────────────────────────────────────────
 
+def refresh_session_weather(season: int) -> None:
+    """Re-derive per-session rain/tyre conditions for whatever is cached NOW.
+
+    Deliberately mid-weekend rather than after the race only. Two reasons, both
+    about being able to ask the question later:
+
+    - conditions in an EARLIER session are a plausible predictor of a bad read
+      later in the weekend. A wet or interrupted FP2 means fewer usable laps,
+      which is exactly the `thin_read` / `heavy_exclusion` failure the model
+      review keeps landing on. Recording it only after the race would mean the
+      cause is always logged after the effect.
+    - a rain threat, not just rain, is what makes a strategist reach for the
+      unusual call. That is only visible if the record exists at the time.
+
+    Cheap to re-run — it re-reads cached parquet and writes one CSV — so it
+    runs on every invocation rather than trying to be clever about deltas.
+    """
+    out = subprocess.run(
+        [_sys.executable, "scripts/compute_session_weather.py",
+         "--season", str(season)],
+        capture_output=True, text=True)
+    if out.returncode != 0:
+        print(f"  !! failed ({out.returncode}) - "
+              f"{(out.stderr or '').strip().splitlines()[-1:] or ['no stderr']}")
+        return
+    head = [ln for ln in (out.stdout or "").splitlines() if ln.startswith("Wrote")]
+    print(f"  {head[0] if head else 'done'}")
+    p = Path("data/session_weather.csv")
+    if not p.exists():
+        return
+    try:
+        d = pd.read_csv(p)
+        d = d[d["season"] == season]
+        wet = d[d["condition"] != "dry"]
+        if wet.empty:
+            print(f"  every {season} session so far: dry")
+        else:
+            print(f"  not-dry so far: " + "; ".join(
+                f"{r['event']} {r['session']} [{r['condition']}]"
+                for _, r in wet.iterrows()))
+    except Exception:
+        pass
+
+
 def _read(path: Path) -> pd.DataFrame:
     try:
         return pd.read_csv(path)
@@ -283,19 +327,22 @@ def main() -> int:
         return 2
 
     if not args.check_only:
-        print("\n[1/4] sessions")
+        print("\n[1/5] sessions")
         infos = cache_sessions(season, meeting)
 
-        print("\n[2/4] track map")
+        print("\n[2/5] track map")
         if args.no_track_map:
             print("  skipped (--no-track-map)")
         else:
             warm_track_map(season, meeting, infos)
 
-        print("\n[3/4] calendar")
+        print("\n[3/5] calendar")
         ensure_calendar(season)
 
-    print("\n[4/4] hand-curated data for this event")
+        print("\n[4/5] session weather")
+        refresh_session_weather(season)
+
+    print("\n[5/5] hand-curated data for this event")
     checklist(season, meeting)
 
     print("\nNext:")

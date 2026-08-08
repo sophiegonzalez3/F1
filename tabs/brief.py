@@ -587,6 +587,184 @@ def _calibration_strip_fig(b: pd.DataFrame, height: int = 150) -> go.Figure:
     return fig
 
 
+_RETENTION_PATH = Path("data/lap_retention.csv")
+_SESSION_ORDER = ["Practice 1", "Practice 2", "Practice 3", "Sprint Qualifying",
+                  "Sprint Shootout", "Sprint", "Qualifying", "Race"]
+# low retention = the model saw little of that session, and that is the alarming
+# end, so the scale runs warm-at-the-bottom rather than the usual cool-at-zero.
+_KEEP_SCALE = [[0.0, "#8B2F33"], [0.30, "#A8632F"], [0.55, "#3D5A80"],
+               [1.0, "#1C8A7A"]]
+
+
+def _retention_df() -> pd.DataFrame:
+    if not _RETENTION_PATH.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(_RETENTION_PATH)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _retention_heatmap_fig(r: pd.DataFrame, height: int = 320) -> go.Figure:
+    """Share of laps the model could use, per session and event."""
+    fig = go.Figure()
+    if r.empty:
+        theme(fig, height, "")
+        return fig
+    cal = _calendar_labels()
+    r = r.copy()
+    r["label"] = [cal.get((int(s), str(e), "label"), str(e)[:12])
+                  for s, e in zip(r["season"], r["event"])]
+    order = (r.drop_duplicates(["event"]).sort_values("round")["label"]
+             .drop_duplicates().tolist())
+    sess = [s for s in _SESSION_ORDER if s in set(r["session"])]
+    piv = (r.pivot_table(index="session", columns="label", values="keep",
+                         aggfunc="median")
+           .reindex(index=sess, columns=order))
+    n_piv = (r.pivot_table(index="session", columns="label", values="driver",
+                           aggfunc="count")
+             .reindex(index=sess, columns=order))
+    fig.add_trace(go.Heatmap(
+        z=piv.values * 100, x=piv.columns, y=piv.index,
+        customdata=n_piv.values,
+        colorscale=_KEEP_SCALE, zmin=0, zmax=100,
+        xgap=2, ygap=2,
+        colorbar=dict(title=dict(text="% kept", side="right"),
+                      thickness=12, len=0.75, tickvals=[0, 25, 50, 75, 100]),
+        hovertemplate=("<b>%{y}</b> · %{x}<br>%{z:.0f}% of laps usable"
+                       "<br>%{customdata:.0f} drivers<extra></extra>"),
+    ))
+    fig.update_layout(
+        paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
+        font=dict(color=TEXT_MAIN, family="Inter, sans-serif", size=11),
+        height=height, margin=dict(l=110, r=20, t=46, b=70),
+        title=dict(text="Share of laps surviving the model's cleaning · "
+                        "redder = the model saw less of it",
+                   font=dict(size=13)))
+    fig.update_xaxes(tickfont=dict(size=9), showgrid=False, tickangle=-45)
+    fig.update_yaxes(autorange="reversed", tickfont=dict(size=10),
+                     showgrid=False)
+    return fig
+
+
+def _retention_spread_fig(r: pd.DataFrame, height: int = 320) -> go.Figure:
+    """Race retention driver by driver — the spread is the point.
+
+    The heatmap shows a weekend's typical retention; this shows how unevenly it
+    lands. A car 20 points below its own field median had a materially thinner
+    read than everybody else that Sunday, which is the shape that has already
+    produced two `measurement_artifact` verdicts.
+    """
+    fig = go.Figure()
+    d = r[r["session"] == "Race"] if not r.empty else r
+    if d.empty:
+        theme(fig, height, "")
+        return fig
+    cal = _calendar_labels()
+    d = d.copy()
+    d["label"] = [cal.get((int(s), str(e), "label"), str(e)[:12])
+                  for s, e in zip(d["season"], d["event"])]
+    order = (d.drop_duplicates(["event"]).sort_values("round")["label"]
+             .drop_duplicates().tolist())
+    med = d.groupby("label")["keep"].median().reindex(order)
+    fig.add_trace(go.Scatter(
+        x=order, y=med.values * 100, mode="lines", name="field median",
+        line=dict(color=TEXT_DIM, width=2, dash="dot"), hoverinfo="skip"))
+    fig.add_trace(go.Scatter(
+        x=d["label"], y=d["keep"] * 100, mode="markers", name="driver",
+        marker=dict(size=6, opacity=0.75,
+                    color=[TEAM_COLORS.get(canon(t), ACCENT)
+                           for t in d["team"]]),
+        customdata=np.stack([d["driver"], d["n_kept"], d["n_total"]], axis=-1),
+        hovertemplate=("<b>%{customdata[0]}</b> · %{x}<br>"
+                       "%{y:.0f}% kept (%{customdata[1]:.0f} of "
+                       "%{customdata[2]:.0f} laps)<extra></extra>")))
+    theme(fig, height, "Race day, driver by driver — how evenly the "
+                       "cleaning lands")
+    fig.update_layout(margin=dict(l=52, r=16, t=46, b=70), showlegend=False,
+                      title=dict(font=dict(size=13)))
+    fig.update_xaxes(tickangle=-45, tickfont=dict(size=9),
+                     categoryorder="array", categoryarray=order)
+    fig.update_yaxes(title="% of laps usable", range=[0, 100])
+    return fig
+
+
+def _retention_card(season: int | None = None):
+    """What share of each session the model could actually use.
+
+    Not a diagnostic footnote. Every actual the model is scored against is a
+    subset of the laps run, and the review has twice found the subset moving a
+    driver further than the miss it was trying to explain. Showing it beside
+    the track record puts the model's error next to the amount of evidence it
+    had to work with.
+    """
+    r = _retention_df()
+    if r.empty:
+        return None
+    if season is not None and (r["season"] == season).any():
+        r = r[r["season"] == season]
+    shown = int(r["season"].max())
+    r = r[r["season"] == shown]
+    if r.empty:
+        return None
+
+    race = r[r["session"] == "Race"]
+    med_race = float(race["keep"].median()) if not race.empty else float("nan")
+    by_sess = r.groupby("session")["keep"].median()
+    worst_sess = by_sess.idxmin() if len(by_sess) else None
+
+    # The individual weekends where one car was starved relative to its field.
+    # Restricted to cars that actually went the distance: a driver who retired
+    # on lap 3 trivially scores 0% and would crowd the list with retirements,
+    # which is a different problem from "ran the whole race and the model still
+    # could not see it".
+    thin = pd.DataFrame()
+    if not race.empty:
+        full = race.groupby("event")["n_total"].transform("max")
+        ran = race[race["n_total"] >= 0.75 * full]
+        if not ran.empty:
+            fieldmed = ran.groupby("event")["keep"].transform("median")
+            thin = ran.assign(_gap=ran["keep"] - fieldmed).nsmallest(5, "_gap")
+
+    body = [dcc.Graph(figure=_retention_heatmap_fig(r), config=GFX),
+            dcc.Graph(figure=_retention_spread_fig(r), config=GFX)]
+    if not thin.empty:
+        cal = _calendar_labels()
+        items = ", ".join(
+            f"{x['driver']} {cal.get((shown, str(x['event']), 'label'), x['event'])} "
+            f"({100 * x['keep']:.0f}%)" for _, x in thin.iterrows())
+        body.append(html.Div(
+            [html.Span("Thinnest race reads of the season, against their own "
+                       "field that day: ", style={"color": TEXT_DIM}),
+             html.Span(items, style={"color": TEXT_MAIN})],
+            style={"fontSize": "0.74rem", "lineHeight": "1.5",
+                   "borderTop": f"1px solid {GRID_CLR}", "paddingTop": "8px",
+                   "marginTop": "4px"}))
+
+    return card(
+        f"HOW MUCH THE MODEL ACTUALLY SEES · {shown}",
+        html.Div(body),
+        measure="measured",
+        plain=(f"Every number the model is judged on is built from a SUBSET of "
+               f"the laps run — only the clean-air ones. On race day it "
+               f"typically keeps {100 * med_race:.0f}% of a driver's laps"
+               + (f", and {worst_sess} is thinner still at "
+                  f"{100 * by_sess.min():.0f}%." if worst_sess else ".")
+               + " That is a deliberate choice — it is how you compare cars "
+                 "rather than traffic — but it means a driver who spent his "
+                 "afternoon stuck behind someone is scored on a small and "
+                 "unrepresentative slice of it."),
+        info=("Data: scripts/compute_lap_retention.py, which replays every "
+              "cached session through the same cleaning the pace model uses "
+              "(ValidLap & not dirty-air & not perturbed) and records how many "
+              "laps survive per driver. The heatmap is the median driver at "
+              "each session; the scatter is every driver on race day, so a car "
+              "sitting well below its own field median that weekend stands "
+              "out. Two 2026 review rows have already been re-classified as "
+              "`measurement_artifact` because this subset, not the model, "
+              "explained the miss."))
+
+
 def _track_record_card(season: int | None = None):
     """How the pace model has actually done — over the season, not this event.
 
@@ -1683,13 +1861,19 @@ def tab_brief(sel_drivers=None, sel_teams=None):
     # one, and this is what says how much to trust the prediction at the top.
     ev = _loaded_event()
     tr = _track_record_card(ev[0] if ev else None)
-    if tr is not None:
+    # Retention sits directly under the scorecard on purpose: the error above
+    # and the amount of evidence behind it are the same conversation, and
+    # reading either alone is how a measurement limit gets mistaken for the
+    # model being wrong.
+    ret = _retention_card(ev[0] if ev else None)
+    section = [c for c in (tr, ret) if c is not None]
+    if section:
         body.append(html.Div([
             html.H4("TRACK RECORD · THE WHOLE SEASON", style={
                 "color": TEXT_MAIN, "fontWeight": "800", "letterSpacing": "2px",
                 "fontSize": "1.0rem", "marginTop": "18px", "marginBottom": "10px",
                 "borderBottom": f"2px solid {ACCENT}", "paddingBottom": "6px"}),
-            tr,
+            *section,
         ]))
 
     return html.Div(body)

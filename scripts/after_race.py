@@ -80,17 +80,31 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "scripts/compute_upgrade_study.py"]),
     ("mistakes",  "micro-mistakes",
      [sys.executable, "compute_mistakes.py"]),
+    # Both read every cached session, so they belong after the fetch steps and
+    # before the review, which cites them.
+    ("retention", "lap retention per session",
+     [sys.executable, "scripts/compute_lap_retention.py"]),
+    ("sessionwx", "per-session weather",
+     [sys.executable, "scripts/compute_session_weather.py"]),
     # LAST, because it needs the rebuilt pace + driver tables above to work
     # out who fell outside their error bar. Writes only the skeleton rows;
     # the cause and the note are written by hand afterwards (see FOLLOW_UPS).
     ("review",    "post-race review rows",
      [sys.executable, "scripts/seed_model_review.py", "--latest"]),
+    # Gathers the evidence for the rows just seeded. Still writes no verdict —
+    # it only means the review can be done from the archive instead of from
+    # memory, which is what makes it survivable a week after the race.
+    ("dossier",   "review evidence dossier",
+     [sys.executable, "scripts/review_dossier.py", "--latest"]),
 ]
 
 FOLLOW_UPS = [
     "model review    open data/model_review.csv and fill in `category` +",
-    "                `note` for the rows just seeded (3-12 a race). The",
-    "                category vocabulary is listed by",
+    "                `note` for the rows just seeded (3-12 a race), reading",
+    "                data/review_dossiers/<season>__<Event>.md alongside it —",
+    "                that has the practice read, the laps behind each number,",
+    "                the screens and the race-control log per driver.",
+    "                The category vocabulary is listed by",
     "                python scripts/seed_model_review.py --help",
     "radio review    /radio-review <Meeting>   (fetch the audio SOON - mp3s are",
     "                purged upstream after a few weeks)",

@@ -1290,15 +1290,22 @@ def _wet_card(ctx, a, b, ca, cb):
                                    "marginBottom": 0}))
     return card("IF IT RAINS — THE EQUALIZER",
         html.Div(items),
-        info="Positions gained grid → flag per classified race, split by the "
-             "measured per-race rain flag (race_stats.csv, 2023 →). The "
-             "wet-vs-dry delta reads each driver's racecraft when grip "
-             "disappears; retirements are excluded so crashes don't pollute "
-             "the skill read. Wet samples are small — treat ±1 position as "
-             "noise. When the loaded event's race is within the next 16 "
-             "days, the header shows the live Open-Meteo precipitation "
-             "forecast at the circuit; for past events this stays an "
-             "if-it-rains scenario.")
+        info="Positions gained grid → flag per classified race, split by "
+             "whether INTERMEDIATES WERE ACTUALLY FITTED "
+             "(data/session_weather.csv, 2019 →). It used to split on "
+             "race_stats.csv's rain flag, which is Rainfall.any() over the "
+             "weather stream — a single damp sample marked a whole race wet, "
+             "and 7 of the 13 races it flagged since 2023 never ran an "
+             "intermediate (Austria 2024 among them, at a 46 °C track), while "
+             "Canada 2026 ran inters with the sensor never tripping. "
+             "Classifying on the tyre fixes it in both directions and roughly "
+             "triples the sample by reaching back to 2019. The wet-vs-dry "
+             "delta reads each driver's racecraft when grip disappears; "
+             "retirements are excluded so crashes don't pollute the skill "
+             "read. Wet samples are still small — treat ±1 position as noise. "
+             "When the loaded event's race is within the next 16 days, the "
+             "header shows the live Open-Meteo precipitation forecast at the "
+             "circuit; for past events this stays an if-it-rains scenario.")
 
 
 # ─────────────────────────────────────────────────────────────

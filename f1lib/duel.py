@@ -351,17 +351,51 @@ def sc_profile(circuit_key_fr: str | None) -> dict:
     }
 
 
-def wet_profile(a: str, b: str) -> dict:
-    """How each driver's race-day conversion (grid → finish positions gained)
-    changes in the rain, using the measured per-race rain flag from
-    race_stats.csv joined onto the results archive. Retirements excluded —
-    this reads racecraft in the wet, not survival luck."""
-    out = {}
-    rp = HIST / "race_results_all.parquet"
-    if not RACE_STATS_CSV.exists() or not rp.exists():
-        return out
+SESSION_WEATHER_CSV = Path("data/session_weather.csv")
+
+
+def _wet_races() -> pd.DataFrame | None:
+    """(season, meeting, rain) where `rain` means INTERMEDIATES WERE FITTED.
+
+    Not `race_stats.rain`, which is `Rainfall.any()` over the weather stream:
+    a single damp sample marks the whole race wet, and measured against tyres
+    7 of the 13 races it flags since 2023 never ran an intermediate — Austria
+    2024 among them, at a 46 C track temperature. Splitting a driver's career
+    on that flag put a majority of DRY races into the "wet" bucket, which is
+    the bucket the whole rain_delta comparison rests on.
+
+    data/session_weather.csv classifies from the compound actually run, so
+    `condition == "rain"` means somebody left slicks. Falls back to the old
+    flag only if that file is missing, so the card degrades rather than
+    disappears.
+    """
+    if SESSION_WEATHER_CSV.exists():
+        try:
+            sw = pd.read_csv(SESSION_WEATHER_CSV)
+            sw = sw[sw["session"] == "Race"]
+            if not sw.empty:
+                out = sw[["season", "event"]].copy()
+                out["rain"] = sw["condition"].eq("rain").values
+                return out.rename(columns={"event": "meeting"})
+        except Exception:
+            pass
+    if not RACE_STATS_CSV.exists():
+        return None
     rs = pd.read_csv(RACE_STATS_CSV)[["season", "meeting", "rain"]]
     rs["rain"] = rs["rain"].astype(str).str.lower() == "true"
+    return rs
+
+
+def wet_profile(a: str, b: str) -> dict:
+    """How each driver's race-day conversion (grid → finish positions gained)
+    changes in the rain, using races where intermediates were actually run
+    (data/session_weather.csv) joined onto the results archive. Retirements
+    excluded — this reads racecraft in the wet, not survival luck."""
+    out = {}
+    rp = HIST / "race_results_all.parquet"
+    rs = _wet_races()
+    if rs is None or not rp.exists():
+        return out
     r = pd.read_parquet(rp)
     r = r[r["Abbreviation"].isin([a, b])]
     m = r.merge(rs, left_on=["season", "event_name"],

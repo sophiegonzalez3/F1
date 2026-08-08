@@ -73,7 +73,16 @@ _WANTED = ("Practice 1", "Practice 2", "Practice 3",
 # the target column without the 25 MB/session cost of a full session.
 _TARGET_SESSIONS = ("Race",)
 
-_FETCHABLE = _WANTED + _TARGET_SESSIONS
+# Fetchable on request, but deliberately NOT in _WANTED. Plain qualifying is
+# neither a model input (the one-lap target comes from the results archive,
+# not from session laps) nor needed by the default backfill — the app's own
+# cache has held it since 2023. It is here so the pre-2023 seasons can be
+# backfilled for their WEATHER: data/session_weather.csv had no qualifying row
+# before 2023, which left a quarter of the archive unable to answer "was
+# qualifying wet?". Opt in with --sessions Qualifying.
+_ON_REQUEST = ("Qualifying",)
+
+_FETCHABLE = _WANTED + _TARGET_SESSIONS + _ON_REQUEST
 
 
 def _lite_paths(key: str) -> dict[str, Path]:

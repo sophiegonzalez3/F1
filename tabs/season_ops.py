@@ -772,3 +772,157 @@ def affinity_card(season: int, min_events: int = 2) -> html.Div | None:
               "high-downforce cars on technical ones — so this hints at "
               "who should be strong at the type of circuits still to come."),
     )
+
+
+# ─────────────────────────────────────────────────────────────
+# Session-by-session weather
+# ─────────────────────────────────────────────────────────────
+
+_SESSION_WEATHER_PATH = Path("data/session_weather.csv")
+
+# dry is deliberately the quiet colour: most rows are dry and the eye should
+# land on the ones that were not.
+_CONDITION_COLORS = {
+    "dry":     "#7A7A7A",
+    "drizzle": "#00B4D8",
+    "rain":    "#4A7BE0",
+}
+
+_SESSION_ORDER = ["Practice 1", "Practice 2", "Practice 3",
+                  "Sprint Qualifying", "Sprint Shootout", "Sprint",
+                  "Qualifying", "Race"]
+
+
+def session_weather_df() -> pd.DataFrame:
+    if not _SESSION_WEATHER_PATH.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(_SESSION_WEATHER_PATH)
+    except Exception:
+        return pd.DataFrame()
+
+
+def session_weather_card(season: int) -> html.Div | None:
+    """Every session of the season, and whether it was actually wet.
+
+    The distinction this exists to draw is drizzle vs rain. `race_stats.csv`
+    calls a race wet if a single weather sample reports rain, and measured
+    against tyres 7 of its 13 "wet" races (2023-2026) never ran an
+    intermediate — Austria 2024 is flagged wet at a track temperature of 46 C.
+    Classifying from what the teams FITTED instead of from the rain sensor
+    separates a damp patch from a session that changed the racing, and doing
+    it per session rather than per race is what makes practice and qualifying
+    legible at all: nothing recorded those before.
+    """
+    d = session_weather_df()
+    if d.empty:
+        return None
+    d = d[d["season"] == season].copy()
+    if d.empty:
+        return None
+
+    d["_o"] = d["session"].apply(
+        lambda s: _SESSION_ORDER.index(s) if s in _SESSION_ORDER else 99)
+    d = d.sort_values(["round", "_o"])
+    d["ev"] = d["event"].map(event_short)
+    d["rnd"] = d["round"].apply(lambda r: f"R{int(r)}" if pd.notna(r) else "—")
+
+    def _pct(v):
+        if pd.isna(v):
+            return "—"
+        return "0" if float(v) == 0 else f"{100 * float(v):.0f}%"
+
+    d["rain_pct"] = d["rain_share"].apply(_pct)
+    d["inter_pct"] = d["inter_share"].apply(_pct)
+    d["wet_pct"] = d["wet_share"].apply(_pct)
+    d["air"] = d["air_c"].apply(lambda v: "—" if pd.isna(v) else f"{v:.0f}")
+    d["track"] = [
+        "—" if pd.isna(t) else f"{t:.0f}  ({lo:.0f}–{hi:.0f})"
+        for t, lo, hi in zip(d["track_c"], d["track_min"], d["track_max"])]
+    d["cond"] = d["condition"].str.upper()
+
+    cols = [
+        {"name": "", "id": "rnd"},
+        {"name": "Event", "id": "ev"},
+        {"name": "Session", "id": "session"},
+        {"name": "Rain", "id": "rain_pct"},
+        {"name": "Inter", "id": "inter_pct"},
+        {"name": "Wet", "id": "wet_pct"},
+        {"name": "Air °C", "id": "air"},
+        {"name": "Track °C  (min–max)", "id": "track"},
+        {"name": "Condition", "id": "cond"},
+    ]
+    cond_styles = [
+        {"if": {"filter_query": f'{{cond}} = "{k.upper()}"',
+                "column_id": "cond"},
+         "color": c, "fontWeight": "800"}
+        for k, c in _CONDITION_COLORS.items()]
+    # a non-zero wet-tyre share is the fact the whole table turns on
+    tyre_styles = [
+        {"if": {"filter_query": '{inter_pct} != "0" && {inter_pct} != "—"',
+                "column_id": "inter_pct"},
+         "color": _CONDITION_COLORS["rain"], "fontWeight": "700"},
+        {"if": {"filter_query": '{wet_pct} != "0" && {wet_pct} != "—"',
+                "column_id": "wet_pct"},
+         "color": ACCENT, "fontWeight": "700"},
+    ]
+    table = dash_table.DataTable(
+        data=d.to_dict("records"), columns=cols,
+        sort_action="native", filter_action="native", page_size=15,
+        style_table={"overflowX": "auto"},
+        style_cell={"backgroundColor": CARD_BG, "color": TEXT_MAIN,
+                    "border": f"1px solid {GRID_CLR}", "fontSize": "12px",
+                    "padding": "5px 9px", "textAlign": "left",
+                    "whiteSpace": "nowrap"},
+        style_header={"backgroundColor": "#09091A", "fontWeight": "bold",
+                      "color": ACCENT, "border": f"1px solid {GRID_CLR}"},
+        style_cell_conditional=[
+            {"if": {"column_id": c}, "textAlign": "right", "maxWidth": "62px"}
+            for c in ("rain_pct", "inter_pct", "wet_pct", "air")
+        ] + [
+            {"if": {"column_id": "rnd"}, "color": TEXT_DIM, "maxWidth": "44px"},
+            {"if": {"column_id": "track"}, "textAlign": "right"},
+            {"if": {"column_id": "cond"}, "textAlign": "center"},
+        ],
+        style_data_conditional=([{"if": {"row_index": "odd"},
+                                  "backgroundColor": "#0d0d1a"}]
+                               + cond_styles + tyre_styles),
+    )
+    n = len(d)
+    tally = d["condition"].value_counts()
+    intro = html.P(
+        [f"All {n} cached sessions of {season}. ",
+         html.Span("Rain", style={"color": TEXT_MAIN, "fontWeight": "700"}),
+         " is the share of weather samples reporting precipitation; ",
+         html.Span("Inter", style={"color": _CONDITION_COLORS["rain"],
+                                   "fontWeight": "700"}),
+         " and ",
+         html.Span("Wet", style={"color": ACCENT, "fontWeight": "700"}),
+         " are the share of laps on those tyres. The verdict comes from the "
+         "TYRES, not the rain sensor — ",
+         html.Span("DRIZZLE", style={"color": _CONDITION_COLORS["drizzle"],
+                                     "fontWeight": "800"}),
+         " means rain fell and the field stayed on slicks anyway; ",
+         html.Span("RAIN", style={"color": _CONDITION_COLORS["rain"],
+                                  "fontWeight": "800"}),
+         " means somebody actually fitted intermediates.  "
+         + " · ".join(f"{k} {v}" for k, v in tally.items()) + "."],
+        style={"color": TEXT_DIM, "fontSize": "0.75rem",
+               "marginBottom": "10px", "lineHeight": "1.6"})
+    return card(
+        "Session Weather — Dry, Drizzle or Actually Wet",
+        html.Div([intro, table]),
+        measure="measured",
+        info=("Data: scripts/compute_session_weather.py → "
+              "data/session_weather.csv, one row per cached session (practice "
+              "and qualifying included, which nothing recorded before). Why "
+              "the tyres decide the verdict: race_stats.csv marks a race wet "
+              "on Rainfall.any(), so a single damp sample flags the whole "
+              "session — 7 of the 13 races that flag trips on since 2023 "
+              "never ran an intermediate, Austria 2024 among them at a 46 °C "
+              "track. INTERMEDIATE is the tyre that matters: across the "
+              "archive it is run about ten times as often as the full wet. A "
+              "session is RAIN when at least 1% of laps were on inters or "
+              "wets, DRIZZLE when rain was recorded but nobody left slicks, "
+              "and DRY otherwise."),
+    )

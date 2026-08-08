@@ -63,24 +63,57 @@ not biased, and that its noise can be estimated rather than guessed — see
 scripts/calibrate_pace_noise.py, which backs the `base_noise` table out of
 the attenuation slope instead of a grid search.
 
-REJECTED: weighting sessions by track temperature
--------------------------------------------------
+Weighting sessions by track temperature: REJECTED, THEN OVERTURNED
+------------------------------------------------------------------
 The next obvious lever, given weather is cached for every session: trust a
 practice session less when its track temperature is far from the conditions
-being predicted. Tested three ways, and it does not survive.
+being predicted. First tested on data/sessions/ alone:
 
     |session - RACE| temp   vs long-run error : rho +0.157 (p=0.11, n=107)
     |session - QUALI| temp  vs one-lap error  : rho +0.043 (p=0.74, n=61)
     |session - FP2| temp    vs one-lap error  : rho +0.505 (p=0.004, n=30)
 
-Only the third is significant, and it is the one to disbelieve. FP2 is a
-STAND-IN for qualifying conditions, so if the mechanism were real the direct
-measure (|session - quali|) would predict at least as well — it predicts
-essentially nothing. A proxy outperforming the quantity it proxies for is
-the signature of a chance hit in a small sample, not a mechanism, and n=30
-across several tested combinations is exactly where that happens. Checked
-and dismissed: it is not a session-identity artifact (FP1 and FP3 have the
-same mean temp delta, 6.49 vs 6.48 C).
+and rejected, because only the third was significant and it is the one to
+disbelieve: FP2 is a STAND-IN for qualifying conditions, so if the mechanism
+were real the direct measure (|session - quali|) would predict at least as
+well, and it predicts essentially nothing. A proxy outperforming the quantity
+it proxies for is a chance hit at n=30, not a mechanism. Not a
+session-identity artifact either (FP1 and FP3 have the same mean temp delta,
+6.49 vs 6.48 C).
+
+That rejection did not survive more data. The first pass globbed
+data/sessions/ only and never saw the sessions_lite backfill — the same
+producer/consumer drift this codebase keeps repeating. Re-run across BOTH
+stores (Aug 2026), the direct long-run test roughly doubles its sample:
+
+    |session - RACE| temp vs long-run |err|, all practice  rho +0.152 (p=0.030, n=205)
+      Practice 2 only                                      rho +0.312 (p=0.008, n= 72)
+      Practice 1 only                                      rho +0.123 (p=0.254, n= 88)
+      Practice 3 only                                      rho -0.093 (p=0.542, n= 45)
+    dry sessions only                                      rho +0.165 (p=0.025, n=185)
+    sign positive in all five seasons independently (2022-26)
+
+The effect SIZE barely moved (+0.157 -> +0.152); only n did. So the original
+measurement was right and the verdict was premature — "real but small" rather
+than "absent". FP2 being the strongest session is what the mechanism predicts:
+it is where the long runs are.
+
+STILL NOT ACTED ON, deliberately. Pearson (+0.371) far exceeds Spearman
+(+0.152), so the relationship lives in the tail — a handful of extreme
+sessions, likely the same wet-2022 tail that the process-noise note in
+pace_model.py runs into. The SIGNED delta predicts nothing (rho +0.020,
+p=0.78): only the magnitude of the gap matters, not whether practice was
+hotter or colder. A down-weighting rule fitted to a tail-driven correlation is
+exactly the kind of gain that evaporates year-to-year, so nothing moves here
+without scripts/rolling_holdout.py.
+
+Worked example of the tail, and why it is not a data bug: Hungary 2026 FP2 ran
+20.5 C below its race, the 96th percentile of all 205 sessions. Real, not a
+sensor fault — FP2 there is a 17:00 local session (the last of Friday) and the
+track cools monotonically through it at -3.7 C/h, while FP3 at 12:30 local
+climbs at +2.4 C/h. Every session's trend has the sign its local time implies,
+and 2025 Hungary shows the same shape. The long-run error after that FP2 was
+0.581 against an all-session median of 0.406.
 
 Rain fails too, and in the wrong direction — sessions with rain transfer
 slightly BETTER (median error 0.78 vs 0.92, n=12), which is noise.

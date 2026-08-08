@@ -35,6 +35,7 @@ from tabs.driver_market import driver_market_card
 from tabs.season_ops import (
     chaos_timeline_card, pit_league_card, lap1_league_card,
     engine_championship_card, affinity_card, testing_card, penalties_card,
+    session_weather_card,
 )
 from tabs.season_intro import season_intro_block
 
@@ -933,6 +934,10 @@ def _season_content(season: int) -> html.Div:
                   "gap to the front is opening or closing."),
         ),
     ] + [c for c in (affinity_card(season), chaos_timeline_card(season),
+                      # next to affinity and chaos on purpose: those two ask
+                      # what a circuit does to the racing, and the weather is
+                      # the other half of that question
+                      session_weather_card(season),
                       pit_league_card(season), lap1_league_card(season),
                       testing_card(season),
                       reliability_card(season), contact_card(season),

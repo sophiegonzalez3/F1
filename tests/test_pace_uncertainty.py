@@ -12,9 +12,12 @@ The cause was a textbook one — the prior reported the variance of the MEAN of
 past races where it needed the PREDICTIVE variance of the next one — and these
 tests pin the fix so it cannot silently regress back.
 """
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.stats import spearmanr
 
 from f1lib.pace_model import DEFAULTS, PaceModel
 
@@ -219,3 +222,81 @@ def test_score_reports_calibration_only_when_an_sd_is_present():
     # point accuracy is reported either way
     assert _score(without, actual, "onelap")["mae"] == pytest.approx(
         _score(withsd, actual, "onelap")["mae"])
+
+
+# ─────────────────────────────────────────────────────────────
+# The OTHER half of the band: the actual's own error
+# ─────────────────────────────────────────────────────────────
+#
+# Everything above is about the PREDICTION's spread. The review test compares
+# a prediction to a MEASUREMENT, so its band is sqrt(sd_pred^2 + se_actual^2)
+# — and until `se_pct` existed the measurement was treated as exact, whatever
+# it was built from. A race median off 14 clean laps and one off 59 were held
+# to the same yardstick.
+#
+# Measured caveat, recorded so it is not rediscovered: se_actual runs about
+# 0.29x sd_pred, so the correction is ~1.04x, NOT the ~2x the roadmap
+# assumed. It makes the test formally right; it does not absorb many flags.
+
+PACE_TABLE = Path("data/driver_pace_by_event.csv")
+
+
+def _pace_table():
+    if not PACE_TABLE.exists():
+        pytest.skip("driver pace table not built")
+    d = pd.read_csv(PACE_TABLE)
+    if "se_pct" not in d.columns:
+        pytest.skip("pace table predates se_pct - re-run f1lib.driver_ratings")
+    return d
+
+
+def test_race_actuals_carry_an_error_bar():
+    d = _pace_table()
+    race = d[d["kind"] == "race"]
+    assert len(race) > 100
+    assert race["se_pct"].notna().mean() > 0.95, (
+        "race rows without se_pct - the review would silently fall back to "
+        "the prediction's sd alone for them")
+    ok = race["se_pct"].dropna()
+    assert (ok > 0).all() and np.isfinite(ok).all()
+
+
+def test_one_lap_actuals_have_no_error_bar_by_design():
+    """A best qualifying lap is a MINIMUM over attempts, not a mean of
+    samples, so 1/sqrt(n) does not describe it. Emitting a number here would
+    quietly pre-empt the attempt-count correction, which is a bias to fix
+    rather than a spread to widen a band with."""
+    d = _pace_table()
+    assert d[d["kind"] == "quali"]["se_pct"].notna().sum() == 0
+
+
+def test_error_bar_tightens_with_more_clean_laps():
+    """The whole point of 1/sqrt(n): a read off 59 laps must be bracketed
+    more tightly than one off 14."""
+    d = _pace_table().dropna(subset=["se_pct", "n_clean"])
+    d = d[(d["n_clean"] > 0) & (d["se_pct"] > 0)]
+    assert len(d) > 100
+    rho = spearmanr(d["n_clean"], d["se_pct"]).correlation
+    assert rho < -0.2, f"se_pct does not fall with n_clean (rho={rho:.3f})"
+
+
+def test_the_review_band_is_both_uncertainties_combined():
+    """model_review rows must be judged on sqrt(sd^2 + se_actual^2), falling
+    back to sd where the actual has no error bar — never on a band NARROWER
+    than the prediction's own sd."""
+    p = Path("data/model_review.csv")
+    if not p.exists():
+        pytest.skip("no review file")
+    r = pd.read_csv(p)
+    if "band" not in r.columns or r["band"].notna().sum() == 0:
+        pytest.skip("review predates the combined band")
+    r = r.dropna(subset=["band", "sd"])
+    both = r.dropna(subset=["se_actual"])
+    if len(both):
+        assert np.allclose(both["band"], np.hypot(both["sd"], both["se_actual"]),
+                           atol=1e-3)
+    plain = r[r["se_actual"].isna()]
+    if len(plain):
+        assert np.allclose(plain["band"], plain["sd"], atol=1e-9)
+    assert (r["band"] >= r["sd"] - 1e-9).all(), (
+        "a combined band came out narrower than the prediction's sd alone")

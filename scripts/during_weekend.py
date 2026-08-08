@@ -210,6 +210,35 @@ def refresh_session_weather(season: int) -> None:
         pass
 
 
+def snapshot_odds() -> None:
+    """Record what the betting market thinks, right now.
+
+    Deliberately here rather than only after the race, and for a stronger
+    reason than session weather: a price is only observable while the market
+    is open. `race_forecast.py` emits p_win / p_podium and has never been
+    scored on either, and the market is a well-calibrated probability
+    reference for exactly those quantities that exists BEFORE the result. A
+    snapshot taken after the race is worth nothing for that.
+
+    Each session of the weekend is a natural sampling point because the market
+    reprices on the same information the model does — so the pairs (our
+    prediction after FP2, the market after FP2) line up by construction.
+
+    Never fatal: no odds must never block caching a session.
+    """
+    out = subprocess.run(
+        [_sys.executable, "scripts/fetch_odds.py"],
+        capture_output=True, text=True)
+    lines = [ln for ln in (out.stdout or "").splitlines() if ln.strip()]
+    if out.returncode != 0:
+        tail = (out.stderr or "").strip().splitlines()[-1:] or ["no stderr"]
+        print(f"  !! odds snapshot failed ({out.returncode}) - {tail[0]}")
+        print("     not fatal; the market is a benchmark, not an input")
+        return
+    for ln in lines[1:]:
+        print(f"  {ln.strip()}")
+
+
 def _read(path: Path) -> pd.DataFrame:
     try:
         return pd.read_csv(path)
@@ -327,22 +356,25 @@ def main() -> int:
         return 2
 
     if not args.check_only:
-        print("\n[1/5] sessions")
+        print("\n[1/6] sessions")
         infos = cache_sessions(season, meeting)
 
-        print("\n[2/5] track map")
+        print("\n[2/6] track map")
         if args.no_track_map:
             print("  skipped (--no-track-map)")
         else:
             warm_track_map(season, meeting, infos)
 
-        print("\n[3/5] calendar")
+        print("\n[3/6] calendar")
         ensure_calendar(season)
 
-        print("\n[4/5] session weather")
+        print("\n[4/6] session weather")
         refresh_session_weather(season)
 
-    print("\n[5/5] hand-curated data for this event")
+        print("\n[5/6] market odds")
+        snapshot_odds()
+
+    print("\n[6/6] hand-curated data for this event")
     checklist(season, meeting)
 
     print("\nNext:")

@@ -44,8 +44,16 @@ import pandas as pd
 OUT = Path("data/model_review.csv")
 
 COLUMNS = ["season", "round", "event", "driver", "team", "kind",
-           "predicted", "actual", "miss", "sd", "scope", "flags",
+           "predicted", "actual", "miss", "sd", "se_actual", "band",
+           "scope", "flags",
            "category", "note", "source", "press_checked"]
+
+# `sd` is the PREDICTION's spread, `se_actual` the MEASUREMENT's, and `band`
+# the sqrt(sd^2 + se_actual^2) a row is actually judged against. All three are
+# kept: the split is what tells a genuine model miss (`sd` dominates) apart
+# from a thin read (`se_actual` dominates), which is the distinction the 2026
+# review had to make by hand under the label `measurement_artifact`. Rows
+# seeded before this existed have `sd` only and blanks here.
 
 # `press_checked` = ISO date the press pass was RUN for this row, blank if it
 # never was. It records COVERAGE, which `source` cannot: a row with no URL is
@@ -290,8 +298,17 @@ def observed_flags(season: int, event: str) -> dict[str, set[str]]:
     return out
 
 
-def _driver_actuals(season: int, event: str) -> dict[str, pd.Series]:
-    """Per-driver outcome for both kinds, mean-centred, from the pace table."""
+def _driver_actuals(season: int, event: str
+                    ) -> dict[str, tuple[pd.Series, pd.Series]]:
+    """Per-driver outcome for both kinds, mean-centred, from the pace table.
+
+    Returns (value, standard error) per kind. The error is what makes the
+    review test honest: the outcome is a MEASUREMENT, not a fact. A race
+    median off 18 clean laps and one off 55 carry different weight, and
+    scoring both against the prediction's sd alone books a thin read as a
+    model miss. Blank (NaN) for the one-lap kind by design — see the note in
+    driver_ratings._quali_driver_gaps.
+    """
     p = Path("data/driver_pace_by_event.csv")
     if not p.exists():
         return {}
@@ -300,9 +317,12 @@ def _driver_actuals(season: int, event: str) -> dict[str, pd.Series]:
         subset=["gap_pct"])
     out = {}
     for kind, tgt in (("onelap", "quali"), ("longrun", "race")):
-        s = d[d["kind"] == tgt].set_index("driver")["gap_pct"]
+        sub = d[d["kind"] == tgt].set_index("driver")
+        s = sub["gap_pct"]
         if len(s) >= 4:
-            out[kind] = s - s.mean()
+            se = (sub["se_pct"] if "se_pct" in sub.columns
+                  else pd.Series(np.nan, index=sub.index))
+            out[kind] = (s - s.mean(), se)
     return out
 
 
@@ -324,7 +344,7 @@ def seed(season: int, event: str) -> pd.DataFrame:
     actuals = _driver_actuals(season, event)
     flags = observed_flags(season, event)
     rows = []
-    for kind, act in actuals.items():
+    for kind, (act, act_se) in actuals.items():
         pred = model.driver_predictions(final, roster, kind,
                                         as_of=(season, round_))
         if pred.empty:
@@ -340,17 +360,30 @@ def seed(season: int, event: str) -> pd.DataFrame:
         miss_all = {d: float(av[d] - pv[d]) for d in common}
         sd_all = {d: float(pred.loc[d, "sd"]) for d in common}
         team_of = {d: pred.loc[d, "team"] for d in common}
+        # THE BAND IS BOTH UNCERTAINTIES, not the prediction's alone.
+        # `miss` is the difference between a prediction and a MEASUREMENT, so
+        # its spread is sqrt(sd_pred^2 + se_actual^2). Using sd_pred by itself
+        # measured a 79%-inside-the-band calibration against roughly half the
+        # uncertainty that is really there, and charged the model for reads
+        # that were simply thin. Falls back to sd_pred wherever the actual has
+        # no error bar (the whole one-lap kind), so nothing silently narrows.
+        se_all = {d: (float(act_se.get(d)) if pd.notna(act_se.get(d))
+                      else float("nan")) for d in common}
+        band_all = {d: float(np.hypot(sd_all[d], se_all[d]))
+                    if pd.notna(se_all[d]) else sd_all[d] for d in common}
 
         for d in common:
-            miss, sd = miss_all[d], sd_all[d]
-            if abs(miss) <= sd:              # inside its own band: no review
+            miss, sd, band = miss_all[d], sd_all[d], band_all[d]
+            if abs(miss) <= band:            # inside its own band: no review
                 continue
             mates = [o for o in common
                      if o != d and team_of[o] == team_of[d]]
             scope = "driver" if mates else "no_mate"
             for m in mates:
+                # Same widened band for the team mate, or "car_wide" would be
+                # decided on a different test than the flag it explains.
                 if (np.sign(miss_all[m]) == np.sign(miss)
-                        and abs(miss_all[m]) > sd_all[m]):
+                        and abs(miss_all[m]) > band_all[m]):
                     scope = "car_wide"
             rows.append({
                 "season": season, "round": round_, "event": event,
@@ -358,6 +391,9 @@ def seed(season: int, event: str) -> pd.DataFrame:
                 "predicted": round(float(pv[d]), 3),
                 "actual": round(float(av[d]), 3),
                 "miss": round(miss, 3), "sd": round(sd, 3),
+                "se_actual": (round(se_all[d], 3)
+                              if pd.notna(se_all[d]) else ""),
+                "band": round(band, 3),
                 "scope": scope,
                 "flags": ";".join(sorted(flags.get(d, set()))),
                 "category": "", "note": "", "source": "",
@@ -408,7 +444,7 @@ def main() -> int:
     print(f"\nAdded {len(new)} row(s) awaiting a note -> {OUT}")
     if not new.empty:
         print(new[["driver", "kind", "predicted", "actual", "miss",
-                   "sd"]].to_string(index=False))
+                   "sd", "se_actual", "band"]].to_string(index=False))
     print(f"\nFill in `category` (one of: {', '.join(CATEGORIES)}), `note` "
           f"and `source`.")
     print("Evidence for these rows: python scripts/review_dossier.py --latest")

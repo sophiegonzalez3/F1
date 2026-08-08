@@ -7,7 +7,11 @@
 #   1. caches every session of the event that has already run  (data\sessions\)
 #   2. warms the circuit's track map                           (data\track_maps\)
 #   3. tops up the calendar ribbon if the season is missing    (season_calendar.csv)
-#   4. prints the hand-curated checklist for the event (tyres, upgrades,
+#   4. re-derives per-session weather for whatever is cached now
+#   5. snapshots the betting market (data\odds_snapshots.csv) - a price is
+#      only observable while the market is open, so this one cannot be
+#      caught up later
+#   6. prints the hand-curated checklist for the event (tyres, upgrades,
 #      PU pool diff vs the FIA table, gearbox pool)
 #
 # Run it after each session of a live weekend (FP1 -> FP2 -> FP3 -> Sprint ->

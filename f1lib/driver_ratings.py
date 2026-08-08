@@ -143,10 +143,18 @@ def _quali_driver_gaps() -> pd.DataFrame:
             gap = gaps.get(r["driver"])
             if gap is None:
                 continue
+            # se_pct is left blank for the one-lap kind ON PURPOSE. A best
+            # qualifying lap is a MINIMUM over flying attempts, not a mean of
+            # repeated samples, so 1/sqrt(n) does not describe it — its
+            # expected value moves with how many attempts a driver got, which
+            # is a bias to correct rather than a spread to widen a band with,
+            # and it edits the ratings' own training target. That is its own
+            # (larger) piece of work; inventing a number here would quietly
+            # pre-empt it.
             rows.append({"season": int(season), "round": int(rnd),
                          "event": event, "team": r["team"],
                          "driver": r["driver"], "kind": "quali",
-                         "gap_pct": gap,
+                         "gap_pct": gap, "se_pct": np.nan, "n_clean": np.nan,
                          "n_sessions": nsess.get(r["driver"], 0)})
     logger.info("quali driver gaps: session-normalised at %d/%d rounds",
                 n_norm, n_tot)
@@ -203,9 +211,28 @@ def _race_driver_gaps() -> pd.DataFrame:
         clean = fl[fl["ValidLap"]
                    & ~fl.get("Dirty_Air", False)
                    & ~fl.get("Perturbed_Lap", False)]
-        med = clean.groupby(["Team", "Driver_Short"])[y].median()
-        n = clean.groupby(["Team", "Driver_Short"])[y].count()
-        med = med[n >= 10]
+        grp = clean.groupby(["Team", "Driver_Short"])[y]
+        med, n = grp.median(), grp.count()
+        # How precisely is each driver's median actually MEASURED? This is not
+        # a detail: a median off 18 clean laps and one off 55 were being
+        # compared against the same yardstick, and the review test
+        # (abs(miss) <= sd_prediction) treated both as exact. A miss can then
+        # be booked against the model when it was the measurement that was
+        # thin — which is most of what the 2026 review classed
+        # `measurement_artifact`.
+        #
+        # MAD rather than sd for the scale, because the estimate being
+        # bracketed is a median and the lap pool still contains the odd
+        # survivor of the cleaning filters; 1.4826 puts it on sd's scale.
+        # 1.2533 (= sqrt(pi/2)) is the asymptotic efficiency of a median
+        # against a mean, so se(median) ~ 1.2533 * scale / sqrt(n).
+        mad = grp.agg(lambda s: float((s - s.median()).abs().median()))
+        scale = 1.4826 * mad
+        scale = scale.where(scale > 0, grp.std())     # degenerate MAD
+        se_time = 1.2533 * scale / np.sqrt(n)
+
+        keep = n >= 10
+        med, se_time, n = med[keep], se_time[keep], n[keep]
         if len(med) < 4:
             continue
         # Field MEDIAN, not the fastest driver: the minimum of noisy estimates
@@ -217,9 +244,21 @@ def _race_driver_gaps() -> pd.DataFrame:
         event = fl["meeting"].iloc[0] if "meeting" in fl.columns \
             else event_s.replace("_", " ")
         for (team, drv), t in med.items():
+            # gap = (t/ref - 1) * 100, so d(gap)/dt = 100/ref.
+            #
+            # The REFERENCE's own error is deliberately excluded. It is
+            # common-mode — it shifts every driver at the event together, so
+            # it cannot make one driver fall outside their band while their
+            # team mate stays inside, which is exactly the question the
+            # review's `scope` field asks. Folding it in would inflate every
+            # band and hide real misses.
+            s = se_time.get((team, drv), np.nan)
             rows.append({"season": season, "round": np.nan, "event": event,
                          "team": canon(team), "driver": drv, "kind": "race",
-                         "gap_pct": round((t / ref - 1) * 100, 3)})
+                         "gap_pct": round((t / ref - 1) * 100, 3),
+                         "se_pct": (round(100.0 * float(s) / ref, 4)
+                                    if pd.notna(s) else np.nan),
+                         "n_clean": int(n.get((team, drv), 0))})
         print(f"  [race] {season} {event}: {len(med)} drivers", flush=True)
     return pd.DataFrame(rows)
 

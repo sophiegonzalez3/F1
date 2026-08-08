@@ -4,8 +4,12 @@ Prerequisite: the race weekend's sessions are cached under data/sessions/
 (run `scripts/during_weekend.py`, or load the event in the app's Data tab —
 this script computes from the cache, it does not fetch sessions).
 
-Steps, in dependency order:
+Steps, in dependency order (except the first, which jumps the queue because
+its source data expires — see the note on `odds` in STEPS):
 
+  0. scripts/fetch_odds.py             market-implied probabilities for the
+                                       weekend just run, hourly, before Kalshi
+                                       prunes them (~2 months)
   1. scripts/fetch_pitstops.py         real pit stops (race stats needs them)
   2. f1lib.fetch_historical_results    results/quali/sprint archive + standings
   3. scripts/compute_incidents.py      race-control incident register (DNF
@@ -54,6 +58,14 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # (key, human name, command). The key is what --skip takes.
 STEPS: list[tuple[str, str, list[str]]] = [
+    # FIRST because it is the only step whose data EXPIRES. Kalshi prunes a
+    # race's markets after roughly seven weekends and the price history 404s
+    # with them, so this weekend's odds must be captured within about two
+    # months or they are gone for good. Every other step reads local caches
+    # and can be re-run whenever. The runner stops at the first failure, so
+    # running it first also means a broken later step never costs us the odds.
+    ("odds",      "market odds (time-critical)",
+     [sys.executable, "scripts/fetch_odds.py", "--backfill", "--max-events", "3"]),
     ("pitstops",  "pit stops",
      [sys.executable, "scripts/fetch_pitstops.py"]),
     ("archive",   "results archive",
@@ -156,7 +168,36 @@ def main() -> int:
     print("\nStill to do by hand:")
     for line in FOLLOW_UPS:
         print(f"  {line}")
+    _polymarket_reminder()
     return 0
+
+
+def _polymarket_reminder() -> None:
+    """Name the races missing from the Polymarket backfill.
+
+    That backfill needs a VPN, so it cannot be a step in this chain — it would
+    fail the run every time the VPN is off. Instead the chain just says what
+    is outstanding, which is the whole "don't forget" mechanism: it costs
+    nothing when there is nothing to do, and it reads only the CSV, so it
+    never touches the network.
+
+    Not urgent the way the Kalshi step is - Polymarket keeps resolved markets
+    indefinitely - but its RESOLUTION decays with age (hourly while recent,
+    12-hourly once old), so sooner is still better.
+    """
+    try:
+        from f1lib.polymarket import missing_events
+        gaps = missing_events(Path("data/odds_snapshots.csv"))
+    except Exception:
+        return
+    if not gaps:
+        return
+    print(f"\n  polymarket    {len(gaps)} race(s) not yet backfilled "
+          f"({', '.join(gaps[:3])}{'...' if len(gaps) > 3 else ''})")
+    print("                needs the VPN on (non-French exit), then:")
+    print("                  .venv\\Scripts\\python scripts\\fetch_odds.py "
+          "--source polymarket")
+    print("                resumable - it picks up exactly what is missing")
 
 
 if __name__ == "__main__":

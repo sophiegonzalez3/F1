@@ -239,6 +239,35 @@ def snapshot_odds() -> None:
         print(f"  {ln.strip()}")
 
 
+def fetch_forecast() -> None:
+    """Record the race-day rain forecast as it stands during the weekend.
+
+    Deliberately mid-weekend as well as post-race. Unlike the odds this CAN be
+    backfilled — Open-Meteo's previous-runs archive keeps JMA runs back to
+    2018 — so the reason is not perishability but completeness: by Saturday the
+    D-2 forecast for Sunday already exists, and capturing it here means the row
+    is being written while the weekend is still undecided rather than
+    reconstructed after the fact.
+
+    The row lands incomplete (D-1 has not been issued yet) and `after_race.py`
+    finishes it; the fetcher refetches any row whose lead times are not all
+    populated, so the partial version is never pinned.
+
+    Never fatal — a missing forecast must not block caching a session.
+    """
+    out = subprocess.run(
+        [_sys.executable, "scripts/fetch_race_forecast.py"],
+        capture_output=True, text=True)
+    if out.returncode != 0:
+        tail = (out.stderr or "").strip().splitlines()[-1:] or ["no stderr"]
+        print(f"  !! forecast fetch failed ({out.returncode}) - {tail[0]}")
+        return
+    lines = [ln.rstrip() for ln in (out.stdout or "").splitlines() if ln.strip()]
+    for ln in lines:
+        if ln.startswith(("Wrote", "  [", "Nothing")) or "races in range" in ln:
+            print(f"  {ln.strip()}")
+
+
 def _read(path: Path) -> pd.DataFrame:
     try:
         return pd.read_csv(path)
@@ -356,25 +385,28 @@ def main() -> int:
         return 2
 
     if not args.check_only:
-        print("\n[1/6] sessions")
+        print("\n[1/7] sessions")
         infos = cache_sessions(season, meeting)
 
-        print("\n[2/6] track map")
+        print("\n[2/7] track map")
         if args.no_track_map:
             print("  skipped (--no-track-map)")
         else:
             warm_track_map(season, meeting, infos)
 
-        print("\n[3/6] calendar")
+        print("\n[3/7] calendar")
         ensure_calendar(season)
 
-        print("\n[4/6] session weather")
+        print("\n[4/7] session weather")
         refresh_session_weather(season)
 
-        print("\n[5/6] market odds")
+        print("\n[5/7] market odds")
         snapshot_odds()
 
-    print("\n[6/6] hand-curated data for this event")
+        print("\n[6/7] race-day rain forecast")
+        fetch_forecast()
+
+    print("\n[7/7] hand-curated data for this event")
     checklist(season, meeting)
 
     print("\nNext:")

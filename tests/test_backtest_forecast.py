@@ -13,9 +13,13 @@ fooling ourselves.
    a confident finding — which is exactly how the 2026-only run appeared to
    show the model beating the market before five seasons overturned it.
 """
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
 
 from scripts.backtest_race_forecast import (TARGETS, add_climatology,
                                             add_grid_baseline,
@@ -156,3 +160,41 @@ def test_bootstrap_clusters_on_races_not_driver_races():
 
 def test_bootstrap_declines_on_too_few_races():
     assert bootstrap_compare(_paired(3, 0.5), "p", "q", "y_actual") == {}
+
+
+# ─────────────────────────────────────────────────────────────
+# a variant must never overwrite the baseline
+# ─────────────────────────────────────────────────────────────
+#
+# This is a regression test for a real mistake: `--variant sc_mixture=1` wrote
+# its detail over `backtest_race_forecast_detail.csv`, so the baseline being
+# compared against silently BECAME the variant under test, and the comparison
+# was unrunnable (and would have looked like "no difference" had the files
+# been read blindly).
+
+def test_variant_tag_is_distinct_and_filename_safe():
+    from scripts.backtest_race_forecast import _variant_tag
+    tag = _variant_tag({"sc_mixture": True, "sc_noise_mult": 1.3})
+    assert tag and "/" not in tag and "\\" not in tag and "." not in tag
+    assert _variant_tag({"sc_mixture": True}) != _variant_tag({"sc_mixture": False})
+
+
+def test_replay_output_path_is_variant_aware():
+    """The baseline path must not be written directly in the replay branch —
+    the target has to be the variant-aware name."""
+    import ast
+    src = (ROOT / "scripts" / "backtest_race_forecast.py").read_text(
+        encoding="utf-8")
+    tree = ast.parse(src)
+    main = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.FunctionDef) and n.name == "main")
+    body = ast.get_source_segment(src, main) or ""
+    assert "d.to_csv(DETAIL" not in body.replace(" ", ""), (
+        "main() writes the replay straight to DETAIL - a --variant run would "
+        "clobber the baseline it is meant to be compared against")
+
+
+def test_baseline_and_variant_paths_differ():
+    from scripts.backtest_race_forecast import DETAIL, _variant_tag
+    v = DETAIL.with_name(f"{DETAIL.stem}__{_variant_tag({'sc_mixture': True})}.csv")
+    assert v != DETAIL and v.parent == DETAIL.parent

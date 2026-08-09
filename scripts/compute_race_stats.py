@@ -49,11 +49,13 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
-from f1lib.config import HIST_CIRCUIT_KEY_MAP, SESSIONS_DIR
+from f1lib.config import (HIST_CIRCUIT_KEY_MAP, SESSIONS_DIR,
+                         SESSIONS_LITE_DIR)
 
 VERBOSE = "--verbose" in sys.argv
 
 SESSIONS = Path(SESSIONS_DIR)
+SESSIONS_LITE = Path(SESSIONS_LITE_DIR)
 PITSTOPS_DIR = Path("data/pitstops")
 STANDINGS_PATH = Path("data/historical_results/constructor_standings_all.parquet")
 
@@ -73,6 +75,35 @@ _EVENT_TO_CIRCUIT = {
     _slugify(hist): fr
     for fr, hists in HIST_CIRCUIT_KEY_MAP.items() for hist in hists
 }
+
+
+_ARCHIVE: pd.DataFrame | None = None
+
+
+def _archive_results(season: int, meeting: str) -> pd.DataFrame:
+    """Stand-in for a missing `__results.parquet`, built from the archive.
+
+    The laps-only backfill store carries no side files at all, so every
+    results-derived figure (lap-1 swing, pit league, strategy) was blank for
+    2019-2022 — 82 races reported as missing data rather than measured. The
+    results archive holds the same fields for every race in it, so the gap is
+    one lookup wide.
+
+    Returns an empty frame if the archive cannot supply the race, which the
+    callers already treat as "no results".
+    """
+    global _ARCHIVE
+    if _ARCHIVE is None:
+        p = Path("data/historical_results/race_results_all.parquet")
+        try:
+            _ARCHIVE = pd.read_parquet(p)
+        except Exception:
+            _ARCHIVE = pd.DataFrame()
+    if _ARCHIVE.empty:
+        return pd.DataFrame()
+    a = _ARCHIVE[(_ARCHIVE["season"] == season)
+                 & (_ARCHIVE["event_name"] == meeting)]
+    return a.copy() if not a.empty else pd.DataFrame()
 
 
 def _round_map() -> dict[tuple[int, str], int]:
@@ -109,6 +140,26 @@ def _safety_stats(ts: pd.DataFrame, leader_laps: pd.DataFrame) -> dict:
         st = leader_laps["TrackStatus"].astype(str)
         out["sc_laps"] = int(st.str.contains("4").sum())
         out["vsc_laps"] = int(st.str.contains("6").sum())
+
+        # DEPLOYMENT COUNTS FROM THE LAP CHART when there is no track_status
+        # side file. The laps-only backfill store (2019-2022) has none, and
+        # without this every one of those 82 races reports sc_count = 0 — not
+        # "unknown" but a confident zero, which silently halved the measured
+        # safety-car rate (0.54 -> 0.28) and destroyed the comparison it fed.
+        #
+        # Safe because it agrees exactly with the side file wherever both
+        # exist: any_sc by season came out 0.583/0.375/0.542/0.545 either way
+        # across 2023-2026. Resolution is per-lap rather than per-message, so
+        # two deployments inside one lap read as one — acceptable for a
+        # deployment COUNT, and the share-of-races figure is unaffected.
+        if ts.empty or "Status" not in ts.columns:
+            seq = leader_laps.sort_values(
+                "LapNo" if "LapNo" in leader_laps.columns
+                else leader_laps.columns[0])["TrackStatus"].astype(str)
+            for code, field in (("4", "sc_count"), ("6", "vsc_count"),
+                                ("5", "red_flags")):
+                inside = seq.str.contains(code)
+                out[field] = int((inside & ~inside.shift(1, fill_value=False)).sum())
     return out
 
 
@@ -325,7 +376,26 @@ def main() -> None:
     rounds = _round_map()
     stats_rows, limits_rows, lap1_rows, pit_rows = [], [], [], []
 
-    lap_files = sorted(SESSIONS.glob("*__Race__laps.parquet"))
+    # BOTH session stores, not just the full one. They are disjoint by design:
+    # data/sessions/ carries telemetry and so only holds 2023-2026 (86 races),
+    # while data/sessions_lite/ is the laps-only backfill and holds 2019-2022
+    # (82 races). Globbing one directory silently discarded HALF the archive —
+    # every safety-car, lap-1 and pit figure here was measured on 59 races when
+    # ~160 were available, which is why per-circuit safety-car rates looked
+    # like noise (3 races a circuit rather than 8-16).
+    #
+    # Same blind spot, same fix as driver_ratings._race_driver_gaps and
+    # compute_team_pace.py, both of which already read both stores. The lite
+    # store carries every column used here (TrackStatus, Position, ...); what
+    # it has less of is side files, which _side() already treats as optional.
+    seen: set[str] = set()
+    lap_files = []
+    for base in (SESSIONS, SESSIONS_LITE):
+        for p in sorted(Path(base).glob("*__Race__laps.parquet")):
+            if p.name in seen:
+                continue          # the full cache wins for the same event
+            seen.add(p.name)
+            lap_files.append(p)
 
     # A race occasionally sits in the archive under two meeting names (e.g.
     # 2025 "Barcelona Grand Prix" = "Spanish Grand Prix"). When several
@@ -360,6 +430,8 @@ def main() -> None:
 
         ts, rcm, wx, res = (_side("track_status"), _side("race_control"),
                             _side("weather"), _side("results"))
+        if res.empty:                       # laps-only store: no side files
+            res = _archive_results(season, meeting)
 
         leader = laps[pd.to_numeric(laps["Position"], errors="coerce") == 1]
         row = {"season": season, "meeting": meeting, "circuit_key": circuit,

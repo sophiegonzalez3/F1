@@ -33,6 +33,7 @@ from f1lib.config import (
 )
 from f1lib.pace_model import PaceModel, canon
 from f1lib.race_forecast import RaceForecaster
+from tabs import outcome
 
 _KIND_LABEL = {"onelap": "Qualifying (one-lap)", "longrun": "Race (long-run)"}
 _STAGE_SHORT = {"prior": "Prior", "after FP1": "FP1", "after FP2": "FP2",
@@ -138,6 +139,51 @@ _WALK = {
     "drivers": [("LEC", -0.982, -0.220), ("HAM", -0.823, -0.062)],
 }
 
+# ── the OUTCOME half of the same weekend ─────────────────────
+#
+# The walkthrough above stops at "how fast is the car", which is only half of
+# what this page shows. Everything below turns that into a finishing position,
+# and the numbers are again from a real run of the same event.
+#
+#     python -c "from f1lib.race_forecast import RaceForecaster as R; r=R(); \
+#                print(r.passability('Belgian Grand Prix'), \
+#                      r.dnf_multiplier('Belgian Grand Prix'), r.p['race_noise'])"
+_RACE = {
+    "pull": 0.407,            # Spa passability; field average 0.456
+    "pull_avg": 0.456,
+    "dnf": 0.098,             # 0.12 base x 0.814 circuit multiplier
+    "dnf_corr": 0.19,
+    "n_sims": 20000,
+    # Leclerc's finishing-position distribution from grid 4, P1..P12
+    "lec_dist": [0.165, 0.232, 0.222, 0.154, 0.077, 0.033, 0.015, 0.005,
+                 0.001, 0.0, 0.0, 0.0],
+    "lec_tail": 0.096,        # P13+, i.e. essentially the retirement mass
+    "lec_actual": 2,
+    "ant_pwin": 0.465,        # from pole, with the fastest car
+    "nor_grid": 13, "nor_ppodium": 0.025, "nor_actual": 7,
+}
+
+# Measured by scripts/backtest_race_forecast.py. Kept here as literals so the
+# explainer cannot silently drift from the file it describes; RE-READ
+# data/backtest_race_forecast.csv after any model change or data backfill.
+#
+# These moved once already: the first version was scored on 105 races because
+# the replay needs practice laps and 2019-2021 had none cached, so those events
+# were silently skipped. Backfilling them took it to 161 races and CHANGED the
+# verdict — p_podium went from "not significant against the grid baseline" to
+# significant. A sample that grows can overturn a conclusion, so the sample
+# size is quoted alongside every claim below.
+_SCORE = {
+    "races": 161, "rows": 2699,
+    "brier": {"win": 0.0376, "podium": 0.0712, "points": 0.1481},
+    "vs_clim": {"win": 0.324, "podium": 0.501, "points": 0.411},
+    "vs_grid": {"win": 0.013, "podium": 0.079, "points": 0.061},
+    # Does the gap clear a race-clustered bootstrap? Only these two do.
+    "beats_grid": {"win": False, "podium": True, "points": True},
+    "mae_finish": 2.86,
+    "slope_win": 1.201,
+}
+
 
 def _walkthrough_fig() -> go.Figure:
     """Ferrari's estimate converging across a weekend, with the error bar
@@ -176,6 +222,36 @@ def _walkthrough_fig() -> go.Figure:
                        text="what qualifying<br>actually showed", showarrow=False,
                        font=dict(size=10, color=ACCENT), yshift=-6)
     fig.update_yaxes(autorange="reversed")
+    return fig
+
+
+def _outcome_fig() -> go.Figure:
+    """Leclerc's whole finishing distribution, with what happened marked.
+
+    This is the picture the outcome half needs, because the thing people carry
+    away from "P4 predicted" is a position, and the model never had one. It
+    had a spread over every position, and the bar at the far right is the
+    ~10% of simulations where the car stops.
+    """
+    dist = _RACE["lec_dist"]
+    xs = [f"P{i}" for i in range(1, len(dist) + 1)] + ["DNF /<br>lapped"]
+    ys = dist + [_RACE["lec_tail"]]
+    colors = ["#FF8A3D"] * len(dist) + [TEXT_DIM]
+    act = _RACE["lec_actual"] - 1
+    colors[act] = ACCENT
+    fig = go.Figure(go.Bar(
+        x=xs, y=ys, marker_color=colors,
+        text=[f"{v:.0%}" if v >= 0.02 else "" for v in ys],
+        textposition="outside", textfont=dict(size=10, color=TEXT_DIM),
+        hovertemplate="%{x}: %{y:.1%} of 20,000 races<extra></extra>"))
+    theme(fig, 260, "")
+    fig.update_layout(showlegend=False, bargap=0.25,
+                      margin=dict(l=50, r=20, t=34, b=36),
+                      yaxis_title="share of simulations")
+    fig.update_yaxes(tickformat=".0%", range=[0, max(ys) * 1.28])
+    fig.add_annotation(x=act, y=ys[act], yshift=26, showarrow=False,
+                       text="actually finished here",
+                       font=dict(size=10, color=ACCENT))
     return fig
 
 
@@ -296,13 +372,104 @@ def _how_it_works():
             "every number here carries a ± rather than pretending to a "
             "decimal it has not earned.",
         ]),
+        html.Div("Part two — turning speed into a finishing position",
+                 style={"color": ACCENT, "fontWeight": "700",
+                        "fontSize": "0.8rem", "letterSpacing": "0.5px",
+                        "borderTop": f"1px solid {GRID_CLR}",
+                        "paddingTop": "12px", "marginBottom": "12px"}),
+
+        html.Div([
+            "Being quickest does not win races. Everything above answers ",
+            html.I("how fast"), "; the probabilities on this page answer ",
+            html.I("where they finish"), ", and that needs three more things.",
+        ], style={"color": TEXT_MAIN, "fontSize": "0.86rem",
+                  "lineHeight": "1.65", "marginBottom": "14px"}),
+
+        _step(6, "Where you start, and how much the circuit lets you undo it", [
+            "Grid position is the single biggest thing after speed. How much "
+            "it can be overturned is measured per circuit, from how strongly "
+            "the starting order has predicted the finishing order there "
+            "historically. Spa scores ", _num(f"{_RACE['pull']:.2f}", ""),
+            " against a field average of ", _num(f"{_RACE['pull_avg']:.2f}", ""),
+            " — slightly stickier than typical, so a quick car buried in the "
+            "pack recovers a little less than it would elsewhere. Monaco is "
+            "far stickier still; Bahrain lets race pace through.",
+        ]),
+        _step(7, "Cars that do not finish", [
+            "About ", _num(f"{_RACE['dnf']:.1%}", ""), " of starts end early "
+            "here — a measured base rate scaled by how hard each circuit is on "
+            "cars. Team mates are retired together more often than chance, "
+            "because the cause often is shared (a bad batch, a first-lap "
+            "incident that takes both cars), so the draw is correlated rather "
+            "than independent. A per-DRIVER retirement rate was tested and "
+            "dropped: it is indistinguishable from noise.",
+        ]),
+        _step(8, "Run the race 20,000 times", [
+            "Each simulated race draws a speed for every car from its ± band, "
+            "blends it with the grid by the circuit's stickiness, adds "
+            "race-day shuffle for strategy and traffic, and retires the cars "
+            "that stop. Counting the outcomes gives the probabilities. "
+            "Leclerc started 4th at Spa and came out at ",
+            _num("16.5", "%"), " to win, ", _num("62", "%"),
+            " for a podium — and the chart below is the part a single "
+            "predicted position hides: the model never picked P4, it spread "
+            "itself across the whole field.",
+        ]),
+        dcc.Graph(figure=_outcome_fig(), config=GFX),
+        html.Div([
+            "Two things worth noticing. Even ", html.B("from pole in the "
+            "fastest car"), ", the winner was only ",
+            _num(f"{_RACE['ant_pwin']:.0%}", ""), " — a race is not a "
+            "procession. And Norris, starting ", _num(str(_RACE["nor_grid"]), ""),
+            "th, was given ", _num(f"{_RACE['nor_ppodium']:.0%}", ""),
+            " for a podium and finished ", _num(f"P{_RACE['nor_actual']}", ""),
+            ": a long shot that did not come in, which is exactly what a ",
+            _num(f"{_RACE['nor_ppodium']:.0%}", ""), " claim should look like "
+            "most of the time.",
+        ], style={"color": TEXT_DIM, "fontSize": "0.82rem",
+                  "lineHeight": "1.6", "marginBottom": "14px"}),
+
+        html.Div("How good is it, honestly",
+                 style={"color": ACCENT, "fontWeight": "700",
+                        "fontSize": "0.8rem", "letterSpacing": "0.5px",
+                        "borderTop": f"1px solid {GRID_CLR}",
+                        "paddingTop": "12px", "marginBottom": "10px"}),
+        html.Div([
+            f"Replaying {_SCORE['races']} races "
+            f"({_SCORE['rows']:,} driver-races, 2019–2026) with only what was "
+            "known beforehand, the finishing position lands ",
+            _num(f"{_SCORE['mae_finish']:.1f}", ""), " places out on average. "
+            "Against simply knowing how many cars started, it removes ",
+            _num(f"{_SCORE['vs_clim']['podium']:.0%}", ""),
+            " of the podium error. The harder test is a reference that already "
+            "knows the grid — ", html.I("what usually happens from that "
+            "starting slot"), ". Against that, the podium and points "
+            "predictions are reliably better, but the ",
+            html.B("win prediction is not"),
+            ": its small edge sits inside the margin of error. Most of what "
+            "this model knows about who WINS, it knows from the grid; what it "
+            "adds is further down the order.",
+        ], style={"color": TEXT_DIM, "fontSize": "0.82rem",
+                  "lineHeight": "1.6", "marginBottom": "10px"}),
+        html.Div([
+            html.B("Where it is weakest. "),
+            "Rain. Dry races are well calibrated; wet ones are not, and the "
+            "damage sits almost entirely in rain ", html.I("nobody forecast"),
+            " — an anticipated wet race is about as predictable as a dry one. "
+            "Pit strategy and mid-race weather changes are not modelled at "
+            "all. The probabilities are also slightly ",
+            html.I("under-confident"), ": strong cars deserve a bit more than "
+            "they are given, weak ones a bit less.",
+        ], style={"color": TEXT_DIM, "fontSize": "0.82rem",
+                  "lineHeight": "1.6", "marginBottom": "10px"}),
+
         html.Div([
             html.B("How to read the rest of this page: "),
             "treat the ± as the real claim. Two teams whose bands overlap are "
             "not ranked — the model is saying it cannot separate them. The "
-            "probabilities lower down come from simulating the weekend 20,000 "
-            "times using exactly these bands, which is why a team can lead the "
-            "predicted order and still only win it half the time.",
+            "probabilities come from the 20,000 simulated races described "
+            "above, which is why a team can lead the predicted order and still "
+            "only win it half the time.",
         ], style={"color": TEXT_DIM, "fontSize": "0.82rem",
                   "lineHeight": "1.6", "borderTop": f"1px solid {GRID_CLR}",
                   "paddingTop": "10px", "marginTop": "4px"}),
@@ -1739,6 +1906,27 @@ def tab_brief(sel_drivers=None, sel_teams=None):
                 ]),
             ]))
 
+            # The three cards above collapse each driver to a bar. These say
+            # what the model actually produced (a distribution), and put it
+            # against the one external reference that exists before the race.
+            # Each returns None when its data is absent, which is the normal
+            # case for most events — odds coverage is very uneven.
+            sim = None
+            try:
+                sim = rf.simulate(dpred, event=event, grid=grid,
+                                  quali_pred=None if grid else qpred)
+            except Exception:
+                sim = None
+            extra = [c for c in (
+                outcome.distribution_card(sim, fc_show),
+                outcome.driver_picker_card(sim, fc_show),
+                outcome.market_card(season, event, fc),
+                outcome.movement_card(season, event),
+            ) if c is not None]
+            for i in range(0, len(extra), 2):
+                body.append(dbc.Row([dbc.Col(c, md=6)
+                                     for c in extra[i:i + 2]], className="mb-2"))
+
     # ── Prediction ledger (once quali / race is loaded) ─────────
     aq = _model().actual_quali_gap(laps)
     ar = _model().actual_race_gap(laps)
@@ -1866,7 +2054,17 @@ def tab_brief(sel_drivers=None, sel_teams=None):
     # reading either alone is how a measurement limit gets mistaken for the
     # model being wrong.
     ret = _retention_card(ev[0] if ev else None)
+    # The outcome half gets the same treatment as the pace half: a record over
+    # many races, and a calibration curve, because a Brier score and "does a
+    # stated 60% happen 60% of the time" are different questions with
+    # different fixes.
+    orec = outcome.record_card(ev[0] if ev else None)
+    ocal = outcome.calibration_card("podium")
+    outcome_row = [c for c in (orec, ocal) if c is not None]
     section = [c for c in (tr, ret) if c is not None]
+    if outcome_row:
+        section.append(dbc.Row([dbc.Col(c, md=6) for c in outcome_row],
+                               className="mb-2"))
     if section:
         body.append(html.Div([
             html.H4("TRACK RECORD · THE WHOLE SEASON", style={

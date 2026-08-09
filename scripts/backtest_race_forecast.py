@@ -101,7 +101,32 @@ def skill(score: float, ref: float) -> float:
 # the replay
 # ─────────────────────────────────────────────────────────────
 
-def replay(seasons: tuple[int, ...] | None) -> pd.DataFrame:
+def _parse_variant(items: list[str] | None) -> dict:
+    """--variant sc_mixture=1 sc_noise_mult=1.3 -> forecaster overrides.
+
+    A variant is scored, never saved: the point is to find out whether a
+    change earns its place across seasons before any default moves.
+    """
+    out: dict = {}
+    for it in items or []:
+        k, _, v = it.partition("=")
+        k, v = k.strip(), v.strip()
+        if v.lower() in ("1", "true", "yes", "on"):
+            out[k] = True
+        elif v.lower() in ("0", "false", "no", "off"):
+            out[k] = False
+        else:
+            out[k] = float(v)
+    return out
+
+
+def _variant_tag(variant: dict) -> str:
+    """Filename-safe label for a variant's detail file."""
+    return "_".join(f"{k}{v}" for k, v in sorted(variant.items())).replace(
+        ".", "p")
+
+
+def replay(seasons: tuple[int, ...] | None, variant: dict | None = None) -> pd.DataFrame:
     """One row per driver-race: what was forecast, and what happened.
 
     Saved rather than only summarised, because every later question —
@@ -111,7 +136,8 @@ def replay(seasons: tuple[int, ...] | None) -> pd.DataFrame:
     from f1lib.pace_features import event_measurements
     from f1lib.pace_model import PaceModel
 
-    m, rf, dr = PaceModel(), RaceForecaster(), DriverRatings()
+    m, rf, dr = (PaceModel(), RaceForecaster(**(variant or {})),
+                 DriverRatings())
     res = rf._results.copy()
     res["finished"] = _is_finish(res["Status"])
 
@@ -256,10 +282,26 @@ def add_market(d: pd.DataFrame, odds_path: Path = ODDS) -> pd.DataFrame:
 # ─────────────────────────────────────────────────────────────
 
 def scorecard(d: pd.DataFrame) -> pd.DataFrame:
-    """Per-season and overall scores for the model and every reference."""
+    """Scores per EVENT, per season, and overall, for every reference.
+
+    Per-event rows exist because a season average answers "should I trust this
+    model" but not "how did it do at Monaco" — and the two diverge sharply,
+    since a single wet or chaotic race can carry a whole season's mean. The
+    dashboard reads the event rows; nothing else recomputes them, which is
+    what keeps the card and this file from drifting apart.
+
+    `scope` distinguishes them: event | season | all.
+    """
     out = []
-    for label, sub in list(d.groupby("season")) + [("ALL", d)]:
-        row = {"season": label, "races": sub.groupby(["season", "event"]).ngroups,
+    groups = ([(("event", s, e), sub) for (s, e), sub in d.groupby(["season", "event"])]
+              + [(("season", s, None), sub) for s, sub in d.groupby("season")]
+              + [(("all", "ALL", None), d)])
+    for (scope, label, ev), sub in groups:
+        row = {"scope": scope, "season": label, "event": ev,
+               "round": (int(sub["round"].iloc[0])
+                         if scope == "event" and "round" in sub.columns
+                         and pd.notna(sub["round"].iloc[0]) else None),
+               "races": sub.groupby(["season", "event"]).ngroups,
                "rows": len(sub)}
         for name, _cut, mkt in TARGETS:
             y = sub[f"{name}_actual"].values
@@ -286,7 +328,7 @@ def scorecard(d: pd.DataFrame) -> pd.DataFrame:
 
 
 def print_report(d: pd.DataFrame, sc: pd.DataFrame) -> None:
-    a = sc[sc["season"] == "ALL"].iloc[0]
+    a = sc[sc["scope"] == "all"].iloc[0]
     print(f"\n{'=' * 74}\nOUTCOME SCORECARD  —  {int(a['races'])} races, "
           f"{int(a['rows']):,} driver-races\n{'=' * 74}")
 
@@ -453,6 +495,10 @@ def main() -> int:
     ap.add_argument("--rank-tests-only", action="store_true")
     ap.add_argument("--report", action="store_true",
                     help="re-score the saved detail file without replaying")
+    ap.add_argument("--variant", nargs="+", metavar="KEY=VAL",
+                    help="RaceForecaster overrides to score, e.g. "
+                         "--variant sc_mixture=1 (writes to a separate detail "
+                         "file so the baseline is never overwritten)")
     args = ap.parse_args()
 
     combination_test()
@@ -467,21 +513,29 @@ def main() -> int:
         print(f"\nRe-scoring {len(d):,} saved driver-races (no replay).")
     else:
         print(f"\n== Replaying races (predicted pace, as-of; actual grid) ==")
-        d = replay(tuple(args.seasons) if args.seasons else None)
+        variant = _parse_variant(args.variant)
+        if variant:
+            print(f"   variant: {variant}")
+        d = replay(tuple(args.seasons) if args.seasons else None, variant)
         if d.empty:
             print("No races could be replayed.")
             return 1
-        DETAIL.parent.mkdir(parents=True, exist_ok=True)
-        d.to_csv(DETAIL, index=False)
-        print(f"\nWrote {DETAIL} ({len(d):,} driver-races)")
+        # A variant NEVER writes over the baseline. Without this the thing
+        # being compared against silently becomes the thing being tested.
+        detail = DETAIL if not variant else DETAIL.with_name(
+            f"{DETAIL.stem}__{_variant_tag(variant)}.csv")
+        detail.parent.mkdir(parents=True, exist_ok=True)
+        d.to_csv(detail, index=False)
+        print(f"\nWrote {detail} ({len(d):,} driver-races)")
 
     d = add_climatology(d)
     d = add_grid_baseline(d)
     d = add_market(d)
     sc = scorecard(d)
-    sc.to_csv(SUMMARY, index=False)
+    if args.report or not _parse_variant(args.variant):
+        sc.to_csv(SUMMARY, index=False)
+        print(f"\nWrote {SUMMARY} ({len(sc)} rows: per season + ALL)")
     print_report(d, sc)
-    print(f"\nWrote {SUMMARY} ({len(sc)} rows: per season + ALL)")
     return 0
 
 

@@ -66,6 +66,13 @@ STEPS: list[tuple[str, str, list[str]]] = [
     # running it first also means a broken later step never costs us the odds.
     ("odds",      "market odds (time-critical)",
      [sys.executable, "scripts/fetch_odds.py", "--backfill", "--max-events", "3"]),
+    # Right after the odds, and for a related reason: both record what was
+    # KNOWABLE BEFORE the race, which nothing computed from the session cache
+    # can reconstruct afterwards. Cheap (only new races) and idempotent; a row
+    # left incomplete by the mid-weekend run is completed here, because every
+    # lead time (D-1..D-3) has passed by now.
+    ("forecast",  "race-day rain forecast",
+     [sys.executable, "scripts/fetch_race_forecast.py"]),
     ("pitstops",  "pit stops",
      [sys.executable, "scripts/fetch_pitstops.py"]),
     ("archive",   "results archive",

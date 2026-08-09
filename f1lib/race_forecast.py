@@ -89,6 +89,39 @@ DEFAULTS = dict(
     # Applied as a MULTIPLIER on dnf_rate rather than as an absolute rate, so
     # the deliberate choice of base level above (recent-era 0.12, not the
     # long-run 0.142) survives. Multipliers therefore run ~0.71 to ~1.38.
+    # ── safety-car mixture (OFF by default) ───────────────────
+    # `race_noise` above is drawn independently per driver, but the biggest
+    # thing it stands in for — a safety car — is a RACE-LEVEL event that
+    # happens to everybody at once. Independent draws therefore get the
+    # marginal spread right and the JOINT behaviour wrong, understating how
+    # often several cars are displaced together. Exactly the defect already
+    # fixed for teammate retirements, which are correlated for the same kind
+    # of reason.
+    #
+    # Measured over 163 races (2019-2026): a race with a safety car shuffles
+    # 1.175x more than one without (sd of finish-grid, 5.24 vs 4.46,
+    # Mann-Whitney p=0.0012), and 55.8% of races have one.
+    #
+    # Applied as a variance-PRESERVING mixture: one scale is drawn per
+    # simulated race, and the two levels are set so the marginal variance
+    # still equals race_noise^2. That keeps this a change of SHAPE only, so it
+    # can be tested without also re-tuning the amount of noise — which is what
+    # the house rule about constants exists to prevent.
+    #
+    # TESTED AND REJECTED as a default. Scored over 105 races, it moves
+    # nothing: pooled Brier -0.0001 (p_win), +0.0000 (podium, points), every
+    # 95% CI straddling zero, and seasons improved 4/6, 2/6, 3/6 — i.e. a coin
+    # flip. Sharpness goes 1.237 -> 1.236. The input effect is real and well
+    # measured; it is simply too gentle to survive a rank-based simulation
+    # once the marginal variance is held fixed.
+    #
+    # Kept, off, because a measured null is worth more than a deleted branch:
+    # it stops the same idea being re-proposed as free accuracy, and it is the
+    # honest home for the SC constants above. Turning it on would need it to
+    # clear scripts/backtest_race_forecast.py on several seasons first.
+    sc_mixture=False,
+    sc_rate=0.558,           # P(any safety car), 163 races
+    sc_noise_mult=1.175,     # shuffle multiplier on a safety-car race
     dnf_shrink_starts=80.0,   # pseudo-starts pulling a circuit toward the mean
     # Teammates retire together more often than chance: P(both) is 3.06%
     # against 2.02% under independence over 1599 team-races (chi2 = 11.3,
@@ -324,7 +357,18 @@ class RaceForecaster:
         # expected running order, then race-day shuffle
         noise = self.p["race_noise"] if race_noise is None else race_noise
         score = grid_rank + pull * (pace_rank - grid_rank)
-        score = score + rng.standard_normal((n, k)) * noise
+        # One scale per SIMULATED RACE, not per driver: a safety car displaces
+        # the whole field together. `base` is chosen so the marginal variance
+        # is unchanged (p*m^2 + (1-p)) * base^2 = 1, making this purely a
+        # change of shape. See the note on sc_mixture in DEFAULTS.
+        if self.p.get("sc_mixture"):
+            p_sc = float(np.clip(self.p["sc_rate"], 0.0, 1.0))
+            mult = float(max(self.p["sc_noise_mult"], 1e-6))
+            base = 1.0 / np.sqrt(p_sc * mult ** 2 + (1.0 - p_sc))
+            scale = np.where(rng.random(n) < p_sc, base * mult, base)[:, None]
+        else:
+            scale = 1.0
+        score = score + rng.standard_normal((n, k)) * noise * scale
 
         # ── retirements ───────────────────────────────────────
         # Rate: the configured base, scaled by how hard this circuit is on

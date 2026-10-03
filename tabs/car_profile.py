@@ -21,6 +21,12 @@ Honesty rules this section follows
   matrix — see `_deg_card`.
 * Nothing here claims to measure battery state. There is no such telemetry
   channel; what is measurable is top-end fade, and that is what it is called.
+
+The sidebar TEAMS filter chooses which teams are DRAWN; every statistic behind
+them (the z-scores in the matrix, the per-PU engine average, the field
+reference in the deg chart) stays computed on the whole grid. Recomputing a
+"versus the field" number on three teams would silently redefine the field —
+the same rule the BRIEF tab's ledger cards already follow.
 """
 from __future__ import annotations
 
@@ -33,8 +39,10 @@ from dash import html, dcc
 
 from f1lib.components import card, theme, GFX, abbr
 from f1lib.glossary import gloss
+from f1lib.pace_features import canon
 from f1lib.config import (
-    TEAM_COLORS, HISTORICAL_DIR, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR, CARD_BG,
+    team_color, HISTORICAL_DIR, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR, CARD_BG,
+    SERIES_1, SERIES_2,
 )
 
 PROFILE_PATH = Path("data/car_profile.csv")
@@ -210,13 +218,13 @@ def _matrix_fig(S: pd.DataFrame, order: list[str], height: int) -> go.Figure:
 
 
 def _reliability_fig(fin: pd.DataFrame, pu: pd.DataFrame,
-                     order: list[str], height: int) -> go.Figure:
+                     order: list[str], height: int, season=None) -> go.Figure:
     fig = go.Figure()
     teams = [t for t in order if t in fin.index]
     fig.add_trace(go.Bar(
         y=[abbr(t) for t in teams], x=[fin.loc[t, "finish_pct"] for t in teams],
         orientation="h", name="Finish rate",
-        marker=dict(color=[TEAM_COLORS.get(t, "#808080") for t in teams]),
+        marker=dict(color=[team_color(t, season) for t in teams]),
         text=[f"{fin.loc[t, 'finish_pct']:.0f}%  ({int(fin.loc[t, 'dnf'])} DNF)"
               for t in teams],
         textposition="outside", textfont=dict(size=10),
@@ -233,15 +241,24 @@ def _reliability_fig(fin: pd.DataFrame, pu: pd.DataFrame,
     return fig
 
 
-def _engine_fig(S: pd.DataFrame, makers: dict, height: int) -> go.Figure:
+def _engine_fig(S: pd.DataFrame, makers: dict, height: int,
+                show: list[str] | None = None) -> go.Figure:
     """Straight-line speed split into the engine everyone on that PU shares and
-    the team's own deviation from it (drag / wing choice)."""
+    the team's own deviation from it (drag / wing choice).
+
+    `show` filters which teams are drawn. The per-PU average is still taken over
+    every team on that power unit — a filter that hid a supplier's other
+    customers would otherwise redefine the engine bar itself, and the whole
+    point of the card is that the blue bar is shared.
+    """
     d = S[["straight_kmh"]].copy()
     d["pu"] = [makers.get(t, "?") for t in d.index]
     eng = d.groupby("pu")["straight_kmh"].agg(["mean", "count"])
     d["engine"] = d["pu"].map(eng["mean"])
     d["chassis"] = d["straight_kmh"] - d["engine"]
     d["n_pu"] = d["pu"].map(eng["count"])
+    if show is not None:
+        d = d[d.index.isin(show)]
     d = d.sort_values("straight_kmh", ascending=True)
 
     fig = go.Figure()
@@ -308,7 +325,7 @@ def _payoff_fig(P: pd.DataFrame, season: int, height: int) -> go.Figure | None:
         return None
     D = pd.DataFrame(rows)
     fig = go.Figure()
-    for tname, clr in (("One-lap", "#FF8A3D"), ("Race", "#3DD6C4")):
+    for tname, clr in (("One-lap", SERIES_1), ("Race", SERIES_2)):
         sub = D[D["target"] == tname]
         if sub.empty:
             continue
@@ -332,7 +349,8 @@ def _payoff_fig(P: pd.DataFrame, season: int, height: int) -> go.Figure | None:
     return fig
 
 
-def _deg_fig(P: pd.DataFrame, order: list[str], height: int) -> go.Figure:
+def _deg_fig(P: pd.DataFrame, order: list[str], height: int,
+             season=None) -> go.Figure:
     """Tyre degradation round by round — deliberately NOT averaged."""
     fig = go.Figure()
     rounds = sorted(P["round"].dropna().unique())
@@ -345,7 +363,7 @@ def _deg_fig(P: pd.DataFrame, order: list[str], height: int) -> go.Figure:
         g = g.set_index("round").reindex(rounds).reset_index()
         fig.add_trace(go.Scatter(
             x=rounds, y=g["deg_spl"], mode="lines+markers", name=abbr(team),
-            line=dict(color=TEAM_COLORS.get(team, "#808080"), width=1.8),
+            line=dict(color=team_color(team, season), width=1.8),
             marker=dict(size=5), connectgaps=False,
             customdata=[ev.get(r, "") for r in rounds],
             hovertemplate=(f"<b>{abbr(team)}</b> · %{{customdata}}<br>"
@@ -389,9 +407,16 @@ def _axis_legend() -> html.Div:
 
 
 def car_concept_section(season: int | None = None,
-                        loaded_event: str | None = None) -> html.Div:
+                        loaded_event: str | None = None,
+                        teams: list[str] | None = None) -> html.Div:
     """The whole CAR CONCEPT block: concept matrix, engine/chassis split,
-    what-pays analysis, reliability, and the honest tyre-deg treatment."""
+    what-pays analysis, reliability, and the honest tyre-deg treatment.
+
+    `teams` is the sidebar TEAMS filter. It selects which teams are drawn; the
+    underlying season statistics stay full-grid (see the module docstring).
+    A filter matching nothing falls back to the whole field rather than
+    rendering an empty section.
+    """
     P = profile_df()
     if P.empty:
         return html.Div(card(
@@ -418,6 +443,19 @@ def car_concept_section(season: int | None = None,
         order = list(S.sort_values("corner_pct", ascending=False).index) \
             if "corner_pct" in S.columns else list(S.index)
 
+    # Sidebar TEAMS filter → which rows are drawn. S / P stay full-grid so every
+    # "versus the field" number below keeps meaning the same thing.
+    sel = {canon(t) for t in teams} if teams else None
+    shown = ([t for t in order if canon(t) in sel] if sel is not None else order)
+    if not shown:
+        shown = order
+    filtered = len(shown) < len(order)
+    filter_note = (html.Span(f"  ·  showing {len(shown)} of {len(order)} teams "
+                             "(sidebar filter) — all comparisons remain against "
+                             "the full grid",
+                             style={"color": ACCENT})
+                   if filtered else "")
+
     fin = _finish_rate(season)
     pu = _pu_usage(season)
     makers = _pu_makers()
@@ -428,11 +466,11 @@ def car_concept_section(season: int | None = None,
     parts.append(card(
         ["Car Concept — what kind of car is this?"],
         html.Div([
-            html.P(f"Season {season} · {n_ev} events · every value is versus the "
-                   "field that weekend, then averaged.",
+            html.P([f"Season {season} · {n_ev} events · every value is versus the "
+                    "field that weekend, then averaged.", filter_note],
                    style={"color": TEXT_DIM, "fontSize": "0.76rem",
                           "marginBottom": "6px"}),
-            dcc.Graph(figure=_matrix_fig(S, order, max(300, 34 * len(order) + 130)),
+            dcc.Graph(figure=_matrix_fig(S, shown, max(300, 34 * len(shown) + 130)),
                       config=GFX),
             _axis_legend(),
         ]),
@@ -451,7 +489,10 @@ def car_concept_section(season: int | None = None,
               "'Reliability' next to each axis is its split-half score: the "
               "odd rounds and the even rounds were averaged separately and "
               "correlated, so 0.92 means the season number is a genuine car "
-              "measurement rather than noise. Why: lap time is an outcome; "
+              "measurement rather than noise. The sidebar TEAMS filter chooses "
+              "which rows are drawn; the z-scores behind the colours are always "
+              "computed on the full grid, so a cell's colour never changes when "
+              "you narrow the view. Why: lap time is an outcome; "
               "this is the anatomy behind it, and it is what tells you whether "
               "a quick car is quick because of its engine, its downforce, or "
               "how it is being driven."),
@@ -466,14 +507,19 @@ def car_concept_section(season: int | None = None,
     if makers and "straight_kmh" in S.columns:
         parts.append(card(
             "Engine or Chassis? — splitting the straight-line number",
-            dcc.Graph(figure=_engine_fig(S, makers, max(300, 30 * len(S) + 140)),
+            dcc.Graph(figure=_engine_fig(S, makers,
+                                         max(300, 30 * len(shown) + 140),
+                                         show=shown),
                       config=GFX),
             measure="one-lap",
             info=("Data: the straight-line axis above, split into the average "
                   "of every team running that power unit (the engine's "
                   "contribution, blue) and each team's own deviation from its "
                   "engine-mates (its drag level and wing choice, orange). PU "
-                  "supplier mapping from data/facilities.csv. Why: a slow "
+                  "supplier mapping from data/facilities.csv. The sidebar "
+                  "TEAMS filter hides rows only — the blue engine bar stays "
+                  "the average over ALL that supplier's customers, filtered "
+                  "out or not. Why: a slow "
                   "speed trap can mean a down-on-power engine or a team simply "
                   "choosing more wing, and those call for completely different "
                   "conclusions — this separates them. Caveat: the split only "
@@ -503,17 +549,28 @@ def car_concept_section(season: int | None = None,
                   "which is exactly the confound its own definition warns "
                   "about. Caveat: 11 teams over 11 events — this says the "
                   "trait travels with pace, not that bolting it onto a given "
-                  "car would make it quicker."),
+                  "car would make it quicker. This card deliberately IGNORES "
+                  "the sidebar TEAMS filter: it is a single pooled correlation "
+                  "per axis, not a per-team reading, and refitting it on three "
+                  "teams would quietly turn n≈120 into n≈33 and report the "
+                  "result as if nothing had changed."),
         ))
 
     # 4 — reliability
+    fin = fin.reindex([t for t in shown if t in fin.index]) if not fin.empty \
+        else fin
     if not fin.empty:
-        fin = fin.reindex([t for t in order if t in fin.index])
         body = [dcc.Graph(figure=_reliability_fig(fin, pu, list(fin.index),
-                                                  max(280, 28 * len(fin) + 120)),
+                                                  max(280, 28 * len(fin) + 120),
+                                                  season),
                           config=GFX)]
         if not pu.empty:
-            worst = pu["pool_pct"].sort_values(ascending=False).head(3)
+            # the PU-pool footnote follows the same filter as the bars above it
+            pu_shown = pu[pu.index.map(lambda t: canon(t) in {canon(s)
+                                                              for s in shown})]
+            if pu_shown.empty:
+                pu_shown = pu
+            worst = pu_shown["pool_pct"].sort_values(ascending=False).head(3)
             body.append(html.Div(
                 ["Power-unit pool used so far — ",
                  ", ".join(f"{t} {v:.0f}%" for t, v in worst.items()),
@@ -537,12 +594,12 @@ def car_concept_section(season: int | None = None,
 
     # 5 — the axis that failed, shown honestly
     if "deg_spl" in P.columns and P["deg_spl"].notna().any():
-        parts.append(_deg_card(P, order))
+        parts.append(_deg_card(P, shown, season))
 
     return html.Div(parts)
 
 
-def _deg_card(P: pd.DataFrame, order: list[str]) -> html.Div:
+def _deg_card(P: pd.DataFrame, order: list[str], season=None) -> html.Div:
     return card(
         [*gloss("degradation", "Tyre Wear"), " — round by round"],
         html.Div([
@@ -567,7 +624,7 @@ def _deg_card(P: pd.DataFrame, order: list[str]) -> html.Div:
             ], style={"borderLeft": f"3px solid {ACCENT}", "background": "#0E0E1F",
                       "padding": "10px 12px", "marginBottom": "12px",
                       "borderRadius": "4px"}),
-            dcc.Graph(figure=_deg_fig(P, order, 460), config=GFX),
+            dcc.Graph(figure=_deg_fig(P, order, 460, season), config=GFX),
         ]),
         measure="stint",
         info=("Data: each team's mean deviation from the pooled field "

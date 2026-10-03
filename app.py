@@ -441,7 +441,9 @@ def _render_tab(tab, ss, sd, st):
                  "of the garage to the other across the weekend."]),
             tab_teammates(fl_d, fs_d),
         ])
-    if tab=="tab-stints":     return tab_stints(fl_d,fs_d)
+    # st as well as the filtered frames: the season-long CAR CONCEPT block at
+    # the top of the tab reads data/car_profile.csv, not these laps
+    if tab=="tab-stints":     return tab_stints(fl_d,fs_d,st)
     if tab=="tab-weekend":
         # Merged WEEK END PRED tab: practice content first, then the pre-event
         # brief stacked below.
@@ -490,7 +492,10 @@ def _render_tab(tab, ss, sd, st):
                  "race lands — keeps score against what actually happened."]),
             tab_brief(sd, st),
         ])
-    if tab=="tab-quali":      return tab_quali()
+    # tab_quali reads the Qualifying session straight off state.laps (it needs
+    # the deleted/invalid laps the shared filtering drops), so it takes the
+    # sidebar selections and applies them itself
+    if tab=="tab-quali":      return tab_quali(sd, st, ss)
     if tab=="tab-race":       return tab_race(sd, st)
     if tab=="tab-duel":       return tab_duel(sd, st)
     if tab=="tab-track":      return tab_track_info()

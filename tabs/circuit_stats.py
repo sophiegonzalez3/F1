@@ -21,7 +21,6 @@ The measured card is the empirical companion of track.py's curated
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import numpy as np
@@ -32,21 +31,11 @@ from dash import html, dcc, dash_table
 from f1lib.components import card, theme, GFX
 from f1lib.glossary import gloss
 from f1lib.config import (
-    HIST_CIRCUIT_KEY_MAP, COMPOUND_COLORS, TEAM_COLORS,
+    COMPOUND_COLORS, TEAM_COLORS, SERIES_1,
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )
 from f1lib.processing import format_lap_time
 from tabs.race_stats_data import race_stats_df, track_limits_df
-
-
-def _slugify(name) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")
-
-
-_EVENT_TO_CIRCUIT = {
-    _slugify(hist): fr
-    for fr, hists in HIST_CIRCUIT_KEY_MAP.items() for hist in hists
-}
 
 
 def _pill(label, value, color=None, sub=None):
@@ -105,7 +94,7 @@ def measured_weekend_card(circuit_key: str) -> html.Div | None:
         pills.append(_pill("ON-TRACK PASSES", f"~{ot.median():.0f} /race"))
     if len(pit):
         sub = f"{stat.median():.1f} s stationary" if len(stat) else None
-        pills.append(_pill("PIT LOSS", f"≈{pit.median():.0f} s", "#00D2BE", sub))
+        pills.append(_pill("PIT LOSS", f"≈{pit.median():.0f} s", SERIES_1, sub))
     if len(l1):
         pills.append(_pill("LAP-1 SWING", f"±{l1.mean():.1f} places"))
     pills.append(_pill("WET RACES", f"{int(wet.sum())} of {n}",
@@ -192,8 +181,8 @@ def pole_evolution_card(circuit_key: str, hist_quali: pd.DataFrame) -> html.Div 
     if hist_quali is None or hist_quali.empty \
             or "circuit_key" not in hist_quali.columns:
         return None
-    keys = HIST_CIRCUIT_KEY_MAP.get(circuit_key, [circuit_key])
-    sub = hist_quali[hist_quali["circuit_key"].isin(keys)].copy()
+    from f1lib.standings import circuit_rows
+    sub = circuit_rows(hist_quali, circuit_key)
     if sub.empty:
         return None
 
@@ -260,8 +249,8 @@ def tyre_allocation_card(circuit_key: str) -> html.Div | None:
     df = _tyre_allocations()
     if df.empty:
         return None
-    d = df[df["event"].map(lambda e: _EVENT_TO_CIRCUIT.get(_slugify(e)))
-           == circuit_key].sort_values("season", ascending=False)
+    from f1lib.standings import circuit_rows
+    d = circuit_rows(df, circuit_key, event_col="event")         .sort_values("season", ascending=False)
     if d.empty:
         return None
 

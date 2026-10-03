@@ -1,0 +1,1933 @@
+# F1 Teams Organization Structure - Full Document
+
+Mercedes
+  
+**Ownership:** Mercedes Benz Group (33.3%), INEOS (33.3%), Toto Wolff (33.3%)
+
+**BOD**
+- Jörg Burzer (CTO, Mercedes - Benz)
+- Michael Scheibe (CEO, Mercedes AMG)
+- Toto Wolff (Toto Wolff Ownership) 
+- Rene Berger (Toto Wolff Ownership) 
+- Johnny Ginns (INEOS) 
+- Andy Currie (INEOS)
+- Carrie Donaghy (Secretary)
+
+**Executive Team**
+- Mercedes - Benz, CEO: Ola Kallenius
+- CEO, Team Principal and Co - Owner: Toto Wolff
+- Co - Owner: Jim Ratcliffe 
+
+**C-Suite**
+- Deputy Team Principal & Chief Communications Officer: Bradley Lord
+- Chief Operating Officer: Rob Thomas
+- Technical Director: James Allison
+- Managing Director, Powertrains: Hywel Thomas 
+- Chief Financial Officer: Russell Braithwaite
+- General Counsel: Carrie Donaghy
+- Chief of Staff: Jayne Poole
+- Chief People's Officer: Anca Raines
+- Chief Commercial Officer: Richard Sanders 
+- Applied Science Director: Jason Smith
+- Business Services Director: Richard Bruce
+- Snr Consultant: Tom Capocci 
+
+**Design**
+- Car Design Director: Giacomo Tortora 
+- Engineering Director: Sam Coates 
+- Chief Engineer - Car Design: Ashley Way 
+- Chief Engineer - Car Design: Richard Pattinson  
+
+*Head of Composite Design:* Chris St Leger Harris
+- Lead Composite Design Engineer: Matthew Dixon
+- Lead Composite Design Engineer: Thomas Lands
+- Lead Composite Design Engineer: Jonathan Sadler 
+- Lead Composite Design Engineer: Stephen Taylor
+- Senior Composite Design Engineer: Benedikt Paech
+- Senior Composite Design Engineer: Elsa Reeve
+- Senior Brake Duct Design Engineer: Mark Stiles
+        
+*Head of Structures:* Jason Lamb
+- Lead Structural Analysis Engineer: Luca Regnini
+- Senior Structural Analysis Engineer: Stuart Bevan
+- Senior Structural Analysis Engineer: Andrea Bruno
+- Senior Structural Analysis Engineer: Marine Favre-Decloux
+- Senior Structural Analysis Engineer: Paul Foster
+- Senior Structural Analysis Engineer: Federico Miotto
+
+*Head of Mechanical Design:* Paul Whittaker
+- Lead Mechanical Design Engineer: Joss Cheli 
+- Lead Mechanical Design Engineer: Mervyn Dempsey 
+- Lead Mechanical Design Engineer: Daren Geraghty
+- Lead Mechanical Design Engineer: Marcos Lameirao 
+- Senior Mechanical Design Engineer: Luca Di Marino
+- Senior Mechanical Design Engineer: Mark Tranter 
+- Senior Mechanical Design Engineer: Russell Thomas
+- Senior Suspension Designer: Toshi Iguchi 
+
+*Head of Powertrain Integration & Transmission:* James Williams
+- Lead Powertrain Engineer: Ducio Dalla Ragione 
+- Lead Powertrain Engineer: Richard H. 
+
+*Head of Concept Design:* Christian Fletcher 
+- Senior Concept Design Engineer: Tom Selby 
+
+*Head of Reliability:* ? 
+
+*Head of Mechanical and Composite Design:* Lloyd Storey
+
+*Head of Test, Development & Dyno's:* Colin Nunn 
+
+Tim Graves?
+
+**Aerodynamics**
+- Director of Aerodynamics: Jarrod Murphy 
+- Chief Aerodynamicist: ?
+
+*Aerodynamic Resource Manager:* ?
+- Head of Aerodynamic Technology: Simon Williams
+- Head of Aerodynamic Performance: Adil Kazmi 
+  - Lead Aero Performance ENG: Guillermo Vilaplana
+- Head of Aerodynamic Design: Chris Lettis
+  - Lead Model Designer: Thomas Stock
+
+*Principal Aerodynamicist:* Andreas Ruhrmann
+- Principal Aerodynamicist: Felix Sampson 
+- Principal Aerodynamicist: Adil El Ouazizi
+- Principal Aerodynamicist (Experimental): Alaric Domoney
+- Principal Aerodynamicist - Performance: Pierluigi Orsi 
+- Principal Aerodynamicist - Performance: Richard Butler
+- Principal Aerodynamicist (CFD): Will Costin
+
+*Principal CFD Engineer:* Matt Layton
+- Head of Wind Tunnel Operation: Sergio Marquez
+- Lead Trackside Aerodynamicist: Kimberley Stevens 
+- Lead Trackside Aerodynamicist: Edmund Hunt 
+- Lead Aerodynamics Performance Engineer: Gareth Jones
+
+*Aerodynamics Group Leader:* Nick Colam 
+- Aerodynamics Group Leader: Chris Ohanian 
+- Aerodynamics Group Leader: Ben Stopher
+- Aerodynamics Group Leader: Brendan McFall
+
+**Vehicle Performance**
+- Performance Director: David Nelson
+- Chief Engineer, Performance Capabilities: David Kao 
+- Chief Engineer, Vehicle Performance: Ivo Marlais
+- Head of Vehicle Dynamics: Emiliano Gianguilio
+- Principal Vehicle Dynamicist: Andrew Muir 
+- Head of Tyres: Matt Wilkin
+  - Senior Tyre Analysis Engineer: Nicola Frabbiani 
+- Head of Performance Software: Enrico Sampo 
+- Head of Virtual World Simulation: Riccardo Musconi
+- Matteo Bettella??
+- Head of Future Car: Nicolas Rohart 
+- Head of Engineering Tools and Simulation: Christopher Craig 
+- Lead Performance & Simulation Engineer: Matthew Ranft
+- Lead Capability Simulation & Modelling Engineer: Sean Christie 
+- Senior Tyre and Vehicle Dynamics Engineer: Nick Trevorrow 
+
+**Research and Development**
+- Chief Engineer - Research and Development: ?
+- Chief Engineer: Russell Cooley? 
+- Head of Materials Science: Gary Hall  
+- Head of Capabilities: Andrew Crook
+- Head of Control Systems: David Hilton
+- Head of Electronics: Gregg Hartley
+
+*Principal Engineer, Electronic Systems Design:* Ian Grundy
+- Principal Data Platform Engineer: Gregory Bird
+- Principal Platform Engineer: David Green
+- Technology Engineering, Group Leader: Evangelia Angelaki
+- Technology Engineering, Group Leader: Marcos Lameiro
+
+*Race Engineer (Simulator):* Hughes Brettonier
+
+**Race Team**
+- Sporting Director: Ron Meadows
+- Trackside Engineering Director: Andrew Shovlin
+- Chief Trackside Engineer: Simon Cole
+- Chief Mechanic: Matt Deane
+- Head of Trackside Controls: Evan Short
+- Head of Race Strategy: Rosie Wait 
+- Lead Race Strategist: Joseph McMillan
+- Lead Race Strategist: Leonardo Da Silva
+
+*Race Engineer, Russell:* Marcus Dudley
+- Performance Engineer, Russell: Katsuhide Kuwahara 
+- Systems Engineer, Russell: Chris Nelson
+- No1 Mechanic: Stuart Green
+
+*Race Engineer, Antonelli:* Peter Bonnington
+- Performance Engineer, Antonelli: Stephane Folio 
+- No1 Mechanic: 
+
+*Principal Trackside Engineer:* Richard Lane
+- Trackside Operations Engineer: Amy Walker
+
+*Head of Race Team Logistics:* Karl Fanson
+
+*Race Team Project Coordinator:* Chris King
+
+**Operations / Production**
+- Chief Operating Officer: Rob Thomas
+- Operations Director: Tom Batch
+- Manufacturing Director: Gordon Kelly 
+
+*Head of Quality:* Simon C.
+- Head of Quality Assurance: Alan Thain
+- Head of Paint and Graphics: Andrew Moody
+- Head of Composite Manufacturing: Sophie Castle
+
+---
+
+Ferrari
+  
+**Ownership:** Exor - Agnelli's (21.20%, V = 32.17%), Piero Ferrari (10.67%, V = 16.09%), Public (68.19%, V = 51.74%). 
+
+**C Suite**
+- Executive Chairman: John Elkann 
+- Vice Chairman: Piero Ferrari
+- Chief Executive Officer: Benedetto Vigna 
+- Chief Racing Revenue Officer: Lorenzo Giorgetti 
+
+**Directors**
+- Team Principal & General Manager: Frederic Vasseur 
+- Deputy Team Principal: Jerome D'Ambrosio 
+- Technical Director - Chassis: Loic Serra
+- Technical Director - Engine: Enrico Gualtieri 
+- Sporting Director: Diego Ioverno 
+- Supply Chain and Manufacturing Director: Marco Tozzi
+- Quality and Project Management Director: Francesco Marino 
+- Track Engineering Director: Matteo Togninalli 
+
+*F1 Programme Manager:* Andrea Storti
+- HR Manager: Giuseppe Caruso & Fabio Scarcella
+
+**Race Team**
+- Sporting Director: Diego Ioverno 
+  - Sporting Specialist: Marco Gasparet
+- Head of Trackside Engineering: Matteo Togninalli
+- Head of Race Strategy: Ravin Jain
+- Driver Academy and TPC Manager: Riccardo Adami
+- Head of Remote Garage: Carlo Santi
+
+*Chief Mechanic:* Christian Corradini 
+- Vehicle Assembly Manager: Fabio Bellosi
+
+*Race Engineer, Leclerc:* Byron Bozzi
+- Performance Engineer, Leclerc: Johannes Hatz 
+- Driver Coach, Leclerc: Oliver Helvig 
+
+*Race Engineer, Hamilton:* Carlo Santi (temp)
+- Performance Engineer, Hamilton: Luca Diella 
+- Senior Trackside Engineer, Hamilton: Cedric Michel-Grosjean
+- Driver Coach, Hamilton: ?
+
+**Design Office**
+- Chief Project Engineer: Fabio Montecchi 
+- Chief Designer: Marco Civinelli 
+- Chief Designer - New Car: Corrado Onorato 
+
+*Chassis Design:* Tiziano Battistini?
+- Head of Reliability and Chassis Development: Edoardo Brosco 
+- Head of Design Processes, Tools and Engineering Services: Lionel Fevre
+
+*Head of New Car Concept Design and Legality:* Fabio Vecchi
+- New Car Concept and Innovation Technical Leader: Dario Deutsch
+- Concept and Process Programme Manager: Marco Fusacchia
+- Senior Design Engineer: Gianluca Fenati 
+
+*Head of Composite Design:* Juan Sebastian Navarro Braniff
+- Head of Composite R&D: Giancarlo Constantini
+- Chassis Design, Project Leader: Marco D'Ascenzo
+- Composites, Technical Leader: Cédric Sambardier
+- Senior Composite Design Engineer: Eva Oya Martínez
+- Senior Composite Design Engineer: Akos Bolyky
+- Senior Composite Design Engineer: Caterina Introcaso
+- Senior Composite Design Engineer: Stefano Soldati
+- Senior Composite Design Engineer: Domenico Di Maria
+- Senior Composite Design Engineer: Andrea Di Emidio
+- Senior Composite Design Engineer: Hughes Vest
+- Senior Composite Design Engineer: Marco Fornara
+- Senior Composite Design Engineer: Luciano Nicomede
+
+*Head of Mechanical Design:* Dino Pensavento
+- Group Leader, Front Suspension: Carlo P.
+- Group Leader, Rear Suspension: Dimitris Chavouzis
+- Senior Mechanical Design Engineer: Luca Brunatto 
+- Senior Mechanical Design Engineer: Giovanni Banzola 
+- Senior Mechanical Design Engineer: Giacomo Calderari
+- Senior Mechanical Design Engineer: Federico Giannini
+- Senior Mechanical Design Engineer: Simone Panetto
+
+*Head of Vehicle Structures and Stress:* Matteo Parlamento 
+  - Lead Materials Engineer: Matteo Sepati
+
+*Head of Vehicle Systems:* Luca Pomicino
+- Project Leader - Powersteering: Federic Palmieri 
+- Project Leader - Fuel System: Valerio Rossi 
+
+*Head of Transmission:* Andrea Candelpergher?
+- Transmission Technical Leader: Emanuele Puricelli 
+- Composite Design Lead (Gearbox): James Hamilton
+
+*Head of Innovation and Special Projects:* Isaac Sanchez? X 
+
+*Head of Vehicle Operations Design:* Marco Gentilli 
+- Bruno Petrini?
+- Simone Chiari?
+
+**Aerodynamics**
+- Head of Aerodynamics: Diego Tondi
+- Head of Aerodynamic Development: Franck Sanchez 
+- Head of Aerodynamic Engineering: Simone Fenili 
+- Head of Aerodynamic Methodology and Tools: Peter Mlinaric 
+- Head of Aerodynamic Operations: Sergio Flandi 
+- Head of CFD: Michele Schilardi
+  - SR Aerodynamicist: Gabriele D'Arezzo
+- Aerodynamic Performance Manager: Thomas Bouche 
+- Aerodynamic Programme Manager: Federica Cimarosti 
+
+*Aerodynamic Development Coordinator:* Christopher Sadd
+- Principal Aerodynamicist (Development): Andrea Mencarelli
+- Principal Aerodynamicist (Concept): Thibaud Muller
+
+*Head of Electrical Aero:* Giovanni Marasco
+- Head of Wind Tunnel Innovation: Federico Cartoni
+
+*Team Leader - Front Group:*
+- Team Leader - Rear Group: ??
+- Team Leader - Aero Innovation: Samuele Dilli 
+- Team Leader - Aero Cooling: Enes Tas ?
+- Team Leader; Aero Performance Trackside: Michele Corsetti
+- Team Leader - Concept: Riccardo Lazzaro 
+- Team Leader: Remko Sterkman
+- Team Leader: Michele Spinolo
+
+*Senior Aerodynamicist:* Guiseppe Azzollini 
+- Senior CFD Engineer: Marco Chesti 
+- Senior CFD Engineer: Gabriele D'Arezzo 
+- CFD Innovation: Guisseppe M. 
+
+**Vehicle Performance**
+- Head of Vehicle Performance: Marco Adurno
+
+*Head of Performance Operations:* Guillaume Dezoteux 
+- Chief Engineer - Tyre Performance: Carlos Galbally 
+- Head of Tyre Engineering: Matteo Marini 
+- Senior Tyre Engineer: Antonino Mazzola 
+- Tyre Engineering Specialist: Shaid Farzand
+
+*Head of Vehicle Dynamics:* ??
+- Head of Simulation:  
+- Head of Performance Analytics: Matteo Pelosi 
+- Head of Performance Development: 
+- Head of Analytics Software: Mark C. 
+- Head of Chassis Test Rig Engineering: Michele Sguegila 
+
+*Vehicle Performance Manager (Future Cars):* Tito Amato 
+
+*Snr Engineer:* Luca Bottazzi 
+- Software Engineering Manager: Paul Wang 
+
+*Simulator, Team Leader:* Andrea Mannarino
+- AI, Team Leader: Francesca Fusi 
+- Performance Software, Team Leader: Daniel de Zille
+- Driving Simulator Engineer: Erik van der Veen
+- Deputy Team Leader,Vehicle Dynamics (Race Performance) deputy: Luca De Benardi
+- Team Leader, Simulation Development: Matteo Veneri
+
+*Vehicle Performance, Development Specialist:* Francesco Giacomello
+- Vehicle Performance, Development Engineer: Niki Fiore
+
+*Senior Vehicle Science Engineer:* Saverio Carillo
+
+**Engine**
+- Engine Technical Director: Enrico Gualtieri 
+- Trackside Engine Director: Luigi Fraboni
+- Manager, Engine Performance and Emissions: Ioannis Kitsopandis
+- Head of Energy Recovery and Turbo: Thierry Baritaud 
+- Head of Internal Combustion Unit: Guido di Paola 
+- Head of Power Unit Trackside Operations: Nicola Mosconi // Nicola Barriselli
+- Head of PMO: Alessandro Terrosu
+
+*Head of Performance and Control Strategies:* Carlo Bussi 
+- Head of Test Bench Operations: Giampaolo Zen
+
+*Head of Fuel Systems:* Valerio Rossi
+- Head of Power Unit Assembly: Alessio Simi 
+- Head of Electronic Operations: Andrea Beneventi
+- Head of Electronic Testing: Marco Capitell
+- Head of ERS Design and Development: Pete May
+- Head of Trackside ERS: David Lacche' 
+- Consultant: Alessandro Quartieri
+
+*Team Leader - Turbocharger:* Fredrik Westin
+- Team Leader - Engine Calibration, Fuel and Customer Teams: Roel Sourbron
+- Team Leader - ERS: Gerardo Espeso Cano
+- Team Leader - ICE Performance Development: 
+- Team Leader - Engine Calibration and Dynamic Strategies: Jurgen Hamann
+- Team Leader - Engine CFD: Antonio Revert
+
+**Electronics**
+- Head of Electronics: Stefano Lovera 
+- Head of Aerodynamic Design Office: Denis Virdis
+- Head of Software Calibration and Validation: Sandro Selva
+- Trackside: ? (was Stefano Romeo)
+- Track and Bench: ? (was Alessandro Quartieri)
+
+**Production / Operations**
+- Supply Chain and Manufacturing Director: Marco Tozzi
+- Quality and Project Management Director: Francesco Marino
+
+*Head of Logistics:* Sergio Bondi
+- Head of Purchasing: Marco Burzio 
+- Head of Technology and Mechanical Production: Aurelio Occhinegro
+- Head of ICT Engineering & Infrastructure: Pier Paolo Lugli 
+- Head of Supplier Quality: Alessandro Pattavina
+
+**Non Racing**
+- HR Manager: Fabio Scarella
+- Head of Finance: Luigi Centenari  
+
+*Head of Social Media and Content:* Pedro Cebrian 
+- Head of Hospitality: Jacopo Negrini
+- Head of Fan Development: Stefano Pallard
+- Head of Partnerships: Giovanni Frasca
+- Head of Partnership Development: Sitta Ugo
+- Head of Partnership Development: Xavier Valeri Iribarren
+
+*Lawyer:* Stefan Siegel
+
+---
+
+Red Bull
+  
+**Ownership:** Red Bull GMBh (100%) - Chalerm Yoovidhya 51%, Mark Mateschitz 49%
+
+**Executive Team**
+- Red Bull Managing Director: Oliver Mintzlaff
+- CEO & Team Principal: Laurent Mekies
+- Technical Director: Pierre Wache 
+
+**C Suite**
+- Chief Financial Officer: Alistair Rew
+- Group, Communications Director: Benjamin Ippoliti
+- Group, Commercial Director: Nick Stocker 
+- Group, Growth Marketing: Caroline Buckland
+- Group, General Counsel: Ben Gordon - Smith
+- Group, Human Resources Director: Otello Valenti
+- Group, Chief Information Officer: Matt Cadieux
+- Group, Guest Experiences: Nick Kenton
+
+**Design Office**
+- Chief Design and Performance Engineer: Ben Waterhouse
+- Chief Designer (Composites & Structures): Jerome Lafarge
+- Chief Designer (Mechanical & Systems): Edward Aveling 
+
+*Head of Composite Design:* Andrew MacFarlan 
+  - Deputy Head: Richard Pratt
+- Head of Systems Design: Christopher Finister 
+- Head of Transmission Design: Robert Dorney
+- Head of R&D: Julien Leudière
+- Head of Structure (Front): Glen Foster
+- Head of Structure (Rear): Adam Moore
+
+*Principal Design Engineer (Gearbox):* Mathew Fuller 
+- Principal Thermal Systems Engineer: Rafael Mora
+- Principal Structures Engineer: Wojciech Taberski 
+- Principal Engineer, Future Car: Hagar Niblett 
+
+*Group Leader, R&D:* Julien Leudière
+- Group Leader, Rear Suspension: Richard Wilks 
+- Team Leader, Mechanical: Marc Battle
+
+**Aerodynamics**
+- Head of Aerodynamics: Enrico Balbo 
+- Aerodynamic Department Manager: Dominic Piers Smith
+- Head of Aerodynamic Development: Craig Dear 
+- Head of Aerodynamic Analysis and Technology: Ian Grieg 
+- Head of Aerodynamic Performance: David Morgan
+- Head of Aerodynamic Systems: George Trigg
+
+*Head of Software Engineering:* Ian Brunton
+
+*Team Leader - Development:* Alessandro Germani 
+- Team Leader - Development: Nicholas Rimbault 
+- Team Leader - Development: Daniel Chambers 
+- Team Leader - Development: Linghent Yang 
+- Edmund Chiu?
+
+*Lead Aerodynamicist:* Claudio Comis Da Ronco
+
+*Team Leader - CFD Tools and Methods:* Gennaro Serino 
+- Team Leader - CFD Tools and Methods: Andrea Penza 
+- Team Leader - Aerodynamic Software: Jason Williams 
+- Team Leader - CAD & CFD Software: Paul Woodhams
+
+**Vehicle Performance**
+- Head of Performance: Andrea Landi
+- Head of Electronics: Paul Everington
+- Head of Vehicle Performance: Alistair Brizell 
+- Head of Vehicle Suspension and Trackside Support: Hugh Bird
+- Simulation Team Leader: Simon Rennie 
+- Tyre Team Leader: Jeremie Ricquier 
+- Data Science Team Leader: Jamie Hilton
+
+*Principal Engineer, Simulation and Modelling:* Guy Charles
+- Lead Engineer, Simulator Hardware: Andrew Honeywood 
+
+**Software**
+- Group Head, Digital Engineering Systems: Daniel Wakins
+- Head of Software Engineering: Martin Galpin
+- Head of IT Engineering Capability and Generative AI: Matthew Sorrell 
+- Principal Software Engineer: James Beer
+- Principal Software Engineer: Andrew Kernahan
+
+**Production**
+- Group Head, Production Control: Mark Evans
+- Group Director, Infrastructure and Property: Terry Brice
+- Group Director, Property: Rob Higton
+- Head of Programmes, Planning and Control: Lorna Wilkinson
+- Head of Supply Chain: Jamie Meades
+- Head of Logistics: Mark Evans 
+- Head of Manufacturing: Ian Carroll 
+- Head of Manufacturing Systems: Ian Prior
+- Manufacturing Engineering, Group Leader: John Bickell
+- Head of Procurement: Charles Bramlett 
+- Head of Materials Technology: Carl Willoughby 
+
+**Race Team**
+- Racing Director: Gianpiero Lambiase 
+- Chief Engineer, Car Engineering: Paul Monaghan 
+- Head of Race Operations: Richard Wolverson 
+- Head of Sporting: Stephen Knowles 
+- Head of Strategy: Hannah Schmitz 
+
+*Chief Mechanic:* Chris Gent
+- Race Team Composites Leader: Callum Adams
+- Race Team Chief Garage Technition: Steve Forty
+- Race Team Coordinator: Ed Hemsworth
+
+*Head of Race Support Operations:* Phil Turner
+
+*Race Engineer, Verstappen:* Gianpiero Lambiase
+- Performance Engineer, Verstappen: Richard Cooke 
+- Controls Engineer, Verstappen: Geoff Ayton
+- Controls Engineer, Verstappen: Ainhoa Begiristrain
+- No1 Mechanic, Verstappen: Michael Payne
+- No2 Mechanic, Verstappen (Front): Ole Shack 
+- No2 Mechanic, Verstappen (Rear): Sebastian Francois
+- Fourth Mechanic, Verstappen: Calle Helbo
+- Performance Coach: Rupert Manwaring
+
+*Race Engineer, Hadjar:* Richard Wood
+- Performance Engineer, Hadjar: Tom Hart
+- Controls Engineer, Hadjar: Matteo Babin
+- No1 Mechanic, Hadjar: Jon Caller
+- No2 Mechanic, Hadjar (Front): Jack Wood 
+- No2 Mechanic, Hadjar (Rear): Luke Stanard
+- Fourth Mechanic, Hadjar: Mario Labetsos
+- Performance Coach: Harry Mann
+
+**Engine (with Ford)**
+- Technical Director: Ben Hodgkinson 
+- Technical Operations Director: Phil Prew 
+- Performance Director: Owen Jones 
+- Operations Director: Steve Blewett 
+
+*Chief Engineer - Trackside:* William Gouldbourne 
+- Chief Engineer: Omid Mostaghimi 
+- Chief Mechanical Engineer: Pip Clode
+- Head of ICE Design: Anton Mayo 
+- Head of ICE Operations: Steve Brodie 
+- Head of Test Operations: Florian Niehaves
+- Head of Mechanical Development: Chris Francis 
+- Head of Mechanical Simulation: Owen Carless 
+
+René Dias Torcato - head of test
+
+---
+
+McLaren
+  
+**Ownership:** Mumatalak Holdings (Bahrain Sovereign Wealth Fund) & CYVN (Abu Dhabi)
+
+**BOD:**
+- Shaikh Mohamed bin Isa Al Khalifa - Mumatalak Board
+- Omar Syed - Mumatalak, Chief Investment Officer
+- Noor Sharafi - Mumatalak, General Council
+- Samer Abdel Haq - General Counsel, Abu Dhabi Finance Department 
+- Hashem Al Dabbas - Senior Advisor, Abu Dhabi Finance Department
+- Eddy Skaf - Chief Investment Officer, CYVN Holdings
+- Lloyd Cromwell Griffiths
+- Sultan Ojjeh - TAG
+- Paul Walsh - Executive Chairman, McLaren Group
+- Nick Collins - CEO, McLaren Group 
+- Zak Brown - CEO, McLaren Racing
+
+**C Suite**
+- CEO: Zak Brown 
+- Team Principal: Andrea Stella 
+- Chief Financial Officer: Laura Bowden 
+- Chief Communications Officer: Steve Atkins
+- Chief People's Officer: Daniel Gallo 
+- Chief Marketing Officer: Louise McEwen 
+- Chief Business Affairs Officer: Alessandro Alunni Bravi 
+- Co-Chief Commercial Officer (Partnerships): Matt Dennington
+- Co-Chief Commercial Officer (Business Development): Nick Martin
+- Chief of Staff / Executive Director, Business Strategy: Chloe Todd 
+
+**Directors**
+- Chief Operating Officer: Piers Thynne 
+- Chief Designer: Rob Marshall 
+- Racing Director: Randy Singh 
+- Technical Director - Aerodynamics: Peter Prodromou 
+- Technical Director - Performance: Mark Temple 
+- Technical Director - Engineering: Neil Houldey 
+- Executive Director, Programmes and Production: Ross Hood
+- Executive Director, Performance Technology & Systems: Dan Keyworth
+
+**Design Office**
+- Technical Director - Engineering: Neil Houldey 
+- Director of Vehicle Design: Mark Ingham 
+- Deputy Chief Designer: Andrew Parker
+
+*Head of Monocoque Design:* Mark Childs 
+  - Senior Specialist, Monocoque Installation: Martyn Lloyd
+
+*Head of Bodywork Design:* Nicholas Brown
+
+*Head of Suspension Design:* Andrew Parker
+- Deputy Head of Suspension Design: Chris Wilson
+- Senior Suspension Design Engineer: Emmanuel Avril
+- Senior Suspension Design Engineer: Nik Stamenov
+
+*Head of Transmission Design:* James Manning
+- Head of Engineering Reliability & Structures: Rob Hansen 
+- Head of Mechanical Systems: Phillip Gallagher
+- Head of Materials: Richard Jenkins 
+- Head of Research and Development Design: Tony Franklin
+
+*Principal Engineer, Concept and Layout:* Garry Chow
+- Principal Engineer, Composite Design and Technology: Steve Foster
+- Principal Engineer, Structures: Carlo Boldetti
+
+**Aerodynamics**
+- Technical Director - Aerodynamics: Peter Prodromou 
+- Senior Director of Aerodynamics: Guisseppe Pesce 
+- Head of Aerodynamic Analysis and Development: Mariano Alperin Bruvera 
+- Head of Aerodynamic Operations: Francesco De Cola 
+- Head of CFD: Julien Hoessler
+- Head of Aerodynamic Performance: Luigi de Martino Norante
+- Head of Surfacing, Model Design and CAD: Stefano Bortesi
+  
+*Principal Aerodynamics - Front:* Jonathan Pegrum 
+- Principal Aerodynamicist - Rear: Luca Crosetta
+- Principal Aerodynamicist - Concept: Jakob Mercanti 
+- Principal Aerodynamicist: Gary Ahlin 
+- Principal Aerodynamicist: Phillip Doherty
+- Principal Aerodynamicist: James Ingles 
+- Principal, Aerodynamics Design Leader: Richard Cree
+- Principal Aerodynamicist: Angus. R
+
+*Aero Project Leader:* Brian Gruncell 
+- Aero Project Leader: Jon Bissell  
+- Aero Project Leader: Charles Osio
+- Aero Project Leader: Eric Lacote
+- Aero Project Leader: Petr Paliza 
+- Aero Project Leader: Laurent Dalla Longa
+- Aero Project Leader: Demian Wieland
+- Aero Project Leader: Marcus Kostyra
+- Aero Project Leader: Mark Davies
+- Aero Project Leader: Richard Cannon  
+- Aero Project Leader: Kunz Chow   
+- Aero Project Leader: Zabair Asgar  
+- Aero Project Leader: Matteo Sansavini  
+- Aero Project Leader: Roberto Alejandro Figueroa
+- Aero Project Leader - Trackside: Alexander Kopanakis
+
+*CFD Project Leader:* Adam Swift
+
+**Vehicle Performance**
+- Technical Director - Performance: Mark Temple 
+- Director of Vehicle Performance: Jonathan Marshall  
+- Director of Research and Technology: Koen Matthys 
+- Head of Vehicle Dynamics: Mike Law 
+- Head of Brake Performance: Stuart Davis 
+- Head of Tyre Modelling and Analysis: Nicholas Cooper 
+- Head of Simulation Engineering: Mark Potter 
+- Head of Vehicle Modelling: James Miskin 
+- Head of Reliability (Process & Strategy): Alex Varnava 
+- Head of Electronics: Stephen Watt
+- Senior Principal - Innovation: Peter Brice 
+- Tyre Modelling & Performance Team Leader: Peter Hewson 
+
+**IT & AI**
+- Director of Performance Software and Data Science: Ian Meyers 
+- Head of Software and Data Science Platforms: Nathan Yendall 
+- Head of Product Management: Richard Nicholson
+- Head of Data Science: Andrew McHutchon
+- Principal Software Engineer: Aron Phillips
+- Principal Software Engineer: Chris N.
+- Lead Software Engineer: Matt Davidson
+
+**Operations**
+- Executive Director, Production and Programmes: Ross Hood 
+- Operations Director: Jono Brooks 
+- Director, Quality & Operational Performance: Sam Boulton
+- Director, Composite Production: Andy Towersey
+- Director, Machining and Addictive Manufacturing: Spencer Ford 
+
+*Associate Director, Composites:* Matthew Wells  
+- Principal Engineer: Composite Design and Technology: Steve Foster 
+- Principal Design Engineer: Andy Hallas 
+- Head of Materials: Richard Jenkins 
+- Head of Procurement: Andy Herr
+
+**Race Team**
+- Racing Director: Randy Singh
+- Sporting Director: Will Courtenay
+- Director, Support and Logistics: Paul Barnes
+- Director, Car Operations and Engineer: Charlie Hooper
+- Director, Race Engineering: Will Joseph
+- Associate Director, Race Engineering: Adrian Goodwin 
+- Associate Director, Performance Engineering: Andrew Jarvis
+- Lead Race Strategist: Oli Cartlidge
+- Chief Mechanic: Kari Lammanranta
+
+*Team Lando*
+- Race Engineer, Norris: Will Joseph
+- Performance Engineer, Norris: Andrew Jarvis 
+- Trackside Control Engineer: Peter Ladocsi
+- No1 Mechanic, Norris: Kyle Moreira 
+- Race Strategist: George Simmons
+
+*Team Piastri*
+- Race Engineer, Piastri: Tom Stallard
+- Lead Performance Engineer, Piastri: Henry Fidler 
+- Performance Engineer, Piastri: Amir S.
+- No1 Mechanic, Piastri: Phil McWilliams
+
+---
+
+Racing Bulls
+   
+**Ownership:** Red Bull GMBh (100%) - Chalerm Yoovidhya 51%, Mark Mateschitz 49%
+
+**Executive Leadership**
+- Red Bull Managing Director: Oliver Mintzlaff
+- CEO: Peter Bayer 
+- Team Principal: Alan Permane
+- Chief Technical Officer: Tim Goss
+- Technical Director: Dan Fallows 
+- Operations Director: Matteo Piraccini
+
+**C - Suite (Share some staff with Red Bull)**
+- Marketing and Communications Director: Fabian Wrabetz 
+- Head of Legal: Riccardo Fecchio
+- Head of HR: Laura Giampaoli 
+- Head of Commercial: Tomek Kowal
+- Head of Communications: Alexandra Horton
+- Head of IT: Raffaele Boschetti
+
+**Design**
+- Chief Designer: Paolo Marabini 
+- Head of Composite Design: Peter Marshall
+- Head of Mechanical Design: Marzio Dellacasa 
+- Head of Structural Engineering & RD: Carlo Annicchiarico
+- Head of Concept Design: Tim Springett
+- Head of Mechanical Design: Livio Galassi
+
+*Head of CAD / CAM:* Matteo Monduzzi 
+- Team Leader - Chassis Design: Francesc Xavier Carreras Juzgado
+- Team Leader - Bodywork: Yuri Sarnari
+- Team Leader - Stress Analysis: Stefano Petrella
+- Team Leader - Wings: Paolo Cavuto
+- Team Leader - Systems Design: Adam Bailey
+- Team Leader - R&D Stress: Giuseppe Stiscia
+- Team Leader - Forecast Engineering: Roberto Paduano
+
+*Principal Engineer - Engineering Strategy:* Trygve Rangen
+- Principal Engineer - Technical Regulations: Nicholas Ball 
+
+**Aerodynamics**
+- Head of Aerodynamics: Guru Johl
+- Chief Aerodynamicist: Tom Coughlan 
+
+*Principal Aerodynamicist:* Lasse Christopherssen 
+- Head of Aerodynamic Performance: Ali Khalid 
+- Head of Aerodynamic Operations: David Snodgrass 
+- Head of Aerodynamic Quality and Integration: Steve Liddle 
+- Head of Aerodynamic Design: Marcus Jones
+- Head of CFD: Silvio Lorenzo
+
+*Head of CFD Transformation and Innovation:* Marco Hahn 
+- Wind Tunnel Engineering Manager: Matthew Ashford
+
+*Team Leader - Development:* Ed P.
+- Team Leader: Ben Speed
+- Team Leader - Development: Leigh Evans
+- Team Leader - Development: Jordan Hislop 
+- Team Leader - Thermal: Matteo Franchetta 
+- Team Leader - Analysis and Correlation:  
+
+*Deputy Team Leader:* Oliver Rose
+
+**Vehicle Performance**
+- Head of Vehicle Performance: xx 
+- Deputy Head of Vehicle Performance: Claudio Balestri 
+- Principal Engineer - Performance and Simulation: Ian Fraser 
+- Head of Tyre Engineering: Charlie Constant 
+- Head of Technology: Jason Mowbray 
+- Head of Testing & Simulation: Marco Arini
+- Head of Electronics: Alessandro Poggi 
+
+*Team Leader - Control Systems:* Luca Montuschi 
+- Team Leader - Data Science: Giuseppe Lisi 
+- Simulation Group Leader: Johann Richter
+
+**Race Team**
+- Director, Trackside Engineering: Jonathan Eddolls 
+- Sporting Director: Marco Perrone 
+- Chief Race Engineer: Mattia Spini
+- Chief Strategist: Mattieau Dubois
+- Chief Mechanic: Domiziano Facchinetti
+
+*Race Engineer, Lawson:* Alexandre Iliopolous 
+- Performance Engineer, Lawson: Tom Canal
+
+*Race Engineer, Lindblad:* Pierre Hamelin
+- Performance Engineer, Lindblad: 
+
+*Production and Supply Chain Director:* Stefano Natali 
+- Car Build Specification Manager: Gianvinto Amico 
+- Head of Quality: Andrea Marangon
+- Head of Production: Simone Ballia
+- Head of Production Engineering: Marco Vergani 
+- Head of Composite Production: Simone Gison
+- Head of Purchasing: Paolo Cerrone
+
+---
+
+Audi
+  
+**OWNERSHIP = AUDI AG, Volkswagen Group (75%) & QATAR INVESTMENT AUTHORITY (25%)**
+
+**BOD**
+- Chair: Gernot Döllner (AUDI)
+- Mattia Binotto (CEO)
+- Michael J. Moritz (COO)
+- Markus Massouh (CFO)
+- Jürgen Rittersberger (AUDI)
+- Ugo Arzani (QIA)
+
+**Executive Team**
+- Chairman: Gernoet Döllner
+- Head of F1 Project & Team Principal: Mattia Binotto
+- Racing Director: Alan McNish
+- Technical Director: James Key 
+
+**C Suite**
+- Chief Operating Officer & General Counsel: Michael Moritz 
+- Chief Commercial Officer: Stefano Battiston
+- Chief Financial Officer: Markus Massouh 
+- Chief Communications Officer: Florian Büngener
+- Chief Human Resources Officer: Stefanie Troebs 
+- Chief Programmes Officer: Stefan Strahnz 
+
+*Head of IT:* Thomas Hartmann
+- Marketing and Brand Director: Benjamin Reininger
+- Partnerships Director: Matthew Meadows
+- Commercial Strategy Director: Aziz Rajab
+- Creative Director: Michael Kaelin
+- Chief Press Officer: Will Ponissi 
+- Head of Partnership Acquisition: Sander Kruis
+
+**Design Office**
+- Chief Designer - Chassis: Eric Gandelin
+- Chief Designer - Powertrain Integration: Stefano Sangiorgi
+- Chief Designer - Reliability and Engineering Process: Robert Miller
+- Senior Engineering and FIA Coordinator: Lawrence Hodge 
+- Head of Technical Operations: Guisseppe Papagni
+- Head of Strategic Planning: Oliver Grossman
+
+*Head of Composite Design:* Ingo Hander
+- Team Leader - Bodywork Composite Design: Andreas Keck
+- Team Leader - Wings: Davide Fumagalli
+- Senior Composite Designer: Dario Plank
+- Senior Composite Designer: Rodion Haliplii
+- Senior Composite Designer: Roberto Montefredini
+- Senior Composite Designer: Roland Tarcsai
+- Senior Composite Designer: Juan González Pérez
+ 
+Slawomir Madaj?
+*Head of Structural Design:* Giacomo Daini 
+- Head of Weight Management: Silvan Rindisbacher  
+- Team Leader - Aeroelasticity: Silvio Sanvenero
+- Team Leader - Structural Design: Lorenzo Vuoto 
+- Senior Structural Engineer: Jurrien Koeman
+- Senior Structural Engineer: Charlie Bates
+
+*Head of Suspension:* Michael Lehmann
+- Team Leader - Suspension: Joshua Shears
+- Team Leader - Suspension: Enrique Aguinaga
+- Senior Mechanical Design Engineer: Laure Delvalez
+- Senior Mechanical Design Engineer: Jan Willem Jansen
+- Senior Suspension Design Engineer: Markus Ketonen
+
+*Head of Mechanical Systems Design:* Loris Trebucci 
+  - Team Leader, Mechanical Systems: Manuel Greiner 
+
+*Head of Mechanical Integration:* Daniel Ouro
+
+*Team Leader - Gearbox:* Carys Conlon
+
+*Head of DMU:* Andrea Sgamma
+- Snr Mechanical Systems Engineer: Manuel Greiner
+
+**Aerodynamics**
+- Head of Aerodynamic Development: [Ionas Veloudis]
+- Head of Aerodynamic Operations and Technology: Alessandro Cinelli 
+- Chief Aerodynamicist: Tony Salter 
+- Office Managar: Patrick Fluri
+
+*Principal Aerodynamicist:* Marco Senarigo 
+- Principal Aerodynamicist: Simon Ritchie 
+- Principal Aerodynamicist: Evangelos Arvanitakis
+- Principal Aerodynamicist: Jean Farce 
+- Principal Aerodynamicist: Tomo Sato 
+- Principal Aerodynamicist: Peter Machin
+
+*Aerodynamic Development Manager:* Markus Rauh 
+- Deputy Head of Aerodynamic Development: Mattieu Chaplot 
+
+*Head of Wind Tunnel:* Alessandro Aquili
+- Head of Aero Performance: Killian Mayr 
+- Senior Aerodynamic Performance, Project Leader: Marialisa Ponzevoni
+- Head of Aero Operations: Reto Trachel
+- Head of Systems: John Gleeson 
+- Head of Aero Software: Francesco Del Citto 
+- Head of CFD: Riccardo Baudille 
+- Value Stream Leader: Christian Kleiner
+
+*Team Leader:* François Perbet
+- Team Leader: Stephen Dibb
+- Team Leader: Luca Gasparini
+- Team Leader: Martin Schudel 
+- Team Leader, Digital Solutions: Jonathan Caterall
+- Team Leader, CFD Methodology: Fabrizio Tessicini
+- Project Leader, CFD Methodology: Javier Martinez Rubio 
+- Team Leader: Vitalij Bauer
+- Team Leader: Norman del Puppo
+- Team Leader: Maximilian Hirsch
+- Team Leader - Aero Design: Dominik Hasler
+- Aerodynamic Performance Project Leader: Diego Spreafico 
+
+*Senior Aerodynamicist:* Alvaro Gomez Cortes
+- Senior Aerodynamicist (Correlation): Jonas Pangerl
+- Senior Aerodynamicist: Vanessa Guarino
+- Senior Aerodynamicist (Development): Harry Kounenis
+- Senior Aerodynamicist: Victor Cedrell Svensson 
+- Senior Aerodynamicist (Trackside): Nikolaos Karras
+- Senior Aerodynamicist (Concept): Ivan Abreu
+- Senior Aerodynamicist (Performance): Luca Malvestuto Grilli
+- Senior Aerodynamicist: Chris Sheffer
+- Senior Aerodynamicist: Alvaro Gomez Cortes
+
+*Lead Aerodynamic Design Engineer:* Pedro Gomez
+- Lead Aerodynamic Design Engineer: Robert Jefferies 
+- Lead Aerodynamic Design Engineer: Bernhard Bockle 
+- Senior Aerodynamic Design Engineer: Nicola Sardu
+
+*Software Project Leader:* Fraser Croad 
+- CFD Methodology Engineer (remote): Gautham Ramesh
+
+**Vehicle Performance**
+- Performance Director: Stefano Sordo ?
+- Head of Vehicle Performance: Andrea Ferrarelli 
+- Head of Research and Development: Iain Bomphrey 
+- Head of Vehicle Electronics and Control Systems: Damiano Molfetta
+- Dept. Head of Control Systems: Bjorn Gantz 
+
+*Head of Vehicle Dynamics:* Antoine Brissat
+
+*Head of Modelling and Simulation:* Robert Scott Bigler 
+- Head of Simulator: Samuel Gacka 
+- Team Leader, Vehicle Modelling: Arnoldo Badillo
+- Team Leader, Vehicle Simulation: Fabrizio Donati
+
+*Head of Race Performance:* Juan Rodriguez Gonzalez 
+
+*Head of Digital Solutions:* Rolf Henniger 
+
+*Head of Tyre and Brake Performance:* Andreas Rosch 
+
+*Head of Simulator:* Samuel Gacka 
+
+*Head of Powertrain Optimisation:* Federico Rossi
+
+*Team Leader, Performance Development:* David Loppini
+- Team Leader, R&D Engineering: Benjamin Koch
+
+*Senior Research and Development Engineer:* Martin Malinowski
+- Senior Performance and Data Analysis Engineer: Roberto Costa
+
+*Senior R&D Software Engineer:* Yury Mishin
+
+*Simulator Development Engineer:* Riccardo Porta
+
+**Race Team**
+- Sporting Director: Inaki Rueda
+- Trackside Engineering Director: Giampaolo Dall'ara
+- Team Manager: Lee Stevenson
+- Head of Race Engineering: Alex Chan
+
+*Head of Race Car Operations:* Luigi Valentino 
+- Head of Track Operations: Jorn Becker 
+- Head of Reliability and Operations: Josep Ferrer 
+- Head of Race Strategy: Rithvik Dhananjay Reddy 
+- Chief Mechanic: Matt Caller
+
+*Race Engineer, Hulkenberg:* Steven Petrik
+- Performance Engineer, Hulkenberg: Domenico Desiante
+- Race Engineer, Bortoleto: Jose Manuel Lopez
+- Performance Engineer, Bortoleto: Xavier Valls Santafe
+
+*Senior Race Engineer:* Roberto Hernandez Garcia?
+- P = Micky Condolf
+
+*Head of TPC Track Operations:* Patrick Ott
+- Chief Mechanic, TPC: Adrian Sucak 
+
+*Race Team Operations Manager:* Dario Pompei
+- Mission Control Leader: Riccardo Penteado
+
+**Production**
+- Supply Chain Director: Voigt Marcel
+- Production Director: Ernst Keller?
+
+*Head of Inventory:* Andreas Glitsch 
+- Head of Production Engineering: Giuseppe Zanuccoli
+- Head of Composite Production: David Lange 
+- Head of Procurement: Sandra Pock
+- Head of Quality: Christoph Eichenberg 
+- Head of Logistics: Björn Brickwedde
+- Head of Cost Cap: Thomas Vossaert 
+- Head of Store: Giuseppe La Licata 
+- Head of Mechanical Fabrication Pattern: Maurice Salden 
+- Head of Prototype Workshop: Patrick Hirsch 
+- Head of Purchasing: ?
+
+*Team Leader - Pit Equipment:* Valentin Müller-Judex 
+- Sub Assembly Manager: Christian Bauer
+- Senior Projects Engineer: Peter Herrsche
+
+**Engine / Neuberg**
+- Chief Technical Officer: Stefan Dreyer 
+- Chief Operating Officer: Christian Foyer
+- General Secretary: Christian Bechheim
+- Advisor: Wolf Zimmermann 
+
+*Quality Director:* Klaus Spang 
+- Programme & Supply Chain Director: Stefan Fensterer
+- Track Operations Director: David Mart 
+
+*Head of ICE:* Lars Schmidt
+- Head of ICE, Design and Development: Steffen Clement
+- Head of ICE. Performance Development: Walter Citterio
+- Head of Testing Development & ICE Durability: Wolfgang Kotauschek 
+- Team Leader, ICE Gas Exchange: Laurent Journo
+- Team Leader, ICE Simulation: Gianni Lamonaca
+- Team Leader, Single Cylinder: Sebastian Bucherer
+
+*Head of MGU Development:* Christoph Bals
+
+*Head of ERS Development:* Stefan Aicher 
+
+*Head of Energy Storage Development:* Benedikt Kirschner
+
+*Head of Electronics and Software:* Boris Baskevitch 
+
+*Head of Gearbox:* Markus Krönert
+
+*Head of Power Unit Controls:* Marc Wewel 
+
+*Head of Regulatory Matters:* Tristan Summerscale
+
+*Senior Expert (Materials):* Marco Scourtis
+- Programme Manager: Luca Monterosso 
+- Programme Manager: Robert Swindells
+- Head of Procurement: Stephen Brown
+
+Marcio Pierobom
+Kenichi KONO
+
+*Head of IT:* Cihan Bektas
+
+**UK**
+Jonathan Catterall
+Charlie Bates
+
+**Old Guard**
+- Signature Programmes Director: Beat Zehnder
+- Senior Manager, Executive Services: Anita Audemars - Zimmereli 
+- Head of Group Brand and CI: Markus Hopperger
+
+*Head of Track Experience and Hospitality:* Alex Trown
+
+---
+
+Alpine
+  
+**Ownership:** Renault Group, Otro Capital
+
+**Board of Director's**
+- Alec Scheiner (Otro)
+- Duncan Minto (Group Renault, CFO)
+- Michaell Smith (Alpine, General Council)
+- Capucine Lorenzi (Alpine, COO)
+- Phillipe Kriefe (Alpine, CEO)
+
+**Executive Team**
+- Renault CEO: François Provost 
+- Alpine CEO: Phillipe Kriefe
+- Executive Advisor: Flavio Briatore
+- Managing Director: Steve Nielsen 
+- Executive Technical Director: David Sanchez 
+
+**C Suite**
+- Chief Financial Officer: Gemma Lang 
+- Human Resources Director: Solmaz Jabiri
+- Global Marketing Director: Guy Martin 
+- Chief Information Officer: Nathan Sykes 
+- Head of Communications and Digital: Sam Mallinson 
+- Head of Legal: Simon Holdsworth 
+
+**Design**
+- Technical Director - Engineering: Joe Burnell 
+- Head of Engineering: Benjamin Norton
+- Deputy Chief Engineer: Jacobo Fantoni 
+- Chief Designer: Simon Virrill 
+
+*Head of Composite Design:* Andrew Jacks        
+
+*Head of Suspension Design:* Sebastian Borgeais 
+
+*Head of Powertrain:* Adam James 
+- Head of Powertrain Design: Gary Morton
+
+*Head of Structures and Materials:* Steve Diamond 
+  - Deputy Head: Raul Fernandez
+
+*Head of Reliability:* Emma Hunter 
+
+*Lead Design Engineer, Driver Controls:* Tomonori Matsushita 
+- Lead Design Engineer: Sam Alcock
+- Lead Stress Engineer: Tom Cowan
+
+**Aerodynamics**
+- Deputy Technical Director: Jason Somerville
+- Head of Aerodynamics (Development): Kris Midgley 
+- Head of Aerodynamics (Performance and Science): Yannick Ducret 
+- Deputy Head of Aerodynamics: Ben Mallock
+- Chief Aerodynamicist: Michael Broadhurst 
+
+*Head of Aero Development:* Roger Connor O'Boyd 
+- Head of Aero Development: Kemlo Longstaff 
+
+*Head of Aero Control Systems Engineering:* Enrico Cacciatori 
+- Head of Aero Development Tools: Benjamin Hanson 
+- Head of Aero Modelling: Adam Murphy 
+- Head of Aero Performance: Julien Boehre
+- Head of Experimental Aerodynamics: Jim McManus
+- Head of Wind Tunnel Development: Mark Gilmore
+
+*Head of CFD:* Paul Cusdin 
+- Dept Head of CFD: Luke Dalby
+
+*Principal Aerodynamicist:* Andrew Cusdin
+- Principal Engineer - Regulatory Matters and Aerodynamic Liaison: Anthony Ryan 
+- Principal Engineer - Thermal Management: Steve Fenwick 
+- Consultant: Mark Hennings 
+
+*Deputy Principal Aerodynamicist:* Andrew Hammond
+- Deputy Principal Aerodynamicist: Martijn van der Berg
+- Deputy Principal Aerodynamicist: Richard Farely 
+- Deputy Principal Aerodynamicist: Stuart Carlyle 
+
+**Vehicle Performance**
+- Technical Director - Performance: Ciaron Pilbeam
+- Head of Vehicle Performance: Vin Dhanani 
+- Head of Simulation: Massimo Mangia 
+
+*Head of Controls, Simulation and Modeling:* John McClogan 
+- Head of Software Engineering and Data: Jorge Belenguer
+- Head of Mathematical Modelling: Luke Bolton
+- Head of Electronics: Stephen Fraser
+- Head of Data Science: Thomas Brichard
+
+*Tyre Performance Section Leader:* 
+- Performance Development, Section Leader: Manuel Acosta Reche
+- Racing and Performance, Software Lead: Chris Beard
+- Principal Electronics Engineer: Andrew Main
+- Principal Software Developer: Garry Dixon
+
+**Race Team**
+- Racing Director: Dave Greenwood
+- Sporting Director: Richard Lockwood
+- Head of Race Engineering: Karel Loos
+- Head of Race Strategy: Oriol Isern 
+
+*Race Engineer, Gasly:* Josh Peckett
+- Performance Engineer, Gasly: Dominic Hale 
+- Race Engineer, Colapinto: Stuart Barlow
+- Performance Engineer, Colapinto: Cristoforo Pirro
+
+*Principal Engineer - Reliability:* Aidan Hoban 
+
+**Operations**
+- Operations Director: Ian Pearce
+- Head of Production: Vince Todd
+- Head of Build and Test: Lee Adams
+- Head of Procurement: Ross Allen
+
+---
+
+Williams
+  
+**Ownership:** Dorliton Capital (100%) - Peter de Putron
+
+**Executive Leadership**
+- Chairman: Matthew Savage
+- Chairman: James Matthews 
+- Team Principal: James Vowles
+- Chief Optimisation and Planning Officer: Piers Thynne 
+
+*Chief Operating Officer:* Manu Goel
+- Chief Operating Director: Axel Kruse
+- Chief Technical Officer: Pat Fry
+
+*Chief Financial Officer:* Romesh Jayawardene
+- Chief People's Officer: Ian Atkins
+- Chief Information and Analytics Officer: Sorin Cheran 
+- Commercial Director: James Bowler
+- Marketing Director: Marcus Prosser
+- Legal Director: Jeremy Stone
+- Head of Communications: Craig Woodhouse 
+- Head of Content: Chris Nutbeam
+- General Counsel: Alison Wood 
+- Special Advisor / Company Secretary: Mark Biddle 
+
+**Design**
+- Technical Director - Engineering: Matthew Harman 
+- Chief Engineer - FW48: Angelos Tsiaparas 
+- Chief Engineer - FW49: Dave Robson
+- Chief Engineer - Composites and Structures: Steve Winstanley 
+- Head of Vehicle Engineering: Steven Booth
+
+*Head of Chassis, Body Work and Wings:* Mark Lloyd
+- Head of Suspension, Steering and Breaks: Robert Edwards
+- Head of Quality and Structures: Lewis Butler
+- Head of Powertrain: Richard Ashford 
+
+*Principal Engineer - Structures:* Michael Prest
+- Principal Engineer - Structures: Rebecca Brodie
+- Principal Engineer - Chassis, Bodywork & Wings: Phil Ford 
+- Principal Engineer - Composites: Miles Kaye
+- Principal Engineer - Composites: Niels van Kuijk 
+- Principal Engineer - Systems: Daniel Orme
+- Principal Engineer - Driver Controls: Phillipa Johnson
+- Principal Design Engineer: Josef Jahelka??
+
+*Head of Product Ownership:* Richard Sworder
+
+*Senior Methods Engineer:* Gwyn Upjohn
+
+**Aerodynamics**
+- Head of Aerodynamics: Adam Kenyon
+- Chief Aerodynamicist: Juan Molina 
+
+*Head of Aerodynamic Delivery:* Matthew Crosse 
+- Head of Aerodynamic Technology: Hari Roberts
+- Head of Aerodynamic Development: Claire Simpson
+
+*Head of Trackside Aerodynamics:* Russell Strachan
+- Head of CFD: Rai Alsemgeest
+- Head of Aero Correlation and Methods: Deepak Selvan
+- Head of Aero Software: Rob Williams 
+- Head of Aero Test Facilities: Neil Hayes 
+- Wind Tunnel Systems Manager: Mich Hackwood 
+- Head of Aerodynamic Operations: Matt Loveridge
+- Head of Aerodynamic Concept Design: Nick Jefferies
+- Head of Model Design: James Phillips 
+
+*Principal Aerodynamicist - Future Cars:* Georgios Simos
+- Principal Aerodynamicist: Cornelis van Steenbergen
+- Principal Aerodynamicist: Richard Barnwell?
+- Principal Aerodynamicist: Mathew Salisbury 
+- Principal Aerodynamicist: Ettore Griffini x 
+- Principal Aerodynamicist: James Mackenzie
+- Principal Aerodynamicist: Jan Tomazewski
+
+*Principal Aerodynamic Programme Engineer:* Duncan Barr
+- Principal Aerothermal Engineer: Mathonwy Thomas
+
+*Aero Project Leader:* Akash Morar
+- Aero Project Leader: Xavier Ballesta
+- Aero Project Leader: Ivan Roldan
+- Aero Project Leader: Michael Bamforth
+- Aero Project Leader: Sotirious Androulakis
+- Aero Project Leader: Mark Green
+- Aero Project Leader: Hwo Won Kim 
+- Aero Project Leader: Thomas Blanchier
+- Aero Project Leader: Pete Griffiths
+- Aero Project Leader: Gabriele Gaggini
+
+**Vehicle Performance**
+- Head of Performance Systems: Richard Frith 
+- Head of Performance Optimisation: Fred Judd
+- Chief Engineer - Vehicle Technology: Dan Milner
+- Chief Engineer - Computing Science & Vehicle Dynamics: Fabrice Moncade 
+- Head of Vehicle Technology: Dan South 
+
+*Head of R&D, Test and Assembly:* Dr John Ingle 
+
+*Head of Tyre Performance:* Jack Purcell 
+- Team Leader Tyres: Chris Doherty
+
+*Head of Vehicle Performance Software:* Jonathan Smith 
+
+*Head of Vehicle Dynamics Software:* Phillip Tomasson
+- Principal Control Systems and Software Engineer: Dave Walker 
+
+*Head of Electronics and Software:* Stephen R. 
+
+*Head of Systems Simulation:* Greg Rapson
+  - Principal Systems Simulation Engineer: Khalid Ismail
+
+*Head of Product Development:* Ben Buckley
+
+*Test and Validation Manager:* Ian Cooke 
+
+**Operations / Production**
+- Chief Operating Officer: Axel Kruse
+- Operations Director: Scott Williams 
+- Inventory and Logistics Director: Tom Pattinson
+- Head of Operational Programme: James Green
+- Head of Engineering Transformation: Matthew Hibbert
+- Head of Methods Engineering: Gareth Read
+- Head of Design Quality: Lewis Butler
+
+*Principal Materials Engineer:* Victor Ofoe 
+- Principal Design Quality Engineer: Roy Wilkinson
+- Principal Design Engineer - Laminate Engineering: Lee Chidgey 
+
+**Race Team**
+- Sporting Director: Sven Smeets
+- Team Manager: Dave Redding 
+- Chief Trackside Engineer: Paul Williams 
+- Chief Engineer - Trackside: Michael Manning
+- Head of Race Strategy: Charles Antoine Florentine
+- Chief Mechanic: Jonny Goodenough
+
+*Race Engineer, Albon:* James Urwin
+- Performance Engineer, Albon: Luke Dardis
+
+*Race Engineer, Sainz:* Gaetan Jego
+- Performance Engineer, Sainz: 
+
+*Race Engineer (alternate):* Ed Regan 
+
+**Heritage**
+Jonathan Carter
+Christopher Brawn
+Mark Loadsby 
+
+---
+
+Haas
+  
+**Ownership = Haas Automation (100%) - Gene Haas**
+
+**Executive Management**
+- Owner and Chairman: Gene Haas
+- Team Principal: Ayao Komatsu
+- Technical Director: Andrea De Zordo 
+- Chief Operating Officer: Joe Custer
+- Operations Director: Stephen Mahon
+- Toyota Project Manager: Pierre Genon 
+
+**C Suite**
+- Chief Financial Officer: Alan Chan
+- Chief Information Officer: Gary Foote
+- Communications Director: Stuart Morrison 
+- Marketing Director: Mark Morrell 
+- Marketing Operations Director: Francois Puentes
+- Human Resources Director: Lisa Old
+
+**Design**
+- Chief Designer: Tom Coupland
+- Deputy Chief Designer & Head of Structures: Jonathan Heal 
+- Design Office Manager: Federico Sala 
+
+*Head of Composite Design:* ?
+- Head of Mechanical Systems: Christiano Altan 
+- Head of Reliability: Scott Vizinowski 
+- Head of Technical Innovation: Roberto Stefanelli 
+
+*Senior Mechanical Design Engineer:* Piero De Lorenzi
+
+*Head of CAE Systems:* Paul Barker
+
+**Vehicle Performance**
+- Performance Director: Damien Breyshaw
+- Performance Development Manager: Maurizio Bocchi 
+- Head of Controls and Systems: Nick Brown 
+- Head of Tyre Science: Giuseppe Naselli
+- Head of Software Engineering: James Charlesworth
+- Team Leader - Simulator: Erik Newton
+- Team Leader - Performance Simulation: Federico Sanchez Montellon
+- Team Leader - R&D: Keith Badger
+- Team Leader - Tyre Science: Vasilis Tsinias 
+
+*Simulation Development Engineer:* Diego Botin Sanabria 
+
+*Junior Software Engineer:* Eamonn Broderick
+
+**Aerodynamics**
+- Head of Aerodynamics: Davide Paganelli
+- Chief Aerodynamicist: Rhodri Moseley 
+- Principal Aerodynamicist: Simone Benelli 
+- Principal Aerodynamicist: Antonio De Lauretis
+- Car Regulation & Technical Manager: Christian Cattaneo
+- Head of CFD: Mario Testa 
+
+*Team Leader:* Luca Metelli
+- Team Leader: Paul Sutton
+- Team Leader: Marcello Pellis 
+- Team Leader (Performance): Stefano Chiazza 
+- Team Leader (CFD): Gemma Damiani 
+- Team Leader (Thermal): Matteo Maccapani
+
+*Senior Aerodynamicist:* Domenico Marino
+
+*Aerodynamics Data Scientist:* Francesco Polizzi
+
+*Aerodynamics Designer:* Edmond Bolieau 
+
+**Operations / Production**
+- Procurement Director: Matt Croft 
+- CNC Shop Manager (US): Greg Syverson
+- Stores and Inventory Manager: Ryan Dyer
+- Freight and Logistics Manager: Peter Wright
+- Sub Assembly Manager: Karl Wilson
+- Production Controls and Logistics Manager (US): Justin Allman
+
+**Race Team**
+- Sporting Director: Mark Lowe
+- Chief Race Engineer: Francesco Nenci 
+- Head of Car Engineering: Hoagy Nidd 
+- Chief Mechanic: Toby Brown
+
+*Head of Strategy and Driver Development:* Edward Brand
+- Lead Systems Engineer: Kane Hemmant 
+- Trackside Operations Manager: Neil Hanley
+
+*Race Engineer, Ocon:* Laura Muller
+- Performance Engineer, Ocon: 
+
+*Race Engineer, Bearman:* Ronan O'Hare
+- Performance Engineer, Bearman: 
+
+*No1 Mechanic:* Elliott Parkes
+
+Daniel Springall 
+
+**TPC**
+- Chief Engineer, TPC and Heritage: Dominic Haines 
+- TPC and Heritage, Team Manager: Lewis Raybould
+- TPC and Heritage, Lead Mechanic: Aiden Rogers 
+
+**IT**
+- Senior Partnerships Manager: Amy MacLennan
+- Senior Enterprise Applications Engineer: Anand Patel
+
+---
+
+Aston Martin
+  
+**Ownership:** 
+- AMR GP LTD (Majority)
+  - Lawrence Stroll, Silas Chou, et al.  
+- Artos Partner's (Minority) 
+- Saudi Investment Fund?
+
+**BOD**
+- Lawrence Stroll (Chairman)
+- Silas Chou
+- Jonathan Dudman
+- Michael de Picciotto
+- Scot French
+- Ibrahim Almojel (Saudi Investment Fund)
+- Chad Hutchinson (Arctos)
+
+**Executive Team**
+- Executive Chairman: Lawrence Stroll
+- Team Principal: Adrian Newey 
+- Chief Partnerships Officer: Andy Cowell
+- Managing Director, Commercial: Jefferson Slack
+- Managing Director: Robert Yeowart 
+- Executive Technical Director: Bob Bell 
+
+*Chief Trackside Officer:* Mike Krack
+- Chief Technical Officer: Enrico Cardile
+- Chief Operating Officer: Paul Field
+
+**C Suite**
+- Chief Information Officer: Fabrizio Pilotti 
+- Chief Communications Officer: Luke Skipper
+- Chief Marketing Officer: Rob Bloom 
+- Chief Human Resources Officer: Sophie Ackland 
+- Legal Director: Oliver Rumsey
+
+**Design**
+- Engineering Director: Luca Furbatto 
+- Chief Designer: Duncan Elliott
+- Deputy Chief Designer (Composites): Bruce Eddington
+- Deputy Chief Designer (Mechanical): Dan Carpenter 
+- Design Manager: Yuichi Yoshinaga
+
+*Head of R&D:* Andrew Brown
+  - Lead Design Engineer Capabilities: Jonathan Blanco
+  - Lead Design Engineer Capabilities: Wilfried Grondin
+
+*Head of Composite Design:* Bruce Eddington 
+- Senior Composite Design Engineer: Jacob Murphy
+- Senior Composite Design Engineer: Steve Holmes
+- Senior Composite Design Engineer: Matt Parker
+- Senior Composite Design Engineer (Transmission): Alexander Vaughan - Thomas
+  - Senior Composite Design Engineer: Gary Marchant
+
+*Head of Mechanical Design:* Dan Carpenter
+- Lead Suspension Engineer: David Devine 
+- Lead Mechanical Design Engineer (Suspension Corners): Ben Soldano
+- Senior Mechanical Design Engineer (Front Suspension): Cameron Brown
+- Senior Mechanical Design Engineer (Rear Suspension): Jack Simmons
+- Senior Mechanical Design Engineer (Driver Controls): Sebastian Johnson
+
+*Head of Structures and Materials:* Simon Gardner 
+- FEA Team Leader: Anthony Britton
+- Lead Stress Engineer: Joel Szymanski
+- Senior Stress Engineer: Daniel Howard
+- Senior Stress Engineer: Maurizio Ottavianelli
+- Senior Stress Engineer: Nicola Fois 
+- Senior Stress Engineer: Wan Zolkifli
+- Senior CAE Engineer: Andrea Scotto
+
+*Head of Transmission Design:* Stuart Boulton 
+- Head of Hydraulics Design: Phil Mackereth
+  - Lead Transmission Design Engineer: Constantine Friedrich 
+  - Senior Hydraulics Design Engineer: Joe Coakley
+
+*Head of Test and Development:* 
+- Senior Project Designer: Monty Jeacock-Fewtrell
+
+*Lead Design Engineer:* Matthew Sellick
+
+**Aerodynamics**
+- Aerodynamics Director: ?
+- Head of Aerodynamics: ?
+- Chief Aerodynamicist: Giacchino Vino 
+- Deputy Chief Aerodynamicist: Michael Hart 
+- Aerodynamics Design Manager: Matthew Allnutt
+
+*Head of Aerodynamic Integration:* Andrew Morgan
+- Head of Aerodynamic R&D: Mark Gilmore
+- Head of Correlation and Applications: Mehmet Keyifli
+- Head of Experimental Operations: Neil Carlisle
+- Head of CFD: Gaétan Didier
+- Head of Surfacing: Emma Nicholson
+  - Lead Engineer, Surface Design: Pablo Vazquez Fernandez
+
+*Principal Aerodynamicist:* Thijs van Rees 
+- Principal Aerodynamicist: Martin Owen
+- Principal Aerodynamicist: James Durham 
+- Principal Aerodynamicist - Thermal Management: Giacomo Sammons 
+- Principal Aerodynamicist: Alex Psedmanowski. 
+
+*Head of Wind Tunnel Engineering:* Jonathan Williams 
+- Head of Wind Tunnel Systems: Matthew Almond
+  - Lead Design Engineer, Capabilities: Jonathan Blanco
+  - Senior Wind Tunnel Engineer: Sébastien Couzian
+
+*Lead Experimental Aerodynamicist:* Paul Verona
+- Lead Experimental Aerodynamicist: Jon Curry 
+- Lead CFD Software Developer: Jan Krautter 
+
+*Aerodynamics Group Leader:* Nick Beattie
+- Aerodynamics Group Leader: David Viewing
+
+*Lead Design Engineer, Aerodynamics:* Shannon Hodges
+
+*Senior Aerodynamicist:* James Dalling
+- Senior Aerodynamicist: Francis Harold 
+- Senior Aerodynamicist: James Moruzzi
+- Senior Aerodynamicist: Jesus Pozo 
+- Senior Aerodynamicist: Eleanor Rajartnam
+- Senior Aerodynamicist: Alexandre S. 
+- Senior Aerodynamicist: Cedric van den Berg
+
+**Vehicle Performance**
+- Performance Director: Marco Fainello
+- Deputy Performance Director: Tim Wright
+- Simulation and Modelling Director: Gilles Wood
+- Chief Tyre Performance Engineer: Jun Matsuzaki ??
+- Chief Engineer - Methodology: Nathan Sykes
+- Deputy Chief Engineer - Performance: Craig Gardiner 
+
+*Head of Tyres:* Ben Michell
+- Head of Research and Development: Andrew Brown
+- Head of Performance Software: Edward Kavanaugh 
+- Head of Performance Simulation: Juan Pablo Ramirez
+- Head of Development Operations: Phil Kildea   
+- Head of Vehicle Science: Robbie Stevens 
+- Robin Gearing?
+
+*Lead Vehicle Performance Engineer:* Luke Roberts
+
+**Race Team**
+- Sporting Director: Andy Stevenson
+- Chief Engineer - Trackside: Chris Cronin
+- Head of Race Strategy: Peter Hall
+- Senior Race Strategist: Nick Roberts
+
+*Chief Mechanic:* Curtis Stones
+- Head of Trackside Integration: Joe Robinson
+
+*Snr Race Engineer, Alonso:* Chris Cronin
+- Race Engineer, Alonso: Andrew Vizard
+- Performance Engineer, Alonso: ?
+- No1 Mechanic, Alonso: Mikey Brown 
+
+*Snr Race Engineer, Stroll:* Gary Gannon 
+- Race Engineer, Stroll: Stephen Glass
+- Performance Engineer, Stroll: ?
+- No1 Mechanic, Stroll: Scott Taggart
+
+*Head of Control Systems:* Daniel Priestman
+- Head of Electronics: Charlie Blackwell 
+- Chief Software Engineer: Matthew Leatham  
+- Head of Race & Trackside Logistrics: Franco Massaro 
+
+**Operations**
+- Chief Operating Officer: Paul Field
+- Programme Director: Jack Dugdale
+- Supply Chain Director: James Ollife 
+- Facilities Director: Terry Brice
+
+*Stores and Internal Logistics Manager:* Emma McKay
+- Head of Programmes: Nick Smith
+- Head of Quality: Terry Murphy
+- Head of Supply Chain Process: Chris Shortt
+- Head of Supplier Development: Scott Walker 
+- Head of Production Control: Brett Castle 
+- Head of Composite Manufacturing: Rowan Cartensen
+- Had of Model Manufacturing: David Underhill
+- Head of Composite and ADM Procurement: Megan Endean
+
+*IT Application Director:* Andrew Hewitt 
+
+---
+
+Cadillac
+  
+**Executive Team**
+- CEO: Dan Towriss
+- Team Principal: Graeme Lowden 
+- Executive Technical Advisor: Pat Symonds
+- Chief Technical Officer: Nick Chester
+- Chief Operating Officer: Rob White
+- Global Head, Commercial Strategy: Tyler Epp 
+
+**C Suite**
+- Chief Brand Advisor: Cassidy Towriss
+- Chief Financial Officer: Laura Sturland
+- Chief Legal Officer: Caroline McGrory 
+- Chief Marketing Officer: Ahmed Iqbal 
+- Chief Commercial Officer: Lauren Texeira 
+- Chief People's Officer: Chloe Mills
+- Chief Information Officer: Chris Green 
+- Chief Partnerships Officer: Willem Dinger
+- Partnership Acquisition Director: Patrick Jags 
+
+**Design Office**
+- Chief Designer: John McQuilliam
+- Deputy Chief Designer: Rob Stubbings 
+- Design Office Manager: Steven Baxter
+
+*Head of Composite Design:* Phillip Eldred
+- Lead Composite Design Engineer: Charlie Martin
+- Lead Composite Design Engineer: Phil Wilson 
+- Lead Composite Engineer: Andrew Evangelou 
+
+*Head of Mechanical and Systems Design:* Jun Baba
+- Lead Mechanical Design Engineer: Bryan Andreas 
+- Lead Mechanical Design Engineer: Jonathan Wake
+- Lead Mechanical Design Engineer: Sergio Rivera
+- Senior Mechanical Design Engineer: James Ashdown
+
+*Head of Structure / Stress:* ?
+  - Lead Structural Analysis Engineer: Martijn Joosen
+  - Senior Structural Analysis Engineer: Sam Patten
+  - Senior Structures Consultant: Pedro Sousa 
+  - Senior Structures Consultant: Iñaki Madariaga
+
+*Head of Concept Design:* Brian Kinzie
+
+*Head of Power Unit Integration:* Tim Scott Andrews
+
+*Head of Reliability:* Phil Mitchell 
+
+*Head of Mechanical Systems Design:* Robert Still 
+- Lead Mechanical Systems Engineer: Matthew Hicks
+
+*PLM Product Manager:* Gavin Bonney
+- Head of Test & Validation: Nick Brown 
+
+*Lead Concept Engineer:* Ryan Manville 
+- Head of CAE: Hanyu Cheng. 
+
+**Aerodynamics**
+- Chief Engineer, Aerodynamics: Simon Dodman
+- Head of Aerodynamics: Jon Tomlinson
+- Aerodynamics Departmental Manager: Simon Hine
+
+*Head of Aerodynamic Development:* Adam Purvis 
+- Head of Aerodynamics Performance & Correlation: John Andrewartha 
+- Head of Aerodynamic Design: Sebastien Parvery
+- Head of Aerodynamic Testing Operations: 
+- Head of CFD: Tom Fanthorpe 
+
+*Lead Engineer - Aero Design:* Marc Logan
+- Lead Engineer - Aerothermal: Eelke De Groot 
+- Lead Engineer - Aero Performance: Jon Abbott
+- Lead Engineer - Aero Development: Adrian Johnson
+- Lead Engineer - Aero Development: Stephanus Widjanarko
+- Lead Engineer - Aero Development: Jeroen Klein Geltink
+- Lead Engineer - Experimental Aerodynamics: Joe Masterson
+- Lead Engineer - Aero Testing: Lucasz S. 
+- Lead Engineer - Wind Tunnel Model Systems: Chris Hubbard
+- Lead Engineer - CFD Thermal Brake Methodology: Steven Frith
+- Lead Engineer - Aerodynamic Correlation: Gerson Garsed-Brand
+
+Craig Bushen (consultant)
+Peter Rawcliffe - Consultant. Sabre Fluid Dynamics
+
+*Model Shop Manager:* Josh Hillsdon
+
+*Senior CFD Engineer:* Josh Dyson
+
+**Vehicle Performance**
+- Head of Performance Analysis: James Knapton
+- Head of Systems: Karl Dexter
+- Head of Reliability: Phil Mitchell 
+- Lead Engineer - Performance: Andrea Ackroyd
+- Lead Engineer - Control Systems: Salvatore Centonze 
+- Lead Engineer - Electronics Hardware: Carl Beddard 
+
+**Production**
+- Head of Quality: Damon Fenton
+- Head of Manufacturing: Matt Sale
+- Head of Production: Simon Cayzer 
+- Head of Supply Chain: Garry Crossley 
+- Head of Build: Andy Birch
+- Head of Programmes: Chris Bilsby
+- Head of Facilities: Alex Cundy
+- Material Control Manager: Steven Tynan
+- ADM Manager: Patrick Hawtin
+
+**Race Team**
+- Sporting Director: Peter Crolla 
+- Head of Race Engineering: Xavier Marcos Padros
+- Head of Race Strategy: Alex Goodenough 
+- Lead Strategy Engineer: Faissal Fdil
+
+*Chief Mechanic:* Nathan Divey 
+- Team Logistics Manager: Pete Simmons
+
+*Race Engineer, Bottas:* John Howard
+- Performance Engineer: Austin Kent
+- Race Engineer, Perez: Carlo Passetti
+- Performance Engineer: Martin Wahl
+
+*Race Engineer:* Stephen Lane
+
+**Engine:**
+- CEO: Russ O'Blanes
+- COO: Adam Baker 
+- CFO: George Laughton
+- GM Director, Motorsports Engineering: Patrick Canupp 
+- Power Unit Utilization Director: David George
+- Manufacturing Director: Chris Davala
+- Procurement Director: Deborah Murphy
+- Chief Engineer - ERS: Brian Miller
+
+**Technical Team - USA, Charlotte**
+- Lead Engineer: Tony Heenan
+- Tobjorn Larsson
+- Petter Ekman
+- Tommy Joseph
+- Scott Hunerwadel 
+- Sean Hafferty 
+- Sebastien Corner 
+- Steven Liston
+- Ted Pandaleon
+
+---
+
+Mercedes HPP
+High Performance Powertrains 
+
+**Managing Director HPP:** Hywel Thomas
+- Engineering Director: Lorenzo Sassi 
+- Operations Director: Richard Stevens 
+- Advanced Technology Director: Adam Allsop 
+
+*Chief Financial Officer:* Matthew Roberts
+- Chief Information Officer: Chris Barton
+- Head of Human Resources: Mike Nash
+
+*Chief Engineer - 2026:* Pierre Godof
+- Chief Engineer - Current: Michael Harre 
+- Chief Engineer - Advanced Technology: Richard Connell
+- Head of Customer Engineering: Stephane Rodriguez 
+  - Team Leader Customer Engineering: Fred Judd
+
+*Chief Engineer - Trackside (Mercedes):* Joel Longbottom 
+- Chief Engineer - Trackside (Williams): Barton Crewes 
+- Chief Engineer - Trackside (McLaren): Garry Coleman
+- Chief Engineer - Trackside (Alpine): Felipe Marchesin
+
+*Head of Thermofluids:* Ettore Musu
+- Head of Thermofluid Simulations: Aden Symonds 
+- Head of Mechatronics and Chassis Engineering: Pierre Defays
+- Head of Hybrid Technology: Simon Cawthorne
+- Simulator Engineer, Chief Engineering: Fernando Grando
+
+**Fuel (Petronas)**
+- Chief Scientist: Andrea Dolfi 
+- Principal Engineer: Chandramalar Muthiah
+- Principal Engineer: Chan Ming-Yau
+
+*Snr Performance:* Georgios Avgousti 
+- Head of Test: Will Harte
+
+---
+
+**WATCH LIST**
+
+Thomas Maulick 
+Rohrbacher Yannick
+Gherardo Pedretti 
+
+Paul Cusdin 
+Andrea Benisi
+Ioannis Veloudis. AUDI
+Enes Tas. MERCEDES
+Wolf Zimmermann. AUDI (APRIL) √
+Paul Pezzack
+Michael Manning. WILLIAMS √
+
+David Mart. AUDI
+
+Julien Demeaux -> FIA
+Will Hirsch ->
+
+Marco Fuga Williams -> TOYOTA RACING (non F1)
+Andrea Benisi Sauber -> ?
+Paul Cusdin -> ? 
+Andrew Sammut Alessi -> ?
+Michael Manning -> ?
+Cedric Michel - Grosjean, Performance Engineer (McLaren, Piastri) -> ferrari
+Dan Milner, Chief Engineer - Research and Development (Mercedes) -> Williams
+James Rodgers -> ? 
+Vasilis Tsinias -> Haas
+
+Trackside Gearbox Engineer: Paolo Crespiatico x 
+
+---
+
+**LATEST MOVES**
+
+Antonio de Laurentis: Sauber -> Haas
+Jan Tomazewski: Mercedes -> Williams
+Julian Ratschiller: RB -> Sauber 
+Marc Wewel: ABT Formula E (Technical Director) -> Audi, (Head of PU Control Systems)
+Mark Duignan: Mercedes -> Williams
+Frédéric Launoy: Racing Bulls -> Cadillac
+Carlo Passetti Sauber -> Cadillac
+Marco Fuga Williams -> non F1 / Totoya
+Andrea Benisi Sauber -> ?
+Pablo Vázquez Fernández, Alpine -> Aston Martin
+Andrew Sammut Alessi -> ?
+
+David Mart: Red Bull -> Audi
+Matt Caller: Red Bull -> Audi
+Tom Hart: Red Bull -> Williams
+Michael Manning: Red Bull -> ?
+
+Faisal Fdil (Haas) -> Cadillac
+Michael Wilson, Principal Aerodynamicist (Aston Martin) -> Performance Technologies
+Chris Bilsby, Head of Programme Management (Mercedes HPP) -> Head of Programmes (Cadillac)
+Conor Coyle, Senior Aerodynamicist (Red Bull) -> FIA 
+Matteo Sansavini, Aero Team Leader (Aston Martin) -> Aero Project Leader (McLaren) 
+David Baker, PLM Manager (Ferrari) -> Retired. Spent 34 years with the team. 
+Cedric Michel - Grosjean, Performance Engineer (McLaren, Piastri) -> FERRARI
+Martin Wahl, Performance Engineer (Haas) -> Performance Engineer (Cadillac)
+
+Dan Milner, Chief Engineer - Research and Development (Mercedes) -> Williams
+John Lockwood, Head of Composite Design (Ferrari) -> Hypersail Project (Ferrari)
+Vasilis Tsinias, Tyre Section Group Leader (Alpine) -> TBC
+Mark Green, Senior Aerodynamicist (Alpine) -> Aerodynamics Project Leader (Williams)
+
+Silvia Hoffer Frangipagne, Head of Media (Ferrari) -> Ferrari Corporate
+Benjamin Ippoliti, Head of Marketing & Communications (Red Bull Corporate Projects) -> Group Director, Communications (Red Bull Racing)  
+Fabiana Valenti, Head of Communications (Racing Bulls) -> Factory Based Role w team
+Alexandra Horton promoted to Head of Communications (Racing Bulls)
+Rebecca Banks, Head of Media (Williams) -> LEFT
+Otello Valenti
+
+Guillaume Dezoteaux, Head of Vehicle Performance (Racing Bulls) -> Head of Performance Operations, Ferrari
+
+**RED BULL**
+Joanna Fleet OUT
+Julia George OUT 
+Simon Smith - Wright OUT
+Alice Hedworth OUT 
+
+Guillaume Dezoteaux, Head of Vehicle Performance (Racing Bulls) -> Head of Performance Operations, Ferrari
+
+Diego Spreafico, Team Leader Analysis and Correlation (Racing Bulls) -> Project Leader, Aero Performance (Audi) 
+Damiano Molfetta (fmr Head of Control Systems, McLaren and Sauber) -> Returns to Hinwil at Audi as Head of Vehicle Electronics and Control Systems. 
+Terry Brice
+Gavin Bonney Head of Design Capabilities and Implementation [Aston Martin] -> PLM Product Manager, Cadillac
+Jeroen Klein Geltink. Deputy Principal Aerodynamicist, Alpine -> Lead Engineer, Aero Development, Cadillac
+Riccardo Porta, Simulator Engineer, Ferrari -> Audi
+Lorenzo Compiani, Power Unit Control Engineer, Ferrari -> Power Unit Performance Engineer, Audi 
+
+Carine Criedlich, Head of Race Strategy, Haas -> ?
+Dan Fallows -> Technical Director, Racing Bulls
+Andrea Landi, Deputy Technical Director, Racing Bulls -> Head of Performance, Red Bull
+Guillaume Catelanni, Deputy Technical Director, Racing Bulls -> ?
+John Owen, Design Director Mercedes -> ?
+
+Patrick Inzinger; Racing Bulls -> Red Bull
+Claire Simpson; Mercedes -> Williams
+Oliver Rose
+Luca Regnini
+
+---
+
+**END OF DOCUMENT**

@@ -76,7 +76,8 @@ def snapshot(client: KalshiClient, series_list: list[str],
                 continue
             close = parse_ts((markets[0] or {}).get("close_time"))
             season, rnd, event = resolve_event(
-                close, ev.get("sub_title"), ev.get("title"), calendar)
+                close, ev.get("sub_title"), ev.get("title"), calendar,
+                event_ticker=et)
             new = build_rows(markets, kind, series, et, season, rnd, event,
                              snapshot_ts, fetched_from="live")
             rows += new
@@ -119,7 +120,8 @@ def backfill(client: KalshiClient, series_list: list[str],
             done += 1
             close = parse_ts(markets[0].get("close_time"))
             season, rnd, event = resolve_event(
-                close, ev.get("sub_title"), ev.get("title"), calendar)
+                close, ev.get("sub_title"), ev.get("title"), calendar,
+                event_ticker=et)
 
             # ts -> the whole field's market dicts at that instant
             frames: dict[str, list[dict]] = {}

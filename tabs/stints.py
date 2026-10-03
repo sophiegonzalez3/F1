@@ -228,7 +228,10 @@ def _best_stint_laps(fl, stints_df):
     return merged[merged["_keep"] == True].drop(columns=["_keep"]).copy()
 
 
-def tab_stints(fl, fs):
+def tab_stints(fl, fs, sel_teams=None):
+    # `fl`/`fs` arrive already filtered; `sel_teams` is passed through to the
+    # season-long car-concept block, which reads its own season table rather
+    # than the loaded event's laps and so cannot infer the filter from them.
     # 1. Lap Time Evolution layout (dynamic via callback)
     avail_sessions = sorted(fl["session_name"].unique())
     default_sess   = avail_sessions[0] if avail_sessions else None
@@ -974,7 +977,7 @@ def tab_stints(fl, fs):
     # the tyres did this weekend; this tells you what kind of car was doing it.
     from tabs.car_profile import car_concept_section
     return html.Div([
-        car_concept_section(),
+        car_concept_section(teams=sel_teams),
         html.Hr(style={"borderColor": GRID_CLR, "margin": "34px 0 24px"}),
         html.Div([
             html.H3("THIS WEEKEND'S STINTS", style={

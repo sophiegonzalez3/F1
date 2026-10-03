@@ -176,14 +176,8 @@ def _predictions(ctx: dict) -> dict | None:
         as_of = (ctx["season"], ctx["round"]) if ctx["round"] else None
         dpred = _model().driver_predictions(final, roster, "longrun", as_of=as_of)
         qpred = _model().driver_predictions(final, roster, "onelap", as_of=as_of)
-        grid = None
-        if state.laps is not None and "Grid_Position" in state.laps.columns:
-            gser = (state.laps.dropna(subset=["Grid_Position"])
-                    .drop_duplicates("Driver_Short")
-                    .set_index("Driver_Short")["Grid_Position"])
-            gser = gser[gser > 0]
-            if len(gser) >= 8:
-                grid = gser.astype(int).to_dict()
+        # GP grid, never the sprint grid — see f1lib.state.gp_grid.
+        grid = state.gp_grid()
         if not dpred.empty:
             out = {"dpred": dpred, "qpred": qpred, "grid": grid}
     except Exception as exc:

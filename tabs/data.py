@@ -27,8 +27,10 @@ from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS, get_min_laps_for_compound,
     ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     CURRENT_SEASON,
+    STATUS_OK, STATUS_WARN, SERIES_1, SERIES_2, SERIES_3, NEUTRAL, NEUTRAL_ALT,
     MIN_LAPS_SOFT, MIN_LAPS_MEDIUM, MIN_LAPS_HARD,
 )
+from f1lib.circuits import circuit_id
 from f1lib.data_loader import is_cached, season_meetings, sessions_for_meeting
 from f1lib.processing import format_lap_time
 
@@ -84,12 +86,22 @@ _EVENT_CIRCUIT: dict[str, str] = {
     "French":          "Paul Ricard",
 }
 
+# Venue for races that kept their name but MOVED, keyed by circuit_id — the
+# name-keyed table above would label the 2026 Spanish GP "Barcelona" and the
+# 2026 Bahrain GP "Sakhir". Checked first, so only relocations belong here.
+_RELOCATED_CIRCUIT: dict[str, str] = {
+    "madring": "Madring",
+    "sepang":  "Sepang",
+}
 
-def _event_option_label(meeting: str) -> str:
+
+def _event_option_label(meeting: str, season: int | None = None) -> str:
     """Dropdown label for an event: the short GP name, plus the circuit name in
-    parentheses when known, e.g. 'British (Silverstone)'."""
+    parentheses when known, e.g. 'British (Silverstone)'. Season-aware, so a
+    relocated race names the circuit it actually ran on."""
     short = meeting.replace(" Grand Prix", "")
-    circuit = _EVENT_CIRCUIT.get(short)
+    circuit = (_RELOCATED_CIRCUIT.get(circuit_id(meeting, season))
+               or _EVENT_CIRCUIT.get(short))
     return f"{short} ({circuit})" if circuit else short
 
 
@@ -109,7 +121,7 @@ def _event_session_preview(season: int, meeting: str | None):
         rows.append(html.Li([
             html.Span(s["SESSION"], style={"color": TEXT_MAIN}),
             html.Span(f"   {tag}", style={
-                "color": "#00D2BE" if cached else "#FF8700",
+                "color": STATUS_OK if cached else STATUS_WARN,
                 "fontSize": "0.72rem", "marginLeft": "8px"}),
         ], style={"marginBottom": "4px", "fontSize": "0.82rem"}))
 
@@ -191,11 +203,11 @@ def tab_data_quality(fl, fs):
         sess = row["Session"]
         fig_cov.add_trace(go.Bar(
             x=[sess], y=[row["Valid_%"]],  name="Valid",
-            marker_color="#00D2BE", showlegend=(_ == 0),
+            marker_color=STATUS_OK, showlegend=(_ == 0),
         ))
         fig_cov.add_trace(go.Bar(
             x=[sess], y=[row["LapTime_%"]], name="Has LapTime",
-            marker_color="#FF8700", showlegend=(_ == 0),
+            marker_color=STATUS_WARN, showlegend=(_ == 0),
         ))
     theme(fig_cov, 300)
     fig_cov.update_layout(barmode="group", yaxis=dict(range=[0,105], gridcolor=GRID_CLR, zeroline=False),
@@ -218,7 +230,7 @@ def tab_data_quality(fl, fs):
         fig_d = px.pie(
             names=["Valid","Pit/OutLap","No LapTime","Outlier (>125%)","Other excluded"],
             values=[n_valid, n_pit, n_no_time, n_outlier, n_other],
-            color_discrete_sequence=["#00D2BE","#FF8700","#FFC0CB","#E10600","#808080"],
+            color_discrete_sequence=[SERIES_1, SERIES_2, SERIES_3, NEUTRAL, NEUTRAL_ALT],
             hole=0.55,
         )
         theme(fig_d, 260, sess)
@@ -255,7 +267,7 @@ def tab_data_quality(fl, fs):
 
     dirty_status = _status_icon(n_dirty == 0)
     dirty_tbl    = styled_table(dirty_rows, dirty_cols) if n_dirty > 0 else html.P(
-        "✅ All stints use a single compound.", style={"color":"#00D2BE","fontWeight":"700"}
+        "✅ All stints use a single compound.", style={"color":STATUS_OK,"fontWeight":"700"}
     )
 
     # ── 6b. Valid stints after cleaning ──────────────────────
@@ -287,7 +299,7 @@ def tab_data_quality(fl, fs):
         mn = min(sample["TyreAge"].min(), sample["PseudoTyreAge"].min())
         mx = max(sample["TyreAge"].max(), sample["PseudoTyreAge"].max())
         fig_tyre.add_trace(go.Scatter(x=[mn,mx], y=[mn,mx], mode="lines",
-            line=dict(color="#00D2BE", dash="dash", width=1), name="Perfect match"))
+            line=dict(color=STATUS_OK, dash="dash", width=1), name="Perfect match"))
         theme(fig_tyre, 380)
         fig_tyre.update_layout(xaxis_title="TyreAge (raw)", yaxis_title="PseudoTyreAge (computed)")
         delta = (sample["PseudoTyreAge"] - sample["TyreAge"]).abs().mean()
@@ -318,7 +330,7 @@ def tab_data_quality(fl, fs):
         style_data_conditional=[
             {"if": {"filter_query": "{NaN %} > 50"}, "backgroundColor": "#3D0A0A", "color": "#FF9999"},
             {"if": {"filter_query": "{NaN %} > 20 && {NaN %} <= 50"}, "backgroundColor": "#2D200A"},
-            {"if": {"filter_query": "{NaN %} = 0"}, "color": "#00D2BE"},
+            {"if": {"filter_query": "{NaN %} = 0"}, "color": STATUS_OK},
         ],
     )
 
@@ -361,16 +373,16 @@ def tab_data_quality(fl, fs):
             kpi("TOTAL LAPS (raw)",      f"{raw_rows:,}", "#808080",
                 tooltip="Raw row count from FastF1 before any enrichment or cleaning."),
             kpi("TOTAL LAPS (enriched)", f"{enr_rows:,}",
-                "#00D2BE" if row_match else ACCENT,
+                STATUS_OK if row_match else ACCENT,
                 tooltip="Row count after clean_and_enrich_laps(). Should match raw — a mismatch indicates a pipeline bug."),
-            kpi("HAS LAP TIME",          f"{pct_laptime:.1f}%", "#FF8700",
+            kpi("HAS LAP TIME",          f"{pct_laptime:.1f}%", STATUS_WARN,
                 tooltip="% of laps with a non-null LapTime_s. Laps without a time are excluded from all pace analysis."),
-            kpi("VALID LAPS",            f"{pct_valid:.1f}%", "#00D2BE",
+            kpi("VALID LAPS",            f"{pct_valid:.1f}%", STATUS_OK,
                 tooltip="% of laps passing ALL validity checks: non-pit, non-deleted, has LapTime, and within 125% of compound/team/session median."),
         ]),
         dbc.Row([
             kpi("ROW COUNT MATCH",  f"{_status_icon(row_match)} {'OK' if row_match else 'MISMATCH'}",
-                "#00D2BE" if row_match else ACCENT,
+                STATUS_OK if row_match else ACCENT,
                 tooltip="Confirms clean_and_enrich_laps() preserved the exact row count. Any change indicates unintended row creation or deletion."),
             kpi("PIT / OUT LAPS",   f"{pit_count:,}", "#FFC0CB",
                 tooltip="Laps where the driver entered or exited the pit lane. Excluded from pace and degradation analysis."),
@@ -378,11 +390,11 @@ def tab_data_quality(fl, fs):
                 tooltip="Laps slower than 125% of the per-session/compound/team median (excluding pit laps). Does NOT use flag_perturbed_laps — see PERTURBED LAPS below."),
             kpi("DIRTY STINTS (raw)",
                 f"{dirty_status} {dirty_pct:.1f}% ({n_dirty}/{n_total_stints})",
-                "#00D2BE" if n_dirty == 0 else ACCENT,
+                STATUS_OK if n_dirty == 0 else ACCENT,
                 tooltip="Based on Compound_RAW: % of stints where more than one raw compound label was recorded. Includes UNKNOWN/NaN that were later cleaned. Non-zero is expected — see the Stint Compound Integrity table below."),
             kpi("VALID STINTS (clean)",
                 f"{pct_stints_valid:.1f}% ({n_stints_valid}/{n_stints_total})",
-                "#00D2BE" if pct_stints_valid >= 50 else ACCENT,
+                STATUS_OK if pct_stints_valid >= 50 else ACCENT,
                 tooltip=f"After compound cleaning: % of driver×stint×compound groups meeting the minimum lap threshold (SOFT≥{MIN_LAPS_SOFT}, MEDIUM≥{MIN_LAPS_MEDIUM}, HARD≥{MIN_LAPS_HARD}). These are the stints usable for race pace and degradation analysis."),
         ]),
         *([dbc.Row([
@@ -447,7 +459,7 @@ def tab_data_quality(fl, fs):
         card(
             html.Span([
                 f"{dirty_status} Stint Compound Integrity (Compound_RAW)",
-                _badge(f"{n_dirty} dirty stints ({dirty_pct:.1f}%)", "#00D2BE" if n_dirty==0 else ACCENT),
+                _badge(f"{n_dirty} dirty stints ({dirty_pct:.1f}%)", STATUS_OK if n_dirty==0 else ACCENT),
                 _badge("Raw labels before cleaning — non-zero is expected", "#444"),
             ]),
             dirty_tbl,
@@ -533,9 +545,9 @@ def _tab_data_selection_inner() -> html.Div:
             "Pick a season and an event — loading pulls every available session "
             "for that event (practice, qualifying, sprint, race). Sessions already "
             "downloaded are marked ",
-            html.Span("● cached", style={"color": "#00D2BE", "fontWeight": "700"}),
+            html.Span("● cached", style={"color": STATUS_OK, "fontWeight": "700"}),
             "; anything marked ",
-            html.Span("○ fetch", style={"color": "#FF8700", "fontWeight": "700"}),
+            html.Span("○ fetch", style={"color": STATUS_WARN, "fontWeight": "700"}),
             " is downloaded from FastF1 the first time (1–3 min each).",
         ], style={"color": TEXT_DIM, "fontSize": "0.82rem", "marginBottom": "10px"}),
 
@@ -560,7 +572,7 @@ def _tab_data_selection_inner() -> html.Div:
                     html.Label("EVENT", style=lbl_style),
                     dcc.Dropdown(
                         id="data-event-select",
-                        options=[{"label": _event_option_label(m), "value": m}
+                        options=[{"label": _event_option_label(m, season), "value": m}
                                  for m in meetings],
                         value=meeting, clearable=False,
                         style={"backgroundColor": "#111", "fontSize": "0.82rem"},
@@ -602,7 +614,7 @@ def update_event_controls(season, meeting):
     trig    = ctx.triggered_id
     season  = int(season) if season else AVAILABLE_SEASON
     meetings = season_meetings(season)
-    options  = [{"label": _event_option_label(m), "value": m} for m in meetings]
+    options  = [{"label": _event_option_label(m, season), "value": m} for m in meetings]
 
     # Season switch → rebuild event list, default to that season's most recent event.
     if trig == "data-season-select":
@@ -620,7 +632,7 @@ def update_event_controls(season, meeting):
 # is a no-op (suppress_callback_exceptions=True).
 def _side_status(text: str, ok: bool = True):
     """Compact one-line status for the narrow sidebar panel."""
-    return html.Div(text, style={"color": "#00D2BE" if ok else "#FF8700",
+    return html.Div(text, style={"color": STATUS_OK if ok else STATUS_WARN,
                                  "fontSize": "0.68rem"})
 
 

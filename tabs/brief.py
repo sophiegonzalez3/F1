@@ -30,7 +30,9 @@ from f1lib.components import (
 )
 from f1lib.config import (
     TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT, CARD_BG,
+    SERIES_1, SERIES_2, NEUTRAL,
 )
+from f1lib.circuits import calendar_axis_labels
 from f1lib.pace_model import PaceModel, canon
 from f1lib.race_forecast import RaceForecaster
 from tabs import outcome
@@ -203,7 +205,7 @@ def _walkthrough_fig() -> go.Figure:
         x=xs, y=ys, mode="markers+text", orientation="h",
         error_x=dict(type="data", array=sd, color=TEXT_DIM, thickness=2,
                      width=6),
-        marker=dict(size=13, color="#FF8A3D",
+        marker=dict(size=13, color=SERIES_1,
                     line=dict(width=1, color="#000")),
         text=[f"{v:+.2f} ±{s:.2f}" for v, s in zip(xs, sd)],
         textposition="top center", textfont=dict(size=10, color=TEXT_MAIN),
@@ -236,7 +238,7 @@ def _outcome_fig() -> go.Figure:
     dist = _RACE["lec_dist"]
     xs = [f"P{i}" for i in range(1, len(dist) + 1)] + ["DNF /<br>lapped"]
     ys = dist + [_RACE["lec_tail"]]
-    colors = ["#FF8A3D"] * len(dist) + [TEXT_DIM]
+    colors = [SERIES_1] * len(dist) + [TEXT_DIM]
     act = _RACE["lec_actual"] - 1
     colors[act] = ACCENT
     fig = go.Figure(go.Bar(
@@ -297,7 +299,7 @@ def _ci_s(mean_pct: float, sd_pct: float) -> str:
 
 def _num(v, unit="%"):
     return html.Span(f"{v}{unit}", style={
-        "color": "#FF8A3D", "fontWeight": "700",
+        "color": SERIES_1, "fontWeight": "700",
         "fontFamily": "ui-monospace, SFMono-Regular, Menlo, monospace"})
 
 
@@ -486,7 +488,9 @@ def _toggle_hiw(n, is_open):
     return not is_open
 
 
-_KIND_CLR = {"onelap": "#FF8A3D", "longrun": "#3DD6C4"}
+# Non-team series: these are model targets, not constructors — reserved
+# palette, never a livery hex (see config.SERIES_COLORS).
+_KIND_CLR = {"onelap": SERIES_1, "longrun": SERIES_2}
 
 
 def _track_record_fig(b: pd.DataFrame, height: int = 360) -> go.Figure:
@@ -603,9 +607,12 @@ def _calendar_labels() -> dict:
         out = {}
         try:
             c = pd.read_csv(_CALENDAR_PATH)
+            # country alone is not unique (Barcelona + Madrid are both
+            # "Spain" in 2026) and plotly merges equal categories
+            labels = calendar_axis_labels(c)
             for _, r in c.iterrows():
                 k = (int(r["season"]), str(r["event"]))
-                out[k + ("label",)] = str(r.get("country") or r["event"])
+                out[k + ("label",)] = labels.get(k, str(r["event"]))
                 out[k + ("sprint",)] = bool(r.get("sprint", False))
         except Exception:
             return {}          # labels are cosmetic; fall back to round numbers
@@ -814,13 +821,19 @@ def _retention_heatmap_fig(r: pd.DataFrame, height: int = 320) -> go.Figure:
     return fig
 
 
-def _retention_spread_fig(r: pd.DataFrame, height: int = 320) -> go.Figure:
+def _retention_spread_fig(r: pd.DataFrame, height: int = 320,
+                          show: pd.DataFrame | None = None) -> go.Figure:
     """Race retention driver by driver — the spread is the point.
 
     The heatmap shows a weekend's typical retention; this shows how unevenly it
     lands. A car 20 points below its own field median had a materially thinner
     read than everybody else that Sunday, which is the shape that has already
     produced two `measurement_artifact` verdicts.
+
+    `r` is always the FULL field: the dotted line is the reference the dots are
+    read against, and a "field median" drawn from three selected cars would
+    destroy the only thing this chart measures. `show` is the filtered subset
+    that supplies the dots.
     """
     fig = go.Figure()
     d = r[r["session"] == "Race"] if not r.empty else r
@@ -834,6 +847,12 @@ def _retention_spread_fig(r: pd.DataFrame, height: int = 320) -> go.Figure:
     order = (d.drop_duplicates(["event"]).sort_values("round")["label"]
              .drop_duplicates().tolist())
     med = d.groupby("label")["keep"].median().reindex(order)
+    if show is not None:
+        s = show[show["session"] == "Race"]
+        if not s.empty:
+            d = s.copy()
+            d["label"] = [cal.get((int(x), str(e), "label"), str(e)[:12])
+                          for x, e in zip(d["season"], d["event"])]
     fig.add_trace(go.Scatter(
         x=order, y=med.values * 100, mode="lines", name="field median",
         line=dict(color=TEXT_DIM, width=2, dash="dot"), hoverinfo="skip"))
@@ -856,7 +875,7 @@ def _retention_spread_fig(r: pd.DataFrame, height: int = 320) -> go.Figure:
     return fig
 
 
-def _retention_card(season: int | None = None):
+def _retention_card(season: int | None = None, drivers=None, teams=None):
     """What share of each session the model could actually use.
 
     Not a diagnostic footnote. Every actual the model is scored against is a
@@ -864,6 +883,10 @@ def _retention_card(season: int | None = None):
     driver further than the miss it was trying to explain. Showing it beside
     the track record puts the model's error next to the amount of evidence it
     had to work with.
+
+    The sidebar filter narrows the heatmap and the dots to the selected cars —
+    "how much did the model see of MY team" is the natural question here — but
+    the field median it is all measured against stays the whole grid's.
     """
     r = _retention_df()
     if r.empty:
@@ -875,26 +898,34 @@ def _retention_card(season: int | None = None):
     if r.empty:
         return None
 
-    race = r[r["session"] == "Race"]
+    # r stays full-field (the reference); rs is what gets drawn.
+    rs = r[_review_mask(r, drivers, teams)]
+    filtered = _sidebar_narrowed(drivers, teams)
+
+    race = rs[rs["session"] == "Race"]
     med_race = float(race["keep"].median()) if not race.empty else float("nan")
-    by_sess = r.groupby("session")["keep"].median()
+    by_sess = rs.groupby("session")["keep"].median()
     worst_sess = by_sess.idxmin() if len(by_sess) else None
 
     # The individual weekends where one car was starved relative to its field.
     # Restricted to cars that actually went the distance: a driver who retired
     # on lap 3 trivially scores 0% and would crowd the list with retirements,
     # which is a different problem from "ran the whole race and the model still
-    # could not see it".
+    # could not see it". The "field" here is the full grid even when the view
+    # is filtered — being 20 points under your own team mate is not the claim.
     thin = pd.DataFrame()
-    if not race.empty:
-        full = race.groupby("event")["n_total"].transform("max")
-        ran = race[race["n_total"] >= 0.75 * full]
+    race_all = r[r["session"] == "Race"]
+    if not race_all.empty:
+        full = race_all.groupby("event")["n_total"].transform("max")
+        ran = race_all[race_all["n_total"] >= 0.75 * full]
         if not ran.empty:
             fieldmed = ran.groupby("event")["keep"].transform("median")
-            thin = ran.assign(_gap=ran["keep"] - fieldmed).nsmallest(5, "_gap")
+            ran = ran.assign(_gap=ran["keep"] - fieldmed)
+            ran = ran[_review_mask(ran, drivers, teams)]
+            thin = ran.nsmallest(5, "_gap")
 
-    body = [dcc.Graph(figure=_retention_heatmap_fig(r), config=GFX),
-            dcc.Graph(figure=_retention_spread_fig(r), config=GFX)]
+    body = [dcc.Graph(figure=_retention_heatmap_fig(rs), config=GFX),
+            dcc.Graph(figure=_retention_spread_fig(r, show=rs), config=GFX)]
     if not thin.empty:
         cal = _calendar_labels()
         items = ", ".join(
@@ -909,12 +940,14 @@ def _retention_card(season: int | None = None):
                    "marginTop": "4px"}))
 
     return card(
-        f"HOW MUCH THE MODEL ACTUALLY SEES · {shown}",
+        f"HOW MUCH THE MODEL ACTUALLY SEES · {shown}"
+        + ("  ·  SELECTED CARS" if filtered else ""),
         html.Div(body),
         measure="measured",
         plain=(f"Every number the model is judged on is built from a SUBSET of "
                f"the laps run — only the clean-air ones. On race day it "
-               f"typically keeps {100 * med_race:.0f}% of a driver's laps"
+               f"typically keeps {100 * med_race:.0f}% of "
+               + ("these cars' laps" if filtered else "a driver's laps")
                + (f", and {worst_sess} is thinner still at "
                   f"{100 * by_sess.min():.0f}%." if worst_sess else ".")
                + " That is a deliberate choice — it is how you compare cars "
@@ -927,7 +960,11 @@ def _retention_card(season: int | None = None):
               "laps survive per driver. The heatmap is the median driver at "
               "each session; the scatter is every driver on race day, so a car "
               "sitting well below its own field median that weekend stands "
-              "out. Two 2026 review rows have already been re-classified as "
+              "out. The sidebar TEAMS/DRIVERS filter narrows the heatmap and "
+              "the dots; the dotted field-median line — and the 'thinnest "
+              "reads' comparison under it — stay computed on the whole grid, "
+              "because being below your own team mate is not what this "
+              "measures. Two 2026 review rows have already been re-classified as "
               "`measurement_artifact` because this subset, not the model, "
               "explained the miss."))
 
@@ -1387,7 +1424,34 @@ _REVIEW_PATH = Path("data/model_review.csv")
 _REVIEW_KIND = {"onelap": "qualifying", "longrun": "race pace"}
 
 
-def _model_review_card(season: int, event: str):
+def _review_mask(df: pd.DataFrame, drivers, teams) -> pd.Series:
+    """Sidebar mask for a driver/team-keyed table, with the tab's usual rule:
+    a filter matching nothing falls back to everything rather than blanking."""
+    m = pd.Series(True, index=df.index)
+    if teams is not None and "team" in df.columns:
+        m &= df["team"].map(lambda t: canon(t) in teams)
+    if drivers is not None and "driver" in df.columns:
+        m &= df["driver"].isin(drivers)
+    return m if m.any() else pd.Series(True, index=df.index)
+
+
+def _sidebar_narrowed(drivers, teams) -> bool:
+    """True when the sidebar selection is genuinely narrower than the field.
+
+    NOT `len(masked) < len(df)`. These season-long tables carry rows the loaded
+    event does not — lap_retention.csv keeps the mandated rookie FP1 entrants,
+    who are excluded from the sidebar's driver list by default — so a row-count
+    comparison reports "filtered" on a page where nobody touched a filter.
+    Only used for labelling; the masking itself is unconditional.
+    """
+    if teams is not None and not {canon(t) for t in state.TEAMS} <= set(teams):
+        return True
+    if drivers is not None and not set(state.DRIVERS) <= set(drivers):
+        return True
+    return False
+
+
+def _model_review_card(season: int, event: str, drivers=None, teams=None):
     """Hand-written notes on why the model missed, for this event.
 
     Everything else on this page is computed and falsifiable. This card is
@@ -1415,6 +1479,12 @@ def _model_review_card(season: int, event: str):
     ev = r[(r["season"] == season) & (r["event"] == event)]
     if ev.empty:
         return None
+    # Sidebar filter. Rows here are per driver, so this is a straight row
+    # filter — but the season tally at the foot is filtered the SAME way, or
+    # the "how much of our error is unmodelled" share would be counted over a
+    # different population than the notes it sits under.
+    ev = ev[_review_mask(ev, drivers, teams)]
+    filtered = _sidebar_narrowed(drivers, teams)
 
     def _entry(x):
         # NOT `x.get("note") or ""` — an empty CSV cell arrives as NaN, and
@@ -1469,6 +1539,7 @@ def _model_review_card(season: int, event: str):
     # free text: it turns a pile of anecdotes into "how much of our error is
     # something we chose not to model?"
     season_rows = r[r["season"] == season]
+    season_rows = season_rows[_review_mask(season_rows, drivers, teams)]
     tally = (season_rows["category"].fillna("").str.strip()
              .replace("", np.nan).dropna().value_counts())
     foot = None
@@ -1476,7 +1547,9 @@ def _model_review_card(season: int, event: str):
         total = int(tally.sum())
         model_share = int(tally.get("model_miss", 0))
         foot = html.Div([
-            html.Span(f"{season} so far: ", style={"color": TEXT_DIM}),
+            html.Span(f"{season} so far"
+                      + (" (selected cars)" if filtered else "") + ": ",
+                      style={"color": TEXT_DIM}),
             html.Span(" · ".join(f"{k} {v}" for k, v in tally.items()),
                       style={"color": TEXT_MAIN}),
             html.Span(f"  —  {100 * model_share / total:.0f}% of reviewed "
@@ -1504,7 +1577,10 @@ def _model_review_card(season: int, event: str):
              "fills in the numbers; the cause and the note are written by "
              "hand afterwards. Categories come from a fixed vocabulary so a "
              "season of notes can be counted, which is what answers 'how much "
-             "of our error is unmodelled incident versus genuine model error?'",
+             "of our error is unmodelled incident versus genuine model error?' "
+             "The sidebar TEAMS/DRIVERS filter narrows both the notes and the "
+             "season tally beneath them, so the share always describes the "
+             "same set of cars as the notes above it.",
         plain=(f"The model got {len(ev)} driver-result{'s' if len(ev) != 1 else ''} "
                f"wrong by more than its own error bar this weekend"
                + (f", and {n_open} of them still need a note writing."
@@ -1821,16 +1897,11 @@ def tab_brief(sel_drivers=None, sel_teams=None):
     if not dpred.empty and rf is not None:
         qpred = _model().driver_predictions(
             pre_quali, roster, "onelap", as_of=(season, round_))
-        # real grid once qualifying is loaded, else sample it from the one-lap
-        # prediction (so the pre-quali forecast carries grid uncertainty)
-        grid = None
-        if state.laps is not None and "Grid_Position" in state.laps.columns:
-            gser = (state.laps.dropna(subset=["Grid_Position"])
-                    .drop_duplicates("Driver_Short")
-                    .set_index("Driver_Short")["Grid_Position"])
-            gser = gser[gser > 0]
-            if len(gser) >= 8:
-                grid = gser.astype(int).to_dict()
+        # Real GP grid once qualifying is loaded, else sample it from the
+        # one-lap prediction (so the pre-quali forecast carries grid
+        # uncertainty). state.gp_grid() is deliberate: reading Grid_Position off
+        # laps picks up the SPRINT grid on a sprint weekend (a different grid).
+        grid = state.gp_grid()
         fc = rf.forecast(dpred, event=event, grid=grid,
                          quali_pred=None if grid else qpred)
         if not fc.empty:
@@ -1920,8 +1991,12 @@ def tab_brief(sel_drivers=None, sel_teams=None):
             extra = [c for c in (
                 outcome.distribution_card(sim, fc_show),
                 outcome.driver_picker_card(sim, fc_show),
-                outcome.market_card(season, event, fc),
-                outcome.movement_card(season, event),
+                # full fc + the selection: the card needs the whole priced
+                # field to judge market coverage, then draws the selection
+                outcome.market_card(season, event, fc,
+                                    show=set(fc_show["driver"])),
+                outcome.movement_card(season, event,
+                                      show=set(fc_show["driver"])),
             ) if c is not None]
             for i in range(0, len(extra), 2):
                 body.append(dbc.Row([dbc.Col(c, md=6)
@@ -2032,7 +2107,7 @@ def tab_brief(sel_drivers=None, sel_teams=None):
                            if pt else None)(_driver_ledger_parts(dpred, adr)),
                     measure="race"),
                     md=6))
-    review = _model_review_card(season, event)
+    review = _model_review_card(season, event, drivers_sel, teams_sel)
     if review is not None:
         # full width: it carries two columns of its own (qualifying / race)
         ledger_cards.append(dbc.Col(review, md=12))
@@ -2053,7 +2128,7 @@ def tab_brief(sel_drivers=None, sel_teams=None):
     # and the amount of evidence behind it are the same conversation, and
     # reading either alone is how a measurement limit gets mistaken for the
     # model being wrong.
-    ret = _retention_card(ev[0] if ev else None)
+    ret = _retention_card(ev[0] if ev else None, drivers_sel, teams_sel)
     # The outcome half gets the same treatment as the pace half: a record over
     # many races, and a calibration curve, because a Brier score and "does a
     # stated 60% happen 60% of the time" are different questions with

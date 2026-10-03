@@ -17,7 +17,7 @@ import dash_bootstrap_components as dbc
 from dash import html, dcc, callback, ctx, no_update, Input, Output, State
 
 import f1lib.state as state
-from f1lib.config import ACCENT, TEXT_DIM, GRID_CLR, CURRENT_SEASON
+from f1lib.config import ACCENT, TEXT_DIM, GRID_CLR, CURRENT_SEASON, SERIES_1
 from f1lib.data_loader import season_meetings
 from f1lib.standings import _season_team_tiers
 from tabs.data import _event_option_label, SELECTABLE_SEASONS
@@ -71,7 +71,7 @@ def build_sidebar(logo_src: str) -> dbc.Col:
             options=[{"label": str(y), "value": y} for y in SELECTABLE_SEASONS],
             value=season, clearable=False, style=_DD),
         dcc.Dropdown(id="side-event-select",
-            options=[{"label": _event_option_label(m), "value": m} for m in meetings],
+            options=[{"label": _event_option_label(m, season), "value": m} for m in meetings],
             value=meeting if meeting in meetings else (meetings[-1] if meetings else None),
             clearable=False, optionHeight=26,
             style={**_DD, "marginTop": "6px"}),
@@ -85,7 +85,7 @@ def build_sidebar(logo_src: str) -> dbc.Col:
              "status live in the DATA tab."),
         dcc.Loading(html.Div(
             html.Div(f"● {meeting} {season}" if meeting else "● no event loaded",
-                     style={"color": "#00D2BE", "fontSize": "0.68rem"}),
+                     style={"color": SERIES_1, "fontSize": "0.68rem"}),
             id="side-load-status", style={"marginTop": "6px"}),
             type="dot", color=ACCENT),
         html.Hr(style=_HR),
@@ -171,7 +171,7 @@ def side_update_events(season):
         meetings = season_meetings(int(season))
     except Exception:
         meetings = []
-    return ([{"label": _event_option_label(m), "value": m} for m in meetings],
+    return ([{"label": _event_option_label(m, season), "value": m} for m in meetings],
             meetings[-1] if meetings else None)
 
 

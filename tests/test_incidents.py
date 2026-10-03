@@ -186,3 +186,77 @@ def test_contact_incidents_exist_and_are_a_minority_of_all_messages():
     kinds = d26["kind"].value_counts()
     assert kinds.get("contact", 0) > 0
     assert kinds.get("procedural", 0) > 0
+
+
+# ── publication lag: the forward half of the window ──────────
+#
+# Race control's Lap is when the MESSAGE went out, so a contact row routinely
+# lands after the car it describes has already stopped. The old bound was
+# `last_lap + 1`, which silently rejected every first-lap collision (the car
+# is classified at Laps=0; the tangle is announced on lap 2-4) and any late
+# incident noticed after the fact. See PUBLICATION_LAG.
+
+def _reg(monkeypatch, rows):
+    """Point the register at a synthetic frame."""
+    import f1lib.incidents as inc
+    df = pd.DataFrame(rows)
+    monkeypatch.setattr(inc, "incidents_df", lambda: df)
+    return inc
+
+
+def test_contact_logged_after_the_last_lap_still_explains_the_retirement(monkeypatch):
+    """Zandvoort 2026: Sainz hit Albon at Turn 1 on lap 65. Albon limped one
+    more lap and stopped (Laps=66); race control published the whole NOTED →
+    INVESTIGATED → PENALTY chain in one burst on lap 71. The old `last + 1`
+    bound read that as 'the crash happened after he retired' and gave up."""
+    inc = _reg(monkeypatch, [
+        {"season": 2026, "event": "Dutch Grand Prix", "kind": "contact",
+         "driver": "ALB", "lap": 71.0, "counterparty": "SAI"},
+    ])
+    got = inc.classify_retirement(2026, "Dutch Grand Prix", "ALB", 66)
+    assert got["cause"] == "collision"
+    assert got["counterparty"] == "SAI"
+    assert got["incident_lap"] <= 66, (
+        "a lap the car never completed is not a reportable incident lap")
+
+
+def test_first_lap_collision_is_classified(monkeypatch):
+    """The category the old bound was completely blind to: retired on lap 1
+    (Laps=0), incident announced on lap 2."""
+    inc = _reg(monkeypatch, [
+        {"season": 2024, "event": "Japanese Grand Prix", "kind": "contact",
+         "driver": "RIC", "lap": 2.0, "counterparty": "ALB"},
+    ])
+    got = inc.classify_retirement(2024, "Japanese Grand Prix", "RIC", 0)
+    assert got["cause"] == "collision"
+
+
+def test_publication_lag_is_bounded(monkeypatch):
+    """A late-published row can still describe an EARLY incident, so the
+    forward bound stays finite. 2025 Bahrain: HUL is classified at 0 laps with
+    a contact row at lap 50 — 50 laps of lag is not lag, it is a bad match."""
+    inc = _reg(monkeypatch, [
+        {"season": 2025, "event": "Bahrain Grand Prix", "kind": "contact",
+         "driver": "HUL", "lap": 50.0, "counterparty": ""},
+    ])
+    got = inc.classify_retirement(2025, "Bahrain Grand Prix", "HUL", 0)
+    assert got["cause"] == "unclassified"
+
+
+def test_backward_guard_is_untouched_by_the_forward_widening(monkeypatch):
+    """The whole point of CAUSAL_WINDOW: a lap-19 tangle does not explain a
+    lap-45 retirement, and widening the other side must not change that."""
+    inc = _reg(monkeypatch, [
+        {"season": 2026, "event": "Chinese Grand Prix", "kind": "contact",
+         "driver": "VER", "lap": 19.0, "counterparty": "HAM"},
+    ])
+    got = inc.classify_retirement(2026, "Chinese Grand Prix", "VER", 45)
+    assert got["cause"] == "unclassified"
+    assert got["earlier_contact"] is True
+
+
+def test_publication_lag_window_sits_in_the_gap_of_the_observed_distribution():
+    """Calibrated, not chosen: forward gaps cluster at 2-5 laps (35 of 38)
+    then jump to 10, 19, 50."""
+    from f1lib.incidents import PUBLICATION_LAG
+    assert 5 <= PUBLICATION_LAG <= 9

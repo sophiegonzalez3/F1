@@ -83,6 +83,20 @@ def seasons() -> list[int]:
     return sorted(int(s) for s in df["season"].unique()) if not df.empty else []
 
 
-def event_short(name: str) -> str:
-    """'Austrian Grand Prix' -> 'Austrian' (compact x-axis labels)."""
-    return str(name).replace(" Grand Prix", "").strip()
+# Short venue for a race that kept its name but moved, keyed by circuit_id.
+_MOVED_VENUE = {"madring": "Madrid", "sepang": "Sepang"}
+
+
+def event_short(name: str, season: int | None = None) -> str:
+    """'Austrian Grand Prix' -> 'Austrian' (compact x-axis labels).
+
+    Pass the season: a relocated race gets its venue appended
+    ('Spanish (Madrid)', 'Bahrain (Sepang)'), since the bare name reads as the
+    circuit it USED to run on — and the 2026 Barcelona GP sits beside it."""
+    short = str(name).replace(" Grand Prix", "").strip()
+    if season is not None:
+        from f1lib.circuits import circuit_id
+        cid = circuit_id(name, season)
+        if cid != circuit_id(name) and cid in _MOVED_VENUE:
+            return f"{short} ({_MOVED_VENUE[cid]})"
+    return short

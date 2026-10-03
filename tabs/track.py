@@ -32,10 +32,10 @@ from f1lib.components import (
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
 )
 from f1lib.config import (
-    TEAM_COLORS, COMPOUND_COLORS,
+    team_color, COMPOUND_COLORS, SERIES_1,
+    STATUS_OK, STATUS_WARN, STATUS_BAD,
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
     MINI_SECTORS, FASTF1_CACHE_DIR,
-    HIST_CIRCUIT_KEY_MAP,
 )
 from f1lib.processing import format_lap_time
 from f1lib.figures import _tyre_history_chart
@@ -43,12 +43,12 @@ from tabs.circuit_stats import (
     measured_weekend_card, pole_evolution_card, tyre_allocation_card,
     pirelli_card,
 )
-from f1lib.circuits import circuit_id, circuit_label
+from f1lib.circuits import circuit_id, circuit_label, french_key
 from f1lib.standings import (
     HIST_RACE, HIST_QUALI, HIST_STANDINGS,
     _loaded_event, _loaded_circuit_key, _slugify_event,
     _track_avail_years, _circuit_race_years, _circuit_display_season,
-    _loaded_meeting_season_round,
+    _loaded_meeting_season_round, circuit_rows,
 )
 
 # mirror state so bare `laps`, `LOADED_SESSION_INFO`, CIRCUIT_CHARS references resolve
@@ -136,6 +136,11 @@ _FF1_CIRCUIT_META: dict = {
     "abu_dhabi":       {"length_km": 5.281, "corners": 16, "drs_zones": 2, "lap_record": "1:26.103", "lap_record_driver": "Max Verstappen",      "lap_record_year": 2021},
     "australie":       {"length_km": 5.278, "corners": 14, "drs_zones": 4, "lap_record": "1:19.813", "lap_record_driver": "Charles Leclerc",     "lap_record_year": 2024},
     "bahrein":         {"length_km": 5.412, "corners": 15, "drs_zones": 3, "lap_record": "1:31.447", "lap_record_driver": "Pedro de la Rosa",    "lap_record_year": 2005},
+    # relocated / new venues — 2026 has active aero, not DRS, so no zone count.
+    # Madring record = fastest lap of its only race (2026, lap 49, archive).
+    "madrid":          {"length_km": 5.416, "corners": 22,                  "lap_record": "1:35.587", "lap_record_driver": "George Russell",      "lap_record_year": 2026},
+    # Sepang: race record from the old Malaysian GP — re-check after 2026-10-04.
+    "malaisie":        {"length_km": 5.543, "corners": 15,                  "lap_record": "1:34.223", "lap_record_driver": "Juan Pablo Montoya",  "lap_record_year": 2004},
     "chine":           {"length_km": 5.451, "corners": 16, "drs_zones": 2, "lap_record": "1:32.238", "lap_record_driver": "Michael Schumacher",  "lap_record_year": 2004},
     "emilie_romagne":  {"length_km": 4.909, "corners": 19, "drs_zones": 2, "lap_record": "1:15.484", "lap_record_driver": "Lewis Hamilton",      "lap_record_year": 2020},
     "miami":           {"length_km": 5.412, "corners": 19, "drs_zones": 3, "lap_record": "1:29.708", "lap_record_driver": "Max Verstappen",      "lap_record_year": 2023},
@@ -211,10 +216,17 @@ _CIRCUIT_HISTORY: dict = {
         "most_poles": ("Lewis Hamilton", None),
         "note": "The tight, twisty Hungaroring — 'Monaco without the walls'. Hamilton owns the "
                 "circuit with a record eight wins and the most poles."},
-    "espagne": {"first_gp": 1991, "most_wins": ("Schumacher & Hamilton", 6),
+    "espagne": {"first_gp": 1991, "most_wins": ("Lewis Hamilton", 7),
         "most_poles": ("Lewis Hamilton", None),
         "note": "Barcelona-Catalunya is F1's benchmark test track — teams know every metre from "
-                "winter testing, so it rewards outright car performance."},
+                "winter testing, so it rewards outright car performance. Hamilton's 2026 "
+                "win, his first for Ferrari, broke his tie with Schumacher."},
+    "madrid": {"first_gp": 2026,
+        "note": "The Madring: a street section through the IFEMA district joined to a permanent "
+                "loop, with the 24%-banked 'Monumental' (T12). Antonelli won its first race."},
+    "malaisie": {"first_gp": 1999, "most_wins": ("Sebastian Vettel", 4),
+        "note": "Sepang hosted the Malaysian GP 1999-2017 and returned in 2026 for the relocated "
+                "Bahrain GP — tropical heat and sudden storms over long straights and fast sweepers."},
     "autriche": {"first_gp": 1970, "most_wins": ("Max Verstappen", 5),
         "most_poles": ("Max Verstappen", None),
         "note": "The Red Bull Ring in the Styrian mountains: short, fast and Red Bull's home "
@@ -362,7 +374,7 @@ def _history_card(circuit_key) -> html.Div:
     if h.get("most_wins"):
         pills.append(_stat_pill("MOST WINS", _person(h["most_wins"]), "#FFD700"))
     if h.get("most_poles"):
-        pills.append(_stat_pill("MOST POLES", _person(h["most_poles"]), "#00D2BE"))
+        pills.append(_stat_pill("MOST POLES", _person(h["most_poles"]), SERIES_1))
     if h.get("most_constructor"):
         pills.append(_stat_pill("TOP CONSTRUCTOR", h["most_constructor"]))
 
@@ -386,9 +398,11 @@ def _history_card(circuit_key) -> html.Div:
 
 
 # ── Race-weekend guide card ───────────────────────────────────
-_OVERTAKE_CLR = {"Easy": "#2ECC71", "Moderate": "#FFD700",
-                 "Hard": "#FF8700", "Very hard": "#E10600"}
-_SC_CLR       = {"Low": "#2ECC71", "Medium": "#FFD700", "High": "#E10600"}
+# Ordinal severity, not team identity — the status ramp, so "Hard" stops being
+# McLaren orange and "Very hard" stops being the Ferrari-adjacent ACCENT red.
+_OVERTAKE_CLR = {"Easy": STATUS_OK, "Moderate": STATUS_WARN,
+                 "Hard": "#EE8A4A", "Very hard": STATUS_BAD}
+_SC_CLR       = {"Low": STATUS_OK, "Medium": STATUS_WARN, "High": STATUS_BAD}
 
 
 def _weekend_card(circuit_key) -> html.Div:
@@ -411,7 +425,7 @@ def _weekend_card(circuit_key) -> html.Div:
         pills.append(_stat_pill("SAFETY CAR", w["safety_car"],
                                 _SC_CLR.get(w["safety_car"])))
     if w.get("strategy"):
-        pills.append(_stat_pill("TYPICAL RACE", w["strategy"], "#00D2BE"))
+        pills.append(_stat_pill("TYPICAL RACE", w["strategy"], SERIES_1))
 
     children = [html.Div(pills, style={
         "display": "flex", "gap": "10px", "flexWrap": "wrap", "marginBottom": "10px",
@@ -518,7 +532,7 @@ def _hist_year_column(sub: pd.DataFrame, sess_type: str, year: int) -> html.Div:
     for i, r in sub.iterrows():
         drv = str(r[abbr_col]).strip() if abbr_col else "?"
         team = str(r[team_col]).strip() if team_col else ""
-        clr = TEAM_COLORS.get(team, "#808080")
+        clr = team_color(team, year)
         rows.append(html.Div([
             html.Span(f"{int(r['_pos'])}" if pd.notna(r["_pos"]) else "–",
                       style={"color": TEXT_DIM, "fontSize": "0.62rem",
@@ -961,11 +975,16 @@ def _resolve_track_event(circuit_key: str, year):
     """Map a Track-Info circuit slug + year to a (season, event_name) FastF1
     can fetch, using the historical results table. Prefers the requested
     year, else the most recent season available for that circuit."""
-    hist_keys = HIST_CIRCUIT_KEY_MAP.get(circuit_key, [circuit_key])
-    if HIST_RACE.empty or "circuit_key" not in HIST_RACE.columns:
-        return None, None
-    sub = HIST_RACE[HIST_RACE["circuit_key"].isin(hist_keys)]
+    sub = (circuit_rows(HIST_RACE, circuit_key)
+           if not HIST_RACE.empty and "circuit_key" in HIST_RACE.columns
+           else pd.DataFrame())
     if sub.empty:
+        # No race archived here yet — a new or relocated venue mid-weekend
+        # (Sepang on its 2026 Friday). The loaded meeting is still a valid
+        # FastF1 event when it ran on this circuit.
+        l_season, l_event = _loaded_event()
+        if l_event and french_key(l_event, l_season) == circuit_key:
+            return int(l_season), str(l_event)
         return None, None
     if year is not None and (sub["season"] == year).any():
         sub = sub[sub["season"] == year]
@@ -1067,7 +1086,8 @@ def _track_map_children(tm: dict, season, event_name, circuit_key=None) -> html.
     Shared by the pre-load path and the on-demand button callback."""
     note = html.P(
         f"Fastest lap: {tm.get('driver','?')} · {tm.get('laptime','?')} · "
-        f"{event_name} {season} {tm.get('session','')} qualifying",
+        f"{event_name} {season} · "
+        f"{_MAP_SESSION_LABEL.get(tm.get('session', ''), tm.get('session', ''))}",
         style={"color": TEXT_DIM, "fontSize": "0.74rem", "marginBottom": "8px"},
     )
     corner_names = _corner_name_map(circuit_key) if circuit_key else {}
@@ -1088,6 +1108,14 @@ def _track_map_children(tm: dict, season, event_name, circuit_key=None) -> html.
     return html.Div([note, *rows])
 
 
+# Session the track map is drawn from, best first: quali gives the cleanest
+# fast lap, then the race, then practice — so a venue mid-weekend (Friday,
+# before any quali) still gets its map from FP2/FP1.
+_MAP_SESSIONS = ("Q", "R", "FP3", "FP2", "FP1")
+_MAP_SESSION_LABEL = {"Q": "qualifying", "R": "race", "FP1": "practice 1",
+                      "FP2": "practice 2", "FP3": "practice 3"}
+
+
 def _cached_track_map(circuit_key, year):
     """Return (children, season, event_name) for a track map *already cached* on
     disk (with all plot columns), without triggering a FastF1 download.
@@ -1095,7 +1123,7 @@ def _cached_track_map(circuit_key, year):
     season, event_name = _resolve_track_event(circuit_key, year)
     if not event_name:
         return None, season, event_name
-    for sid in ("Q", "R"):
+    for sid in _MAP_SESSIONS:
         paths = _track_map_paths(season, event_name, sid)
         cached = _read_track_map_cache(paths)
         if cached is not None and _TRACK_LINE_COLS.issubset(cached["line"].columns):
@@ -1183,7 +1211,7 @@ def update_track_content(circuit_key: str, hist_year: int):
     stats_pills = html.Div([
         _stat_pill("LENGTH",    f"{meta.get('length_km','—')} km"),
         _stat_pill("CORNERS",   str(meta.get("corners", "—"))),
-        _stat_pill("DRS ZONES", str(meta.get("drs_zones", "—")), "#00D2BE"),
+        _stat_pill("DRS ZONES", str(meta.get("drs_zones", "—")), SERIES_1),
         *alt_pill,
         _stat_pill("LAP RECORD",
                    f"{meta.get('lap_record','—')}  ({meta.get('lap_record_driver','—')}, {meta.get('lap_record_year','—')})",
@@ -1295,12 +1323,10 @@ def update_track_content(circuit_key: str, hist_year: int):
     # ── Section 7: Historical results — all seasons side by side ──
     hist_blocks = []
     if not HIST_RACE.empty or not HIST_QUALI.empty:
-        hist_keys = HIST_CIRCUIT_KEY_MAP.get(circuit_key, [circuit_key])
-
         def _filter_circuit(df):
             if df.empty or "circuit_key" not in df.columns:
                 return pd.DataFrame()
-            return df[df["circuit_key"].isin(hist_keys)].copy()
+            return circuit_rows(df, circuit_key)
 
         for sess_type, df_h in [("Race", _filter_circuit(HIST_RACE)),
                                 ("Qualifying", _filter_circuit(HIST_QUALI))]:
@@ -1397,7 +1423,7 @@ def render_track_map(_n, circuit_key, year):
 
     tm = None
     last_exc = None
-    for sess_id in ("Q", "R"):           # quali gives the cleanest fast lap; fall back to race
+    for sess_id in _MAP_SESSIONS:
         try:
             tm = get_track_map(season, event_name, sess_id)
             if tm is not None:

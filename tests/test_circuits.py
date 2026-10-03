@@ -162,6 +162,7 @@ def test_audit_ignores_cosmetic_location_renames(tmp_path):
     ("Spanish Grand Prix",    2026, "madrid"),           # the Madring
     ("Barcelona Grand Prix",  2026, "espagne"),
     ("Bahrain Grand Prix",    2025, "bahrein"),
+    ("Bahrain Grand Prix",    2026, "malaisie"),         # Sepang, its OWN row
     ("Monaco Grand Prix",     2026, "monaco"),
     ("Hungarian Grand Prix",  2026, "hongrie"),
     # aliases inherit their circuit's reference row
@@ -174,7 +175,6 @@ def test_french_key_is_season_aware(event, season, expected):
 
 
 @pytest.mark.parametrize("event,season", [
-    ("Bahrain Grand Prix", 2026),   # Sepang — must not borrow Sakhir's row
     ("Sakhir Grand Prix",  2020),   # outer loop — must not borrow Bahrain's
     ("Portuguese Grand Prix", 2021),
 ])
@@ -250,3 +250,84 @@ def test_real_calendar_is_registered():
     if not cal.exists():
         pytest.skip("season_calendar.csv not generated yet")
     assert audit_calendar(cal) == []
+
+
+# ── consumers that used to key on the event NAME ─────────────
+
+@pytest.mark.parametrize("meeting,season,label", [
+    ("Spanish Grand Prix", 2026, "Spanish (Madring)"),
+    ("Spanish Grand Prix", 2025, "Spanish (Barcelona)"),
+    ("Bahrain Grand Prix", 2026, "Bahrain (Sepang)"),
+    ("Bahrain Grand Prix", 2025, "Bahrain (Sakhir)"),
+    ("Barcelona Grand Prix", 2026, "Barcelona (Catalunya)"),
+])
+def test_event_dropdown_label_names_the_circuit_it_ran_on(meeting, season, label):
+    from tabs.data import _event_option_label
+    assert _event_option_label(meeting, season) == label
+
+
+def test_scene_coordinates_follow_a_relocated_race():
+    """The 3D scene (and the race-day rain forecast) take their coordinates
+    from here — matching 'spanish' sent the 2026 Madrid race to Barcelona."""
+    from f1lib.track_scene import _circuit_conf, _geo_key, CIRCUITS
+    assert _circuit_conf("Spanish Grand Prix", 2026) is CIRCUITS["madrid"]
+    assert _circuit_conf("Spanish Grand Prix", 2025) is CIRCUITS["spanish"]
+    assert _circuit_conf("Bahrain Grand Prix", 2026)["latlon"][0] < 10   # Malaysia
+    assert _circuit_conf("Bahrain Grand Prix", 2025) is CIRCUITS["bahrain"]
+    # geo caches: a relocated race must not reuse the old venue's files,
+    # every other circuit keeps its name so existing caches stay valid
+    assert _geo_key("Spanish Grand Prix", 2026) == "madring"
+    assert _geo_key("Spanish Grand Prix", 2025) == "Spanish Grand Prix"
+    assert _geo_key("Dutch Grand Prix", 2026) == "Dutch Grand Prix"
+
+
+def test_circuit_rows_splits_madrid_from_barcelona():
+    from f1lib.standings import circuit_rows
+    df = pd.DataFrame({
+        "circuit_key": ["spanish_grand_prix", "spanish_grand_prix",
+                        "barcelona_grand_prix", "bahrain_grand_prix"],
+        "season": [2025, 2026, 2026, 2026],
+    })
+    assert circuit_rows(df, "madrid")["season"].tolist() == [2026]
+    got = circuit_rows(df, "espagne")
+    assert sorted(zip(got["circuit_key"], got["season"])) == [
+        ("barcelona_grand_prix", 2026), ("spanish_grand_prix", 2025)]
+    # Sepang has its own reference row and must never borrow Sakhir's
+    assert circuit_rows(df, "bahrein").empty
+    assert circuit_rows(df, "malaisie")["season"].tolist() == [2026]
+
+
+def test_axis_labels_never_merge_two_rounds_of_one_season():
+    """Plotly merges equal category labels, so a per-event line doubled back
+    when Barcelona and Madrid were both 'Spain' (BRIEF per-event chart)."""
+    from f1lib.circuits import calendar_axis_labels
+    cal = pd.DataFrame({
+        "season":   [2026] * 5 + [2020] * 2,
+        "event":    ["Barcelona Grand Prix", "Spanish Grand Prix", "Miami Grand Prix",
+                     "Bahrain Grand Prix", "Monaco Grand Prix",
+                     "Austrian Grand Prix", "Styrian Grand Prix"],
+        "country":  ["Spain", "Spain", "United States", "Bahrain", "Monaco",
+                     "Austria", "Austria"],
+        "location": ["Barcelona", "Madrid", "Miami Gardens", "Kuala Lumpur",
+                     "Monaco", "Spielberg", "Spielberg"],
+    })
+    lab = calendar_axis_labels(cal)
+    assert lab[(2026, "Barcelona Grand Prix")] == "Barcelona"
+    assert lab[(2026, "Spanish Grand Prix")] == "Madrid"
+    assert lab[(2026, "Bahrain Grand Prix")] == "Kuala Lumpur"   # relocated
+    assert lab[(2026, "Miami Grand Prix")] == "United States"    # unique here
+    assert lab[(2026, "Monaco Grand Prix")] == "Monaco"
+    assert lab[(2020, "Austrian Grand Prix")] == "Austrian"      # same location
+    assert lab[(2020, "Styrian Grand Prix")] == "Styrian"
+
+
+@pytest.mark.parametrize("name,season,expected", [
+    ("Spanish Grand Prix", 2026, "Spanish (Madrid)"),
+    ("Spanish Grand Prix", 2025, "Spanish"),
+    ("Bahrain Grand Prix", 2026, "Bahrain (Sepang)"),
+    ("Barcelona Grand Prix", 2026, "Barcelona"),
+    ("Austrian Grand Prix", None, "Austrian"),
+])
+def test_event_short_names_a_relocated_venue(name, season, expected):
+    from tabs.pace_data import event_short
+    assert event_short(name, season) == expected

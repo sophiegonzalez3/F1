@@ -277,22 +277,66 @@ def _current_season(lo: int, hi: int) -> int:
     return max(lo, min(hi, date.today().year))
 
 
-def _season_window(df: pd.DataFrame, season_range, mode: str) -> pd.DataFrame:
+def _season_window(df: pd.DataFrame, selection, mode: str) -> pd.DataFrame:
     """Rows whose on-track influence season falls in the selected window.
 
-    mode 'upto'  — everything from the start of the data to the upper handle
-                   (the cumulative squad a team has assembled).
-    mode 'only'  — only the selected span (who moved in THIS window).
-    Rows with no season are kept in cumulative mode and dropped in
-    year-only mode, where "which year" is the whole question.
+    mode 'upto' + [lo, hi] — every move landing in that span, accumulated: the
+                             squad a team has assembled across it. Left at the
+                             data's first season this reads as the plain
+                             "everything up to hi".
+    mode 'only' + year     — moves whose first on-track influence IS that year.
+
+    Each mode takes the shape it can actually use, and the UI shows the matching
+    slider. The earlier version forced one two-handled range on both and neither
+    was coherent: 'upto' did `s.le(hi)` and so ignored the lower handle entirely,
+    while 'only' did `s.between(lo, hi)` and so spanned several years despite the
+    "that year only" label.
+
+    Undated rows are kept only when the span is open-ended on the left — i.e. it
+    starts at or before the first season in the data, so "from the beginning"
+    fairly includes them. Once a later start year is chosen, a row with no season
+    cannot be said to fall inside the window, so it drops. Year-only always drops
+    them, since "which year" is the entire question.
     """
-    if not season_range:
+    if selection is None:
         return df
-    lo, hi = int(min(season_range)), int(max(season_range))
     s = pd.to_numeric(df["season"], errors="coerce")
+
     if mode == "only":
-        return df[s.between(lo, hi)]
-    return df[s.le(hi) | s.isna()]
+        y = int(max(selection)) if isinstance(selection, (list, tuple)) else int(selection)
+        return df[s.eq(y)]
+
+    if isinstance(selection, (list, tuple)):
+        lo, hi = int(min(selection)), int(max(selection))
+    else:  # a browser left open across the change can still post a bare year
+        lo, hi = None, int(selection)
+
+    in_span = s.le(hi) if lo is None else s.between(lo, hi)
+    open_left = lo is None or (s.notna().any() and lo <= int(s.min()))
+    return df[in_span | (s.isna() if open_left else False)]
+
+
+def _season_hint(selection, mode: str, first_season: int | None = None) -> str:
+    """Caption under the mode buttons, so the slider's meaning is never ambiguous.
+
+    Cumulative reads differently depending on where the left handle sits, and the
+    wording says which of the two it currently is.
+    """
+    if mode == "only":
+        y = int(max(selection)) if isinstance(selection, (list, tuple)) else int(selection)
+        return f"Moves that first influence the car on track in {y}"
+    if isinstance(selection, (list, tuple)):
+        lo, hi = int(min(selection)), int(max(selection))
+    else:
+        lo, hi = first_season, int(selection)
+    if lo is not None and lo == hi:
+        # Both handles on one year: the span has collapsed onto a single season,
+        # which is exactly what year-only mode shows.
+        return f"Moves influencing the car on track in {hi} alone"
+    if first_season is not None and lo is not None and lo > first_season:
+        return (f"Every move influencing the car on track from {lo} to {hi}, "
+                "accumulated — earlier moves excluded")
+    return f"Every move influencing the car on track up to and including {hi}"
 
 
 def _sankey_fig(df: pd.DataFrame, include_rumored: bool) -> go.Figure:
@@ -616,6 +660,9 @@ def hr_section() -> html.Div:
     s_lo = int(seasons.min()) if not seasons.empty else 2024
     s_hi = int(seasons.max()) if not seasons.empty else 2026
     cur = _current_season(s_lo, s_hi)
+    _marks = {y: {"label": str(y),
+                  "style": {"color": TEXT_DIM, "fontSize": "0.7rem"}}
+              for y in range(s_lo, s_hi + 1)}
 
     sankey_controls = html.Div([
         html.Div([
@@ -629,22 +676,32 @@ def hr_section() -> html.Div:
         html.Div([
             dbc.RadioItems(
                 id="hr-season-mode", inline=True, value="upto",
-                options=[{"label": "Cumulative to year", "value": "upto"},
+                options=[{"label": "Cumulative over a span", "value": "upto"},
                          {"label": "That year only", "value": "only"}],
                 style={"fontSize": "0.75rem"},
                 inputStyle={"marginRight": "4px"},
                 labelStyle={"marginRight": "12px", "color": TEXT_DIM}),
         ], style={"marginTop": "6px"}),
         html.Div([
-            html.Span("Seasons influenced on track",
+            html.Span(id="hr-season-hint",
+                      children=_season_hint([s_lo, cur], "upto", s_lo),
                       style={"color": TEXT_DIM, "fontSize": "0.72rem"}),
-            dcc.RangeSlider(
-                id="hr-season-range", min=s_lo, max=s_hi, step=1,
-                value=[s_lo, cur], allowCross=False,
-                marks={y: {"label": str(y),
-                           "style": {"color": TEXT_DIM, "fontSize": "0.7rem"}}
-                       for y in range(s_lo, s_hi + 1)},
-                tooltip={"placement": "bottom", "always_visible": False}),
+            # The control has to change shape with the mode, because the two modes
+            # genuinely take different inputs: a span for cumulative, one year for
+            # year-only. Both sliders are always in the DOM and one is hidden, so
+            # the callback's Inputs never point at a component that doesn't exist.
+            html.Div(id="hr-season-span-wrap", children=[
+                dcc.RangeSlider(
+                    id="hr-season-span", min=s_lo, max=s_hi, step=1,
+                    value=[s_lo, cur], allowCross=False, marks=_marks,
+                    tooltip={"placement": "bottom", "always_visible": False}),
+            ]),
+            html.Div(id="hr-season-year-wrap", children=[
+                dcc.Slider(
+                    id="hr-season-year", min=s_lo, max=s_hi, step=1, value=cur,
+                    marks=_marks,
+                    tooltip={"placement": "bottom", "always_visible": False}),
+            ], style={"display": "none"}),
         ], style={"marginTop": "4px", "maxWidth": "520px"}),
     ], style={"marginBottom": "8px"})
 
@@ -671,13 +728,18 @@ def hr_section() -> html.Div:
               "node. Internal promotions (same team on both ends) are NOT "
               "drawn here — they have their own card below. Toggle 'Include "
               "rumored' to fold in unconfirmed moves (e.g. Horner → Alpine). "
-              "The season slider sets which moves are drawn, by the year each "
-              "one first influences the car on track: 'cumulative to year' is "
-              "the squad a team has assembled by then, 'that year only' is who "
-              "moved in that window. It matters — undated, the chart pools "
-              "five years of transfer market into one picture, so a team that "
-              "rebuilt in 2024 and has been quiet since looks exactly like one "
-              "signing hard right now. It opens on the current season."),
+              "The two buttons change what the slider below them is: "
+              "'cumulative over a span' gives two handles and draws every move "
+              "landing between them — leave the left one at the start for the "
+              "plain 'everything by year X', or drag it in to ask what a team has "
+              "assembled SINCE a given season, with earlier history excluded. "
+              "'That year only' gives one handle and draws just the moves whose "
+              "first on-track influence is that year. Seasons are counted by when "
+              "a move first shows up on track. It matters — "
+              "undated, the chart pools five years of transfer market into one "
+              "picture, so a team that rebuilt in 2024 and has been quiet since "
+              "looks exactly like one signing hard right now. It opens on the "
+              "current season."),
     )
 
     promo_card = card(
@@ -712,13 +774,34 @@ def hr_section() -> html.Div:
     )
 
 
+_SHOWN = {"marginTop": "2px"}
+_HIDDEN = {"display": "none"}
+
+
 @callback([Output("hr-sankey", "figure"), Output("hr-net", "figure"),
-           Output("hr-promotions", "figure")],
+           Output("hr-promotions", "figure"), Output("hr-season-hint", "children"),
+           Output("hr-season-span-wrap", "style"),
+           Output("hr-season-year-wrap", "style")],
           [Input("hr-rumored-toggle", "value"),
-           Input("hr-season-range", "value"),
+           Input("hr-season-span", "value"),
+           Input("hr-season-year", "value"),
            Input("hr-season-mode", "value")],
           prevent_initial_call=True)
-def _update_hr_figs(include_rumored, season_range, mode):
-    df = _season_window(moves_df(), season_range, mode)
+def _update_hr_figs(include_rumored, span, year, mode):
+    """Draw the three flow figures, and show the slider the mode can actually use.
+
+    Cumulative reads a span so you can ask "what has this team assembled SINCE
+    2025?" rather than only "by 2026"; year-only reads a single year. The unused
+    slider is hidden rather than removed, which keeps both Inputs valid.
+    """
+    df_all = moves_df()
+    seasons = pd.to_numeric(df_all["season"], errors="coerce").dropna()
+    first = int(seasons.min()) if not seasons.empty else None
+
+    selection = year if mode == "only" else span
+    df = _season_window(df_all, selection, mode)
     b = bool(include_rumored)
-    return _sankey_fig(df, b), _net_fig(df, b), _promotions_fig(df, b)
+    return (_sankey_fig(df, b), _net_fig(df, b), _promotions_fig(df, b),
+            _season_hint(selection, mode, first),
+            _HIDDEN if mode == "only" else _SHOWN,
+            _SHOWN if mode == "only" else _HIDDEN)

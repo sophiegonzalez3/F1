@@ -37,6 +37,8 @@ import numpy as np
 import pandas as pd
 from scipy.spatial import cKDTree
 
+from f1lib.circuits import circuit_id, french_key
+
 logger = logging.getLogger(__name__)
 
 SCENES_DIR = Path("data/track_scenes")
@@ -92,12 +94,35 @@ def _slug(meeting: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "_", str(meeting)).strip("_").lower()
 
 
-def _circuit_conf(meeting: str) -> dict | None:
+# Races that kept their name but MOVED, keyed by circuit_id and checked before
+# the name substrings above — otherwise the 2026 Spanish GP matches "spanish"
+# and is georeferenced against Barcelona, the 2026 Bahrain GP against Sakhir.
+_CONF_BY_CIRCUIT: dict[str, dict] = {
+    "madring": CIRCUITS["madrid"],
+    "sepang":  {"latlon": (2.7608, 101.7381), "dtm": None},
+}
+
+
+def _circuit_conf(meeting: str, season: int | None = None) -> dict | None:
+    cid = circuit_id(meeting, season)
+    if cid in _CONF_BY_CIRCUIT:
+        return _CONF_BY_CIRCUIT[cid]
     s = _slug(meeting)
     for key, conf in CIRCUITS.items():
         if key in s:
             return conf
     return None
+
+
+def _geo_key(meeting: str, season: int | None = None) -> str:
+    """Name the geo caches (OSM ways, surroundings, DTM tiles) are filed under.
+
+    The event name, except for a relocated race, which gets its circuit id —
+    those caches are per PLACE, and a name-keyed file would hand the 2026
+    Spanish GP the Barcelona OSM/terrain already on disk. Other circuits keep
+    their name so their existing caches stay valid offline."""
+    cid = circuit_id(meeting, season)
+    return cid if cid in _CONF_BY_CIRCUIT else meeting
 
 
 def scene_cache_path(season: int, meeting: str) -> Path:
@@ -781,7 +806,8 @@ def build_track_scene(season: int, meeting: str, force: bool = False) -> dict | 
               if np.isfinite(tel_z).sum() > len(tel_z) * 0.5
               else np.full(len(s_grid), np.nan))
 
-    conf = _circuit_conf(meeting)
+    conf = _circuit_conf(meeting, season)
+    geo = _geo_key(meeting, season)
     sources = {"track": "telemetry", "dtm": "telemetry-z"}
     geo_meta = None
     center = race.copy()
@@ -790,7 +816,7 @@ def build_track_scene(season: int, meeting: str, force: bool = False) -> dict | 
     frame = fit = None
     if conf is not None:
         try:
-            ways = _fetch_osm_track(meeting, *conf["latlon"],
+            ways = _fetch_osm_track(geo, *conf["latlon"],
                                     lap_len=float(s_tel[-1]))
             ways = [w for w in ways if not _is_foreign_way(w)]
             main_ways = [w for w in ways if not _is_pit_way(w)]
@@ -868,7 +894,7 @@ def build_track_scene(season: int, meeting: str, force: bool = False) -> dict | 
             fitted_c = fit["s"] * ((center - fit["mu"]) @ fit["R"].T) + fit["t"]
             fitted_n = (nrm @ fit["R"].T)   # rotate normals into local frame
             ll_all = frame.to_latlon(fitted_c)
-            dtm_obj = _DTM_PROVIDERS[dtm_key](meeting, ll_all[:, 0], ll_all[:, 1])
+            dtm_obj = _DTM_PROVIDERS[dtm_key](geo, ll_all[:, 0], ll_all[:, 1])
             for k, f in enumerate(_XSEC):
                 pts = fitted_c + fitted_n * (f * hw[:, None] * 0.92)
                 ll = frame.to_latlon(pts)
@@ -908,10 +934,8 @@ def build_track_scene(season: int, meeting: str, force: bool = False) -> dict | 
     corner_names: dict[int, str] = {}
     straight_defs: list[tuple[int, str]] = []
     try:
-        from f1lib.config import HIST_CIRCUIT_KEY_MAP
         from tabs.track import _corner_name_map, _NAMED_STRAIGHTS
-        ck = next((fr for fr, evs in HIST_CIRCUIT_KEY_MAP.items()
-                   if _slug(meeting) in evs), None)
+        ck = french_key(meeting, season)
         if ck:
             corner_names = _corner_name_map(ck)
             straight_defs = _NAMED_STRAIGHTS.get(ck, [])
@@ -956,7 +980,7 @@ def build_track_scene(season: int, meeting: str, force: bool = False) -> dict | 
     #    transform; rendered in neutral greys by the viewer) ──
     surround = None
     if fit is not None and frame is not None and conf is not None:
-        surround = _build_surround(meeting, conf, frame, fit, ang,
+        surround = _build_surround(geo, conf, frame, fit, ang,
                                    np.asarray(cx), np.asarray(cy),
                                    z5[2], hw, datum, dtm_obj)
 

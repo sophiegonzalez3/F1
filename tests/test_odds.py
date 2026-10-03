@@ -153,6 +153,42 @@ def test_unmatched_event_degrades_to_none_not_to_a_wrong_race():
     assert event is None and rnd is None and season == 2026
 
 
+def test_venue_code_beats_a_far_provisional_settlement_date():
+    """The regression that filed a whole live weekend under the wrong race.
+
+    A market still trading ahead of its race gets a PROVISIONAL settlement
+    `close_time` set weeks out. The Dutch 2026 book closed 2026-09-05 — 13 days
+    past its own race (08-23) but one day off the Italian GP (09-06), so the
+    date match resolved every live Dutch price to Italy. The ticker's venue
+    code (DUTGP26) is authoritative and must win over the misleading date."""
+    cal = load_calendar()
+    if cal.empty:
+        pytest.skip("season_calendar.csv not present")
+    if cal[(cal["season"].astype(int) == 2026)
+           & (cal["event"] == "Dutch Grand Prix")].empty:
+        pytest.skip("no 2026 Dutch GP in calendar")
+    from datetime import datetime, timezone
+    close = datetime(2026, 9, 6, 15, 0, tzinfo=timezone.utc)   # near Italy
+    season, rnd, event = resolve_event(
+        close, "Dutch Grand Prix 2026", "", cal,
+        event_ticker="KXF1RACE-DUTGP26")
+    assert event == "Dutch Grand Prix", f"got {event}"
+    assert rnd == 12
+
+    # Austria uses AUT (not the AUS its name prefixes) to stay distinct from
+    # Australia; the alias must still land it on the right race.
+    aut = resolve_event(datetime(2026, 7, 5, 15, 0, tzinfo=timezone.utc),
+                        "", "", cal, event_ticker="KXF1RACE-AUTGP26")
+    if not cal[(cal["season"].astype(int) == 2026)
+               & (cal["event"] == "Austrian Grand Prix")].empty:
+        assert aut[2] == "Austrian Grand Prix", f"got {aut[2]}"
+
+    # An unrecognised code must not misfire — it falls through to the date
+    # logic and behaves exactly as it did before this override existed.
+    zzz = resolve_event(close, "", "", cal, event_ticker="KXF1RACE-ZZZGP26")
+    assert zzz[2] == "Italian Grand Prix", f"got {zzz[2]}"
+
+
 # ─────────────────────────────────────────────────────────────
 # the lock-time trap
 # ─────────────────────────────────────────────────────────────

@@ -73,7 +73,25 @@ FRAGMENTS = {
     "STR": "Stroll",    "ALO": "Alonso",    "OCO": "Ocon",
     "BEA": "Bearman",   "HUL": "lkenber",   "BOR": "Bortoleto",
     "GAS": "Gasl",      "COL": "Colapinto", "PER": "Perez",
-    "BOT": "Bottas",
+    "BOT": "Bottas",    "TSU": "Tsunoda",
+}
+
+# Drivers who hold a CSV row but are NOT on the current entry list, so their
+# absence from the FIA table is expected rather than a parse failure. Their
+# element counts are frozen at whatever they had reached, and both the diff
+# and the over-allowance advisory skip them — comparing a frozen row against a
+# table that no longer contains the driver is meaningless, not a mismatch.
+#
+# This is deliberately an explicit list, not a "skip anyone who's missing"
+# rule: absence stays a hard failure for every driver NOT named here, which is
+# the check that catches a real grid change. Every run prints who was skipped,
+# so a stale entry here surfaces instead of hiding. Clear a driver's line the
+# event they return.
+ABSENT = {
+    # Covered the Racing Bulls seat R12 Dutch-R14 Spanish while Hadjar was
+    # injured; stood down when Hadjar returned at R15 Azerbaijan and Lawson
+    # went back to Racing Bulls (Red Bull confirmed 2026-09-24).
+    "TSU": "reserve - stood down from R15 Azerbaijan GP when Hadjar returned",
 }
 
 # A data row ends in its seven counts; everything before them is car number,
@@ -82,8 +100,8 @@ _TAIL7 = re.compile(r"((?:\d+\s+){6}\d+)\s*$")
 
 
 def fetch(season: int, event: str) -> io.BytesIO:
-    slug = event.strip().lower().replace(" ", "_")
-    url = URL.format(season=season, slug=slug)
+    from f1lib.circuits import fia_doc_slug
+    url = URL.format(season=season, slug=fia_doc_slug(event, season))
     print(f"fetching {url}")
     req = urllib.request.Request(url, headers=_UA)
     with urllib.request.urlopen(req, timeout=60) as r:
@@ -112,9 +130,13 @@ def parse(src) -> dict[str, dict[str, int]]:
             raise ValueError(f"duplicate row for {code}: {line!r}")
         rows[code] = dict(zip(FIA_ORDER, [int(v) for v in m.group(1).split()]))
     missing = sorted(set(FRAGMENTS) - set(rows))
-    if missing:
-        raise ValueError(f"no row parsed for {missing} - has the grid changed? "
-                         "Update FRAGMENTS.")
+    unexpected = [c for c in missing if c not in ABSENT]
+    if unexpected:
+        raise ValueError(f"no row parsed for {unexpected} - has the grid changed? "
+                         "Update FRAGMENTS, or ABSENT if the driver is not on "
+                         "the entry list.")
+    for code in missing:
+        print(f"  [absent] {code}: {ABSENT[code]} - counts frozen, not checked")
     return rows
 
 
@@ -125,6 +147,11 @@ def diff(fia: dict, df: pd.DataFrame, season: int) -> list[tuple]:
         raise ValueError(f"no {season} rows in {CSV}")
     out = []
     for i, row in rows.iterrows():
+        if row["driver"] not in fia:
+            if row["driver"] in ABSENT:
+                continue          # frozen row, nothing in the table to diff it against
+            raise ValueError(f"{row['driver']} has a {season} CSV row but no FIA "
+                             "table row; add them to FRAGMENTS or ABSENT")
         for col in CSV_ORDER:
             have, want = int(row[col]), fia[row["driver"]][FIA_OF_CSV[col]]
             if have != want:
@@ -158,6 +185,18 @@ def main() -> int:
     season = df[df["season"] == args.season]
 
     print(f"parsed {len(fia)} drivers; checked {len(season)} CSV rows")
+
+    # The other direction: a driver the FIA lists who has no CSV row at all is
+    # invisible to diff(), which only walks the CSV. That is how a mid-season
+    # replacement would slip in unnoticed. --write cannot create rows, so this
+    # is a prompt to add one by hand, not a failure.
+    absent_from_csv = sorted(set(fia) - set(season["driver"]))
+    if absent_from_csv:
+        print(f"\n{len(absent_from_csv)} driver(s) in the FIA table with NO CSV row:")
+        for drv in absent_from_csv:
+            print(f"  {drv}: " + " ".join(f"{c}={fia[drv][FIA_OF_CSV[c]]}"
+                                          for c in CSV_ORDER))
+
     if diffs:
         print(f"\n{len(diffs)} disagreement(s), csv -> fia:")
         for drv, col, have, want, _ in sorted(diffs):
@@ -172,6 +211,8 @@ def main() -> int:
     # penalty may have been served at an earlier event, where 0 here is right.
     from tabs.pu_pool import _LIMITS_2026
     for _, row in season.iterrows():
+        if row["driver"] not in fia:
+            continue              # absent from the entry list; see ABSENT
         counts = fia[row["driver"]]
         over = [c for c in CSV_ORDER if counts[FIA_OF_CSV[c]] > _LIMITS_2026[c]]
         if over and not int(row["penalties_places"]):

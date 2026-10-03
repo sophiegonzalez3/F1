@@ -345,7 +345,7 @@ def _effect_rows(season: int) -> pd.DataFrame:
 
 
 def _effect_board_fig(eff: pd.DataFrame, season: int) -> go.Figure:
-    labels = [f"{abbr(r.team)} · {event_short(r.event)}"
+    labels = [f"{abbr(r.team)} · {event_short(r.event, season)}"
               for r in eff.itertuples()]
     # A row is PROVISIONAL when its "after" window is still incomplete (the
     # newest package has raced once) or when too few teams sat the round out
@@ -429,12 +429,12 @@ def _team_trend_fig(season: int, team: str) -> go.Figure:
             x=[u.round], y=[ymax * 1.06], mode="markers",
             marker=dict(symbol="triangle-down", size=11, color="#FFB000"),
             showlegend=False,
-            hovertemplate=(f"<b>{event_short(u.event)}</b> · "
+            hovertemplate=(f"<b>{event_short(u.event, season)}</b> · "
                            f"{u.n_items} upgrade item(s)<br>{u.components}"
                            "<extra>upgrades</extra>"),
         ))
     rounds, labels = (s.drop_duplicates("round").sort_values("round")["round"].tolist(),
-                      [event_short(e) for e in
+                      [event_short(e, season) for e in
                        s.drop_duplicates("round").sort_values("round")["event"]])
     theme(fig, 420)
     fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,

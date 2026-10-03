@@ -161,7 +161,20 @@ def test_title_survives_a_season_too_short_to_compare():
 # ── real data ────────────────────────────────────────────────
 
 def test_real_season_window_beats_the_half_split_on_aston(tmp_path):
-    """The regression that motivated all of this, pinned against real data."""
+    """The regression that motivated all of this, pinned against real data.
+
+    Pins the METHOD, not a value. The original version asserted Aston read
+    "flat" (|d_pace| inside the noise floor), which was true only while the
+    season ended at R11: their 16-item Hungary package landed AT R11, so just
+    one post-upgrade race sat in the recent block, diluted by two pre-upgrade
+    ones. R12 put a second post-upgrade race in and Aston moved to -1.46 pp —
+    the card working exactly as designed, failing a test that had pinned a
+    one-round transitional state.
+
+    The two invariants below held at R11 (+0.16 rolling vs +0.91 half-split)
+    and still hold at R12 (-1.46 vs +0.87), because they describe the
+    behaviour rather than the reading.
+    """
     from pathlib import Path
     p = Path("data/team_pace_by_event.csv")
     if not p.exists():
@@ -174,10 +187,29 @@ def test_real_season_window_beats_the_half_split_on_aston(tmp_path):
     if "Aston Martin" not in d.index:
         pytest.skip("Aston Martin dropped from the frame")
     ast = d.loc["Aston Martin", "d_pace"]
-    floor = _momentum_noise(s, len(_momentum_window(s)[1]))
-    # the half-split read +0.90 pp — the worst on the grid. On the rolling
-    # window Aston must no longer be an outlier of that size.
-    assert ast < 0.5, f"Aston still reads {ast:+.2f} pp on the rolling window"
-    assert abs(ast) < floor, (
-        f"Aston {ast:+.2f} pp should sit inside the {floor:.2f} pp floor — "
-        "i.e. 'flat', which is the honest reading")
+
+    # The half-split the rolling window replaced: season halves, not a window.
+    rounds = sorted(int(r) for r in s["round"].dropna().unique())
+    mid = len(rounds) // 2
+
+    def _mean(rr):
+        return (s[s["round"].isin(rr)]
+                .groupby("team")["onelap_speed_pct"].mean())
+
+    half = _mean(rounds[mid:]) - _mean(rounds[:mid])
+
+    # 1. The bug, in one line: the half-split named Aston the grid's biggest
+    #    LOSER through the best upgrade step on the 2026 board. Whatever the
+    #    rolling window reads, it must not do that.
+    assert d["d_pace"].idxmax() != "Aston Martin", (
+        f"rolling window still names Aston the biggest decliner "
+        f"({ast:+.2f} pp) — the regression this card was built to fix")
+
+    # 2. Responsiveness, stated directly and scale-free: on the SAME data the
+    #    rolling window must credit Aston with more improvement than the
+    #    half-split does. It is not a claim about magnitude, so it survives the
+    #    upgrade being absorbed into both windows later in the season.
+    assert ast < half["Aston Martin"], (
+        f"rolling {ast:+.2f} pp is not more favourable than half-split "
+        f"{half['Aston Martin']:+.2f} pp — the window is no more responsive "
+        "than the thing it replaced")

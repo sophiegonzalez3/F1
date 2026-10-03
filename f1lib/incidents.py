@@ -6,12 +6,19 @@ for three seasons. Race control still says what happened; this reads it back.
 
 Two honest limits, both measured rather than assumed:
 
-CAUSALITY NEEDS PROXIMITY. Matching a retirement to *any* earlier contact
-incident is mostly false positives — in 2026 it "explains" 6 of 44
-retirements, but Verstappen's China incident was on lap 19 and he retired on
-lap 45. Damage that ends a race ends it quickly, so only an incident within
-`CAUSAL_WINDOW` laps of the last lap counts as the cause. Everything else
-stays unclassified, which is the truthful answer.
+CAUSALITY NEEDS PROXIMITY, ASYMMETRICALLY. Matching a retirement to *any*
+earlier contact incident is mostly false positives — in 2026 it "explains" 6
+of 44 retirements, but Verstappen's China incident was on lap 19 and he
+retired on lap 45. Damage that ends a race ends it quickly, so only an
+incident within `CAUSAL_WINDOW` laps BEFORE the last lap counts as the cause.
+Everything else stays unclassified, which is the truthful answer.
+
+The window does NOT stop at the last lap, though. Race control's `Lap` is the
+message's PUBLICATION lap, and a driver cannot be in contact after retiring,
+so a contact row above their last lap is always late reporting — never a real
+event. It is allowed up to `PUBLICATION_LAG` laps after. Without that the
+register was blind to every FIRST-LAP collision: the car is classified at
+Laps=0 but the tangle is announced on lap 2-4.
 
 NO DAMAGE FLAG. An automatic "this lap is compromised by earlier contact" flag
 was built and rejected. Comparing a driver's clean laps before and after
@@ -39,6 +46,20 @@ INCIDENTS_PATH = Path("data/incidents.csv")
 # limps in within a lap or two, and race control's lap is the message's
 # publication lap, which lags the incident itself.
 CAUSAL_WINDOW = 6
+
+# How many laps AFTER a driver's last lap a contact row may still be matched.
+# Read off the data the same way CAUSAL_WINDOW was: across 2023-2026 there are
+# 38 retirements whose contact row lands after the last lap, and the gap
+# clusters at 2 (13 cases), 3 (7), 4 (10) and 5 (5) — 35 of 38 — then jumps to
+# 10, 19 and 50. Six sits in that gap and rejects the three outliers.
+#
+# This bound is safe in a way the backward one is not: a contact row is keyed
+# to a driver, and a driver can only be in contact while running, so anything
+# above their last lap is publication lag by construction. It is bounded
+# anyway because a LATE-PUBLISHED row can still describe an EARLY incident —
+# unbounded, a lap-3 tangle announced on lap 50 would "explain" a lap-45
+# retirement, which is exactly what CAUSAL_WINDOW exists to prevent.
+PUBLICATION_LAG = 6
 
 _COLS = ["season", "round", "event", "lap", "driver", "car_no", "kind",
          "reason", "counterparty", "outcome", "incident_time", "n_messages"]
@@ -115,10 +136,16 @@ def classify_retirement(season, event: str, driver: str, last_lap) -> dict:
     if pd.isna(last):
         return out
     out["earlier_contact"] = bool((c["_lap"] <= last).any())
-    causal = c[(c["_lap"] <= last + 1) & (c["_lap"] >= last - CAUSAL_WINDOW)]
+    causal = c[(c["_lap"] <= last + PUBLICATION_LAG)
+               & (c["_lap"] >= last - CAUSAL_WINDOW)]
     if causal.empty:
         return out
     row = causal.sort_values("_lap").iloc[-1]
-    out.update(cause="collision", incident_lap=float(row["_lap"]),
+    # The row's lap may be a PUBLICATION lap sitting after the driver's last
+    # lap (see PUBLICATION_LAG). Report the physically possible value, not the
+    # message's: "collision on lap 71" for a car classified at 66 laps is a
+    # number no reader or downstream consumer can use.
+    lap = min(float(row["_lap"]), float(last))
+    out.update(cause="collision", incident_lap=lap,
                counterparty=str(row.get("counterparty", "") or ""))
     return out

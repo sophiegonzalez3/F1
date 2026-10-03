@@ -20,6 +20,7 @@ from dash import html, dcc
 from f1lib.components import theme, card, GFX
 from f1lib.config import (
     TEAM_COLORS, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR, CARD_BG,
+    SERIES_1, SERIES_2, STATUS_WARN,
 )
 
 # ── Season-specific figures (update when the FIA publishes new numbers) ──────
@@ -149,11 +150,11 @@ def regulations_block() -> html.Div:
                     (f"${COST_CAP_2026}M", "Team cost cap", "2026 regulations",
                      ACCENT),
                     (f"+${COST_CAP_2026 - COST_CAP_2025}M", "vs 2025 base",
-                     f"up from ${COST_CAP_2025}M", "#00D2BE"),
+                     f"up from ${COST_CAP_2025}M", SERIES_1),
                     (f"≈${PU_CAP_2026}M", "Power-unit cap",
                      "separate manufacturer cap", "#FFC0CB"),
                     ("10%", "Aero-test cut", "max cost-cap breach penalty",
-                     "#FF8700"),
+                     SERIES_2),
                 ]),
                 _p([
                     _lead("What it is. "),
@@ -351,7 +352,7 @@ def regulations_block() -> html.Div:
                         "Minor — overspend below 5% of the cap",
                         "Material — overspend of 5% or more",
                     ]),
-                    _bullet_col("POSSIBLE SANCTIONS", "#FF8700", [
+                    _bullet_col("POSSIBLE SANCTIONS", STATUS_WARN, [
                         "Financial penalty (fine)",
                         "Constructors'/drivers' points deduction",
                         "Reduced wind-tunnel & CFD allowance",
@@ -385,7 +386,7 @@ def regulations_block() -> html.Div:
                    "The car and the power unit are both new, so early-season "
                    "development gains (and mistakes) are unusually large."),
                 html.Div([
-                    _bullet_col("POWER UNIT", "#00D2BE", [
+                    _bullet_col("POWER UNIT", SERIES_1, [
                         "~50/50 split between combustion (~400kW) and electric "
                         "(~350kW, up from 120kW)",
                         "MGU-H removed — simpler, cheaper engines",
@@ -393,7 +394,7 @@ def regulations_block() -> html.Div:
                         "PU manufacturer cost cap ≈ $130M, with allowances for "
                         "new/underperforming makers",
                     ]),
-                    _bullet_col("CHASSIS & AERO", "#FF8700", [
+                    _bullet_col("CHASSIS & AERO", SERIES_2, [
                         "Smaller cars: wheelbase −200mm, ~100mm narrower",
                         "Lighter: minimum weight down to 768kg (from 800kg)",
                         "Active aero — driver-adjustable front & rear wings",

@@ -17,7 +17,6 @@ maker) and circuit_characteristics.csv (track typing).
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import numpy as np
@@ -27,22 +26,13 @@ from dash import html, dcc, dash_table
 import dash_bootstrap_components as dbc
 
 from f1lib.components import card, theme, GFX, abbr
+from f1lib.circuits import french_key
 from f1lib.config import (
-    HIST_CIRCUIT_KEY_MAP, TEAM_COLORS, CARD_BG, ACCENT,
+    TEAM_COLORS, team_color, CARD_BG, ACCENT,
     TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )
 from tabs.pace_data import team_pace_df, event_short
 from tabs.race_stats_data import race_stats_df, lap1_df, pits_df
-
-
-def _slugify(name) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")
-
-
-_EVENT_TO_CIRCUIT = {
-    _slugify(hist): fr
-    for fr, hists in HIST_CIRCUIT_KEY_MAP.items() for hist in hists
-}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -56,7 +46,7 @@ def chaos_timeline_card(season: int) -> html.Div | None:
     s = df[(df["season"] == season) & df["round"].notna()].sort_values("round")
     if s.empty:
         return None
-    labels = [event_short(m) for m in s["meeting"]]
+    labels = [event_short(m, season) for m in s["meeting"]]
 
     fig = go.Figure()
     for col, name, clr in [("sc_count", "Safety Car", "#FFD700"),
@@ -121,7 +111,7 @@ def pit_league_card(season: int) -> html.Div | None:
 
     fig = go.Figure(go.Bar(
         y=[abbr(t) for t in g["team"]], x=g["median"], orientation="h",
-        marker=dict(color=[TEAM_COLORS.get(t, "#808080") for t in g["team"]],
+        marker=dict(color=[team_color(t, season) for t in g["team"]],
                     line=dict(color="#000", width=0.5)),
         text=[f"{m:.2f}s  (best {b:.2f})" for m, b in
               zip(g["median"], g["best"])],
@@ -170,7 +160,7 @@ def lap1_league_card(season: int, min_races: int = 3) -> html.Div | None:
 
     fig = go.Figure(go.Bar(
         y=g["driver"], x=g["mean"], orientation="h",
-        marker=dict(color=[TEAM_COLORS.get(t, "#808080") for t in g["team"]],
+        marker=dict(color=[team_color(t, season) for t in g["team"]],
                     line=dict(color="#000", width=0.5)),
         text=[f"{m:+.1f}" for m in g["mean"]], textposition="outside",
         textfont=dict(size=9),
@@ -207,12 +197,27 @@ def lap1_league_card(season: int, min_races: int = 3) -> html.Div | None:
 # One visual identity per manufacturer, reused across all three panels so a
 # maker keeps the same colour wherever it appears. Distinct hues, legible on
 # the dark #1A1A2E card surface.
+#
+# THIS IS THE CARD'S ONLY USE OF HUE. Panels B and C used to re-spend the fill
+# on an ordinal reading (pool depth / above-or-below the field) with hand-picked
+# hexes, and measured against the palette rules in f1lib/config.py those hexes
+# were livery colours: #e66767 is CIEDE2000 9.3 from Audi's #F2836B and 13.2
+# from Ferrari, #3987e5 is 13.5 from Ford — all inside the ΔE 15 that reads as
+# "the same colour". So Mercedes' attrition bar was painted Audi peach two
+# inches from a panel teaching the reader that peach means Audi. The reserved
+# STATUS_* ramp does not rescue it either (STATUS_BAD is ΔE 11.4 from Audi,
+# 10.5 from Ferrari) — green/amber/red is structurally occupied by liveries.
+#
+# Neither ordinal reading needed re-encoding elsewhere, which is the part worth
+# remembering. Panel C's was pure redundancy (a diverging axis already shows
+# sign by which side of zero a bar sits on) and panel B's has its own dedicated
+# card directly above this one. Both panels are simply one variable now.
 _PU_COLORS = {
     "Mercedes": "#00D2BE",
     "Ferrari":  "#E8002D",
     "Ford":     "#2D63C8",   # Red Bull Powertrains–Ford
     "Honda":    "#8A94A6",
-    "Audi":     "#E8A020",
+    "Audi":     "#F2836B",   # matches the Audi team livery colour
 }
 
 
@@ -254,7 +259,13 @@ def _eng_hbar(makers: list[str], values: list[float], colors: list[str],
               customdata=None, diverging: bool = False,
               xpad: float = 1.25) -> go.Figure:
     """A horizontal bar panel with a fixed maker order (best at top) shared
-    across the three engine-championship charts."""
+    across the three engine-championship charts.
+
+    Each panel carries ONE variable: bar length is the measurement, `colors` is
+    the manufacturer identity (see _PU_COLORS), and that is the whole grammar.
+    A panel that looks like it needs a second visual channel usually means the
+    second reading wants a card of its own — see the attrition panel.
+    """
     fig = go.Figure(go.Bar(
         y=makers, x=values, orientation="h",
         marker=dict(color=colors, line=dict(color="#000", width=0.5)),
@@ -419,20 +430,18 @@ def engine_championship_card(season: int) -> html.Div | None:
         rel["dnf_car"] = rel["maker"].map(_non_contact_dnf_per_car(season, pu))
         rb = _reindex(rel, "maker")
 
-        # Colour = how deep into the allowance the fleet's worst car has gone.
-        # A maker on zero penalties sitting exactly ON the limit (Ferrari, 2026)
-        # is one component away from a ten-place hit, and green would lie.
-        def _poolclr(pool):
-            if pool != pool:
-                return "#3a3a4a"
-            if pool > 1.0:
-                return "#e66767"        # already over — penalties taken
-            if pool >= 1.0:
-                return "#fab219"        # at the limit, next one costs
-            return "#0ca30c"
+        # The bar is the realised cost and NOTHING else. Pool depth used to be
+        # encoded here as well — first as the fill colour, which collided with
+        # the livery palette, then briefly as hatching — but "how close is the
+        # next penalty" is already the whole subject of pu_pool_card, which
+        # renders immediately ABOVE this card (tabs/season.py) as a per-driver
+        # heatmap with an at-limit legend. Re-stating it here in one bar per
+        # MAKER was a lower-resolution duplicate of the card above, so this
+        # panel answers its own question only; the pool figure stays in the
+        # hover for anyone reading a single bar closely.
         fig_rel = _eng_hbar(
             order, rb["places_car"].tolist(),
-            [_poolclr(v) for v in rb["pool"]],
+            [_PU_COLORS.get(m, ACCENT) for m in order],
             [f"{v:.1f}" if v == v and v > 0 else "0" for v in rb["places_car"]],
             "PU attrition — what it cost",
             "Grid places served per car supplied",
@@ -456,11 +465,13 @@ def engine_championship_card(season: int) -> html.Div | None:
             "engine is a strategy call as much as a breakage, and a fleet mean "
             "hides a single blown-up car among healthy siblings — on 2026 data "
             "the element view ranked Ferrari worse than Mercedes despite "
-            "Ferrari serving no penalties and Mercedes twenty. Colour is the "
-            "deepest single element pool any of that maker's cars has eaten: "
-            "green under the allowance, amber exactly at it (the next "
-            "component costs ten places), red already past it. Element and "
-            "engine counts are in the hover.")
+            "Ferrari serving no penalties and Mercedes twenty. It plots the "
+            "cost ALREADY PAID and nothing else — a bar of zero means no grid "
+            "places served so far, not that the next component is free. How "
+            "close each car is to its next penalty is the subject of the "
+            "Power-Unit Pool & Penalty Risk card directly above, per driver "
+            "rather than per maker; the deepest pool, element and engine "
+            "counts are also in this panel's hover.")
 
     # ── Panel C · computed straight-line-speed index ──────────────
     ts = topspeed_df()
@@ -475,12 +486,16 @@ def engine_championship_card(season: int) -> html.Div | None:
                         teams=("team", lambda x: ", ".join(abbr(v) for v in sorted(x))))
                    .reset_index())
             sb = _reindex(spd, "maker")
+            # Manufacturer colours, not a red/blue sign split: this is a
+            # DIVERGING axis, so which side of the zero line a bar falls on
+            # already says quicker-or-slower. The old split spent hue on that
+            # redundancy and landed ΔE 13.5 from Ford and 9.3 from Audi.
             fig_spd = _eng_hbar(
                 order, sb["idx"].tolist(),
-                ["#3987e5" if v == v and v >= 0 else "#e66767" for v in sb["idx"]],
+                [_PU_COLORS.get(m, ACCENT) for m in order],
                 [f"{v:+.1f}" for v in sb["idx"]],
                 "Straight-line speed index",
-                "km/h vs the field at the speed trap (quali)",
+                "km/h vs the field at the speed trap (quali)  ·  right of zero = quicker",
                 ("<b>%{y}</b><br>%{x:>+.1f} km/h vs field average<br>"
                  "avg quali trap %{customdata[0]:.0f} km/h · "
                  "race %{customdata[1]:.0f} km/h<br>Teams: %{customdata[2]}"
@@ -510,7 +525,8 @@ def engine_championship_card(season: int) -> html.Div | None:
          html.Strong("per car"), " supplied, power-unit ",
          html.Strong("reliability"), ", and a computed ",
          html.Strong("straight-line speed"), " index. On points per car, ",
-         html.Strong(leader), " lead the field."],
+         html.Strong(leader), " lead the field. Colour means the same thing in "
+         "all three panels — which manufacturer the bar is."],
         style={"color": TEXT_DIM, "fontSize": "0.78rem", "marginBottom": "10px"})
 
     return card(
@@ -564,7 +580,7 @@ def testing_card(season: int) -> html.Div | None:
 
     fig = go.Figure(go.Bar(
         y=[abbr(t) for t in s["team"]], x=s["laps"], orientation="h",
-        marker=dict(color=[TEAM_COLORS.get(t, "#808080") for t in s["team"]],
+        marker=dict(color=[team_color(t, season) for t in s["team"]],
                     line=dict(color="#000", width=0.5)),
         text=[f"{int(v):,}" for v in s["laps"]], textposition="outside",
         textfont=dict(size=10),
@@ -645,7 +661,8 @@ def penalties_card(season: int) -> html.Div | None:
     ]
     team_styles = [
         {"if": {"filter_query": f'{{team}} = "{tm}"', "column_id": "team"},
-         "color": c, "fontWeight": "700"} for tm, c in TEAM_COLORS.items()]
+         "color": team_color(tm, season), "fontWeight": "700"}
+        for tm in TEAM_COLORS]
     type_styles = [
         {"if": {"filter_query": f'{{type}} = "{t}"', "column_id": "type"},
          "color": c, "fontWeight": "700"}
@@ -718,7 +735,7 @@ def affinity_card(season: int, min_events: int = 2) -> html.Div | None:
         return None
     speed = {str(r.circuit_key): int(r.avg_speed_score)
              for r in chars.itertuples()}
-    s["circuit"] = s["event"].map(lambda e: _EVENT_TO_CIRCUIT.get(_slugify(e)))
+    s["circuit"] = s["event"].map(lambda e: french_key(e, season))
     s["kind"] = s["circuit"].map(
         lambda c: "power" if speed.get(c, 0) >= 3
         else ("technical" if speed.get(c) else None))
@@ -738,7 +755,7 @@ def affinity_card(season: int, min_events: int = 2) -> html.Div | None:
 
     fig = go.Figure(go.Bar(
         y=[abbr(t) for t in d["team"]], x=d["delta"], orientation="h",
-        marker=dict(color=[TEAM_COLORS.get(t, "#808080") for t in d["team"]],
+        marker=dict(color=[team_color(t, season) for t in d["team"]],
                     line=dict(color="#000", width=0.5)),
         text=[f"{v:+.2f}%" for v in d["delta"]], textposition="outside",
         textfont=dict(size=9),

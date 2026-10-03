@@ -10,6 +10,16 @@ already enriched onto it) and answers four questions:
   2. Who left time on the table (theoretical best vs actual best)?
   3. Who set their lap early on an improving track (and was under-rewarded)?
   4. Whose headline lap leaned on a tow / low-drag run? (speed-trap proxy)
+
+Sidebar filters
+---------------
+The SESSIONS checklist picks WHICH qualifying session is analysed; TEAMS and
+DRIVERS pick which drivers are drawn. Everything a driver is measured against
+— the segment benchmark in the progression chart, the session best-so-far
+staircase, the pole KPIs — is deliberately still the whole field, so narrowing
+the view never moves a driver's bar. Two things ignore the filter on purpose:
+the Starting Grid (a grid with holes in it is not a grid) and the deleted-lap /
+pole KPIs, which describe the session itself.
 """
 from __future__ import annotations
 
@@ -25,24 +35,49 @@ import dash_bootstrap_components as dbc
 import f1lib.state as state
 from f1lib.components import theme, card, kpi, tip, GFX
 from f1lib.glossary import gloss
-from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
+from f1lib.config import (
+    TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT,
+    SERIES_1, STATUS_WARN,
+)
 from f1lib.processing import format_lap_time
 from tabs.quali_replay import quali3d_card
 
 _SECTORS = ["Sector1Time", "Sector2Time", "Sector3Time"]
 
 
-def _quali_laps() -> tuple[pd.DataFrame, str | None]:
+def _quali_laps(sel_sessions=None) -> tuple[pd.DataFrame, str | None]:
     """Laps of the loaded meeting's qualifying session (prefers Qualifying
-    over Sprint Qualifying when both are loaded)."""
+    over Sprint Qualifying when both are loaded).
+
+    `sel_sessions` is the sidebar SESSIONS checklist (session_name values, e.g.
+    "Qualifying_2026_Hungarian Grand Prix"). Unchecking Qualifying on a sprint
+    weekend now moves this tab onto Sprint Qualifying instead of quietly
+    analysing a session the user has excluded everywhere else.
+    """
     laps = state.laps
     if laps is None or laps.empty or "session" not in laps.columns:
         return pd.DataFrame(), None
+    if sel_sessions is not None and "session_name" in laps.columns:
+        laps = laps[laps["session_name"].isin(sel_sessions)]
     for sess in ("Qualifying", "Sprint Qualifying"):
         ql = laps[laps["session"] == sess]
         if not ql.empty:
             return ql.copy(), sess
     return pd.DataFrame(), None
+
+
+def _show_mask(ql: pd.DataFrame, sel_drivers, sel_teams) -> pd.Series:
+    """Row mask for the sidebar TEAMS/DRIVERS filters.
+
+    A filter that matches nothing falls back to the full field rather than
+    blanking every chart on the tab — same rule as the BRIEF tab.
+    """
+    mask = pd.Series(True, index=ql.index)
+    if sel_teams is not None:
+        mask &= ql["Team"].isin(set(sel_teams))
+    if sel_drivers is not None:
+        mask &= ql["Driver_Short"].isin(set(sel_drivers))
+    return mask if mask.any() else pd.Series(True, index=ql.index)
 
 
 def _driver_color(ql: pd.DataFrame) -> dict[str, str]:
@@ -63,7 +98,7 @@ def _teammate_dash(ql: pd.DataFrame) -> dict[str, str]:
 
 # ── 1. Q1 → Q2 → Q3 progression ─────────────────────────────
 
-def _progression_fig(ql: pd.DataFrame) -> go.Figure:
+def _progression_fig(ql: pd.DataFrame, show: set[str] | None = None) -> go.Figure:
     per = (ql.dropna(subset=["Driver_Short"])
            .drop_duplicates("Driver_Short")
            .set_index("Driver_Short")[["Q1_s", "Q2_s", "Q3_s"]])
@@ -75,10 +110,15 @@ def _progression_fig(ql: pd.DataFrame) -> go.Figure:
                            xref="paper", yref="paper", x=0.5, y=0.5,
                            showarrow=False, font=dict(color=TEXT_DIM))
         return fig
-    best = per.min()                       # segment benchmarks
+    # Segment benchmarks stay full-field: the y-axis is "gap to the quickest
+    # car in that segment", and letting the filter redefine the benchmark would
+    # move every remaining line for reasons that have nothing to do with quali.
+    best = per.min()
     colors, dashes = _driver_color(ql), _teammate_dash(ql)
     # order legend by final position: Q3 time, then Q2, then Q1
-    order = per.sort_values(["Q3_s", "Q2_s", "Q1_s"]).index
+    order = list(per.sort_values(["Q3_s", "Q2_s", "Q1_s"]).index)
+    if show is not None:
+        order = [d for d in order if d in show]
     segs = ["Q1", "Q2", "Q3"]
     for drv in order:
         gaps, hover = [], []
@@ -144,7 +184,11 @@ def _ideal_fig(t: pd.DataFrame) -> go.Figure:
 
 # ── 3. Track evolution / when the lap was set ────────────────
 
-def _evolution_fig(ql: pd.DataFrame) -> go.Figure:
+def _evolution_fig(ql: pd.DataFrame, show: set[str] | None = None) -> go.Figure:
+    """Grey cloud and the green best-so-far staircase are SESSION context and
+    stay full-field — an evolving track is a property of the session, not of
+    the selected cars. Only the labelled personal-best markers follow the
+    filter."""
     ok = ql[~ql["IsDeleted"].fillna(False).astype(bool)].copy()
     ok["t"] = pd.to_numeric(ok["LapStartTime"], errors="coerce")
     ok["lt"] = pd.to_numeric(ok["LapTime_s"], errors="coerce")
@@ -174,6 +218,8 @@ def _evolution_fig(ql: pd.DataFrame) -> go.Figure:
 
     colors = _driver_color(ql)
     bests = ok.loc[ok.groupby("Driver_Short")["lt"].idxmin()]
+    if show is not None:
+        bests = bests[bests["Driver_Short"].isin(show)]
     fig.add_trace(go.Scatter(
         x=bests["min_in"], y=bests["lt"], mode="markers+text",
         text=bests["Driver_Short"], textposition="top center",
@@ -197,7 +243,7 @@ def _evolution_fig(ql: pd.DataFrame) -> go.Figure:
 
 # ── 4. Tow / low-drag proxy from the speed trap ──────────────
 
-def _tow_fig(ql: pd.DataFrame) -> go.Figure:
+def _tow_fig(ql: pd.DataFrame, show: set[str] | None = None) -> go.Figure:
     ok = ql[~ql["IsDeleted"].fillna(False).astype(bool)].copy()
     ok["lt"] = pd.to_numeric(ok["LapTime_s"], errors="coerce")
     ok["st"] = pd.to_numeric(ok["Speed_ST"], errors="coerce")
@@ -219,7 +265,12 @@ def _tow_fig(ql: pd.DataFrame) -> go.Figure:
                      "delta": round(float(best["st"] - others.median()), 1),
                      "best_st": float(best["st"]),
                      "med_st": float(others.median())})
-    t = pd.DataFrame(rows).sort_values("delta")
+    t = pd.DataFrame(rows)
+    # each driver's delta is measured against their OWN other laps, so filtering
+    # rows here is exactly equivalent to filtering the input
+    if not t.empty and show is not None:
+        t = t[t["driver"].isin(show)]
+    t = t.sort_values("delta") if not t.empty else t
     fig = go.Figure()
     if t.empty:
         theme(fig, 420, "")
@@ -466,7 +517,11 @@ def _grid_card(ql: pd.DataFrame, sess: str):
               "order. Once the Race session is loaded, the measured "
               "Grid_Position replaces the projection; the toggle switches "
               "back to the raw qualifying order (penalty badges stay "
-              "visible either way). Why: at penalty-heavy weekends the "
+              "visible either way). This card deliberately IGNORES the "
+              "sidebar TEAMS/DRIVERS filter: grid slots are assigned by "
+              "sorting the whole field, so a grid with cars missing from the "
+              "middle of it would number every row behind them wrongly. "
+              "Why: at penalty-heavy weekends the "
               "quali screen and the actual grid can look very different — "
               "this shows the field as it will actually line up, with ▲▼ "
               "deltas vs the quali result."),
@@ -488,18 +543,34 @@ def _update_grid_body(apply_pens):
 
 # ── Tab layout ───────────────────────────────────────────────
 
-def tab_quali() -> html.Div:
-    ql, sess = _quali_laps()
+def tab_quali(sel_drivers=None, sel_teams=None, sel_sessions=None) -> html.Div:
+    ql, sess = _quali_laps(sel_sessions)
     if ql.empty:
+        # Distinguish "never loaded" from "you unchecked it" — the second is a
+        # one-click fix and the old message sent people to the DATA tab for it.
+        unfiltered, _ = _quali_laps()
+        msg = ("No qualifying session loaded — add the meeting's Qualifying in "
+               "the DATA & QUALITY tab.")
+        if not unfiltered.empty:
+            msg = ("The loaded qualifying session is unchecked in the sidebar "
+                   "SESSIONS filter — tick it to analyse it here.")
         return html.Div(dbc.Alert(
-            "No qualifying session loaded — add the meeting's Qualifying in "
-            "the DATA & QUALITY tab.", color="secondary",
+            msg, color="secondary",
             style={"background": "#1A1A2E", "border": f"1px solid {GRID_CLR}",
                    "color": TEXT_DIM}))
+
+    # Sidebar TEAMS/DRIVERS: which drivers are DRAWN. Every benchmark below
+    # (segment best, theoretical pole, best-so-far) stays full-field.
+    shown = set(ql[_show_mask(ql, sel_drivers, sel_teams)]["Driver_Short"]
+                .dropna().unique())
+    all_drivers = set(ql["Driver_Short"].dropna().unique())
+    show = shown if shown != all_drivers else None
 
     meeting = ql["meeting"].iloc[0]
     season = ql["season"].iloc[0]
     ideal = _ideal_lap_table(ql)
+    ideal_show = (ideal[ideal["driver"].isin(shown)]
+                  if show is not None else ideal)
     grid_card = _grid_card(ql, sess)
 
     ok = ql[~ql["IsDeleted"].fillna(False).astype(bool)]
@@ -508,12 +579,12 @@ def tab_quali() -> html.Div:
     n_deleted = int(ql["IsDeleted"].fillna(False).astype(bool).sum())
     kpis = dbc.Row([
         kpi("POLE", f"{format_lap_time(pole_t)} · {pole_row['Driver_Short']}",
-            "#00D2BE", tooltip="Fastest non-deleted lap of the session."),
+            SERIES_1, tooltip="Fastest non-deleted lap of the session."),
         kpi("THEORETICAL POLE",
             format_lap_time(float(ideal["ideal"].min())) if len(ideal) else "—",
             tooltip="Fastest driver's sum of best sectors — the lap nobody "
                     "quite drove."),
-        kpi("DELETED LAPS", str(n_deleted), "#FF8700",
+        kpi("DELETED LAPS", str(n_deleted), STATUS_WARN,
             tooltip="Laps deleted (track limits etc.) during this session."),
         kpi("SESSION", sess, "#808080",
             tooltip="Which qualifying session of the loaded meeting is "
@@ -530,12 +601,15 @@ def tab_quali() -> html.Div:
         dbc.Row([
             dbc.Col(card(
                 "Q1 → Q2 → Q3 Progression",
-                dcc.Graph(figure=_progression_fig(ql), config=GFX),
+                dcc.Graph(figure=_progression_fig(ql, show), config=GFX),
                 info=("Data: each driver's best lap per qualifying segment "
                       "(from the official session results), shown as % gap "
                       "to that segment's benchmark; teammates split "
                       "solid/dashed and a line that stops early = "
-                      "eliminated. Why: who found pace when it mattered, "
+                      "eliminated. The sidebar TEAMS/DRIVERS filter picks "
+                      "which lines are drawn; the segment benchmark stays "
+                      "the whole field's, so a line never moves when you "
+                      "narrow the view. Why: who found pace when it mattered, "
                       "who peaked in Q1 and faded, and who only cleared "
                       "each cut by nothing."),
                 measure="result",
@@ -544,30 +618,36 @@ def tab_quali() -> html.Div:
         ]),
         card(
             "Time Left on the Table",
-            dcc.Graph(figure=_ideal_fig(ideal), config=GFX)
-            if len(ideal) else
+            dcc.Graph(figure=_ideal_fig(ideal_show), config=GFX)
+            if len(ideal_show) else
             html.P("No sector times available.", style={"color": TEXT_DIM}),
             info=("Data: per driver, the best single lap actually driven vs "
                   "the 'theoretical best' — the sum of their three best "
                   "sector times from any non-deleted lap of the session. "
+                  "Each driver is compared only with themselves, so the "
+                  "sidebar filter hides bars without changing any of them. "
                   "Why: a big gap means the driver never hooked the lap up "
                   "(or the track kept evolving under them) — classic "
                   "post-quali talking point, now quantified."),
         ),
         card(
             "Track Evolution — Timing the Lap",
-            dcc.Graph(figure=_evolution_fig(ql), config=GFX),
+            dcc.Graph(figure=_evolution_fig(ql, show), config=GFX),
             info=("Data: every flying lap (within 110% of the session best) "
                   "against session time; the green staircase is the session "
                   "best-so-far, coloured markers are each driver's personal "
-                  "best. Why: on an evolving track, a lap set early is worth "
+                  "best. The sidebar filter applies to the labelled personal "
+                  "bests only — the grey cloud and the staircase stay "
+                  "full-field, because the track those drivers were reading "
+                  "was evolving under the WHOLE session. Why: on an evolving "
+                  "track, a lap set early is worth "
                   "more than the same time set late — drivers whose marker "
                   "sits left of the pack banked their lap on a slower track "
                   "(under-rewarded), and late markers rode the grip."),
         ),
         card(
             "Tow Detector (speed-trap proxy)",
-            dcc.Graph(figure=_tow_fig(ql), config=GFX),
+            dcc.Graph(figure=_tow_fig(ql, show), config=GFX),
             info=("Data: each driver's speed-trap reading on their BEST lap "
                   "minus their own median over their other flying laps — "
                   "within 110% of their best, pit-in/out laps excluded "

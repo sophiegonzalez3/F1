@@ -20,7 +20,7 @@ from f1lib.glossary import gloss
 from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS, get_driver_color,
     DARK_BG, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
-    SPEED_PERCENTILE,
+    SPEED_PERCENTILE, SERIES_1, SERIES_2,
 )
 from f1lib.processing import format_lap_time
 
@@ -475,12 +475,12 @@ def _tab_teammates_inner(fl, fs):
             html.Div([
                 html.Div(style={
                     "width": f"{pct_a:.1f}%", "height": "100%",
-                    "background": "#00D2BE", "display": "inline-block",
+                    "background": SERIES_1, "display": "inline-block",
                     "borderRadius": "3px 0 0 3px" if pct_a > 0 and pct_a < 100 else "3px",
                 }),
                 html.Div(style={
                     "width": f"{100 - pct_a:.1f}%", "height": "100%",
-                    "background": "#FF8700", "display": "inline-block",
+                    "background": SERIES_2, "display": "inline-block",
                     "borderRadius": "0 3px 3px 0" if pct_a > 0 and pct_a < 100 else "3px",
                 }),
             ], style={"display": "flex", "height": "100%"}),
@@ -491,7 +491,7 @@ def _tab_teammates_inner(fl, fs):
         # Metric detail pills
         pills = []
         for label, a_str, b_str, winner in metric_pills_data:
-            bg = "#00D2BE" if winner == drv_a else ("#FF8700" if winner == drv_b else "#333")
+            bg = SERIES_1 if winner == drv_a else (SERIES_2 if winner == drv_b else "#333")
             pills.append(html.Span(
                 f"{label}: {a_str} | {b_str}",
                 style={
@@ -516,13 +516,13 @@ def _tab_teammates_inner(fl, fs):
                 ]),
                 html.Div([
                     html.Span(drv_a, style={
-                        "color": "#00D2BE", "fontWeight": "800", "fontSize": "1.25rem",
+                        "color": SERIES_1, "fontWeight": "800", "fontSize": "1.25rem",
                     }),
                     html.Span(f"  {score_a} – {score_b}  ", style={
                         "color": TEXT_DIM, "fontSize": "0.95rem", "fontWeight": "600",
                     }),
                     html.Span(drv_b, style={
-                        "color": "#FF8700", "fontWeight": "800", "fontSize": "1.25rem",
+                        "color": SERIES_2, "fontWeight": "800", "fontSize": "1.25rem",
                     }),
                 ], style={"margin": "5px 0"}),
                 bar_el,
@@ -818,12 +818,12 @@ def _tab_teammates_inner(fl, fs):
                         ),
                         html.Div([
                             html.Span(r["drv_a"],
-                                style={"color": "#00D2BE" if winner == r["drv_a"] else TEXT_DIM,
+                                style={"color": SERIES_1 if winner == r["drv_a"] else TEXT_DIM,
                                        "fontWeight": "800", "fontSize": "1.05rem"}),
                             html.Span(f"  {va_s}  ·  {vb_s}  ",
                                 style={"color": TEXT_DIM, "fontSize": "0.85rem"}),
                             html.Span(r["drv_b"],
-                                style={"color": "#FF8700" if winner == r["drv_b"] else TEXT_DIM,
+                                style={"color": SERIES_2 if winner == r["drv_b"] else TEXT_DIM,
                                        "fontWeight": "800", "fontSize": "1.05rem"}),
                         ]),
                     ]), style={"background": CARD_BG,

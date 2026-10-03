@@ -30,6 +30,8 @@ its source data expires — see the note on `odds` in STEPS):
  12. scripts/compute_upgrade_study.py  panel event study on declared upgrades
                                        (needs the pace table + upgrades.csv)
  13. compute_mistakes.py               micro-mistake archive (telemetry, slow)
+ 14. scripts/seed_dnf_causes.py       worklist of retirements race control
+                                      cannot explain, for hand curation
 
 Stops at the first failing step; every step is idempotent, so fix and re-run.
 Not covered here (needs a human or a browser): the `radio-review` skill, the
@@ -115,9 +117,22 @@ STEPS: list[tuple[str, str, list[str]]] = [
     # memory, which is what makes it survivable a week after the race.
     ("dossier",   "review evidence dossier",
      [sys.executable, "scripts/review_dossier.py", "--latest"]),
+    # Same shape as the review rows: writes SKELETONS for a human, never a
+    # verdict. Must come after `incidents`, because it deliberately skips any
+    # retirement race control already explains as contact — seeded first, it
+    # would create curation work the register was about to do for free.
+    ("dnfcauses", "DNF cause worklist",
+     [sys.executable, "scripts/seed_dnf_causes.py", "--latest"]),
 ]
 
 FOLLOW_UPS = [
+    "dnf causes      open data/dnf_causes.csv and fill `cause_family` for the",
+    "                rows just seeded (the retirements race control could NOT",
+    "                explain - a car that just stops draws no stewards' message,",
+    "                so press is the only source). Stamp `press_checked` with",
+    "                today's date EVEN WHEN YOU FIND NOTHING, or 'looked, press",
+    "                never said' is indistinguishable from 'nobody looked'.",
+    "                Outstanding count: python scripts/seed_dnf_causes.py --todo",
     "model review    open data/model_review.csv and fill in `category` +",
     "                `note` for the rows just seeded (3-12 a race), reading",
     "                data/review_dossiers/<season>__<Event>.md alongside it —",

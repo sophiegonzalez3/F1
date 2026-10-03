@@ -2,7 +2,7 @@
 # Runs the app silently (no console window) and logs to logs\autostart.log.
 # Not meant to be run by hand — use share.ps1 for a manual/visible start.
 
-$here = "C:\Users\sophi\F1"
+$here = $PSScriptRoot
 Set-Location $here
 
 $python = Join-Path $here ".venv\Scripts\python.exe"

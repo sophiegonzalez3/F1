@@ -30,6 +30,7 @@ from f1lib.glossary import gloss
 from f1lib.config import (
     TEAM_COLORS, COMPOUND_COLORS,
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
+    SERIES_1, SERIES_2, NEUTRAL, NEUTRAL_ALT, STATUS_WARN,
 )
 from f1lib.processing import (
     clean_and_enrich_laps, enrich_weather, enrich_track_limits,
@@ -201,7 +202,7 @@ def _position_changes_fig(rl: pd.DataFrame, title: str, height: int = 640) -> go
     fig.add_annotation(
         x=0.0, y=10.5, xref="x", yref="y", text="points ▲", showarrow=False,
         xanchor="left", yanchor="bottom",
-        font=dict(size=9, color="#00D2BE"),
+        font=dict(size=9, color=NEUTRAL),
     )
 
     fig.update_layout(
@@ -1026,13 +1027,13 @@ def _weather_race_fig(rl: pd.DataFrame, title: str, height: int = 480) -> go.Fig
     if "TrackTemp" in per_lap.columns:
         fig.add_trace(go.Scatter(
             x=per_lap["LapNo"], y=per_lap["TrackTemp"], mode="lines",
-            name="Track temp", line=dict(color="#FF8700", width=2.2),
+            name="Track temp", line=dict(color=SERIES_1, width=2.2),
             hovertemplate="Lap %{x}<br>Track %{y:.1f} °C<extra></extra>",
         ), row=1, col=1)
     if "AirTemp" in per_lap.columns:
         fig.add_trace(go.Scatter(
             x=per_lap["LapNo"], y=per_lap["AirTemp"], mode="lines",
-            name="Air temp", line=dict(color="#00D2BE", width=2.0, dash="dot"),
+            name="Air temp", line=dict(color=SERIES_2, width=2.0, dash="dot"),
             hovertemplate="Lap %{x}<br>Air %{y:.1f} °C<extra></extra>",
         ), row=1, col=1)
 
@@ -1198,7 +1199,7 @@ def _pitstops_card(rl: pd.DataFrame, meeting, shown_year) -> object:
     kpis = dbc.Row([
         kpi("FASTEST STOP",
             f"{best[val_col]:.1f}s · {best['Driver_Short']}{_best_lap}",
-            "#00D2BE",
+            SERIES_1,
             tooltip="Quickest single stop of the race on the measured metric "
                     "(stationary time when available, pit-lane time otherwise)."),
         kpi("MEDIAN STATIONARY",
@@ -1209,11 +1210,11 @@ def _pitstops_card(rl: pd.DataFrame, meeting, shown_year) -> object:
         kpi("MEDIAN PIT-LANE TIME",
             f"{ps['PitLaneTime_s'].median():.1f}s"
             if ps["PitLaneTime_s"].notna().any() else "n/a",
-            "#FF8700",
+            SERIES_2,
             tooltip="Field-wide median pit-entry-to-pit-exit time. The "
                     "strategy simulator's pit loss is larger: it also counts "
                     "the slow in/out laps."),
-        kpi("TOTAL STOPS", f"{len(ps)}", "#808080",
+        kpi("TOTAL STOPS", f"{len(ps)}", NEUTRAL_ALT,
             tooltip="Number of recorded stops in this race (after the "
                     "sidebar Driver/Team filter)."),
     ])
@@ -1604,14 +1605,18 @@ def _add_radio_markers(fig: go.Figure, rl: pd.DataFrame,
 
 # Topic tags come from radio_loader.tag_topics (keyword rules on the
 # transcript). One colour per topic, used for the table badges.
+# A radio topic is not a constructor, so none of these may be a livery hex —
+# "ENERGY / MODE" used to be Mercedes teal and "TRAFFIC / FLAGS" McLaren orange,
+# which made the badges read as team labels. Seven distinct hues, each at least
+# ΔE 17 from every team colour.
 _TOPIC_COLORS = {
-    "PIT CALL":        "#E10600",
-    "TYRES":           "#FFD700",
-    "WEATHER":         "#4DA3FF",
-    "TRAFFIC / FLAGS": "#FF8700",
-    "ENERGY / MODE":   "#00D2BE",
-    "STRATEGY":        "#B07CFF",
-    "CAR / DAMAGE":    "#FF5C8A",
+    "PIT CALL":        "#F2545B",
+    "TYRES":           "#F5B942",
+    "WEATHER":         "#5EC8F2",
+    "TRAFFIC / FLAGS": "#C8D94A",
+    "ENERGY / MODE":   "#A78BFA",
+    "STRATEGY":        "#E85BC0",
+    "CAR / DAMAGE":    "#9E7B5A",
 }
 
 
@@ -1862,7 +1867,7 @@ def tab_race(sel_drivers=None, sel_teams=None):
             "marginRight": "10px",
         }),
         html.Span(str(shown_year), style={
-            "color": "#fff", "background": "#005AFF" if not is_fallback else "#B8860B",
+            "color": "#fff", "background": SERIES_1 if not is_fallback else STATUS_WARN,
             "borderRadius": "4px", "padding": "3px 12px", "fontWeight": "800",
             "fontSize": "1.0rem", "letterSpacing": "1px",
         }),

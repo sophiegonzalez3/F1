@@ -27,6 +27,7 @@ from tabs.pace_data import team_pace_df, seasons, event_short, season_calendar_d
 from tabs.regulations import regulations_block
 from tabs.finance import finance_block, compliance_card
 from tabs.hr import hr_section
+from tabs.org_chart import org_section
 from tabs.infrastructure import infrastructure_section
 from tabs.reliability import reliability_card, contact_card
 from tabs.pu_pool import pu_pool_card
@@ -48,7 +49,8 @@ def _team_order(s: pd.DataFrame) -> list[str]:
 
 def _round_axis(s: pd.DataFrame) -> tuple[list[int], list[str]]:
     ev = s.drop_duplicates("round").sort_values("round")
-    return ev["round"].tolist(), [event_short(e) for e in ev["event"]]
+    seasons = ev["season"] if "season" in ev.columns else [None] * len(ev)
+    return ev["round"].tolist(), [event_short(e, y) for e, y in zip(ev["event"], seasons)]
 
 
 def _trend_fig(s: pd.DataFrame, ycol: str, ytitle: str,
@@ -285,15 +287,17 @@ def _window_character(s: pd.DataFrame, rounds: list[int]) -> float | None:
     if not rounds:
         return None
     try:
-        from tabs.season_ops import _EVENT_TO_CIRCUIT, _slugify
+        from f1lib.circuits import french_key
         chars = pd.read_csv("data/circuit_characteristics.csv",
                             encoding="utf-8-sig").set_index("circuit_key")
     except Exception:
         return None
-    ev = (s[s["round"].isin(rounds)].drop_duplicates("round")["event"])
+    blk = s[s["round"].isin(rounds)].drop_duplicates("round")
+    seasons = blk["season"] if "season" in blk.columns else [None] * len(blk)
     vals = []
-    for e in ev:
-        key = _EVENT_TO_CIRCUIT.get(_slugify(e))
+    for e, yr in zip(blk["event"], seasons):
+        # season-aware: the 2026 Spanish GP is the Madring, not Barcelona
+        key = french_key(e, None if pd.isna(yr) else int(yr))
         if key in chars.index:
             v = pd.to_numeric(chars.loc[key, "avg_speed_score"], errors="coerce")
             if pd.notna(v):
@@ -570,7 +574,7 @@ def _calendar_fig(cal: pd.DataFrame, height: int = 210) -> go.Figure:
                 sizex=span_ms * 0.035, sizey=0.42, xanchor="center",
                 yanchor="middle", sizing="contain", layer="above"))
         fig.add_annotation(x=xs, y=0, yshift=-26, textangle=-45,
-                           text=event_short(r["event"]), showarrow=False,
+                           text=event_short(r["event"], r["season"]), showarrow=False,
                            xanchor="right", font=dict(size=9, color=TEXT_DIM))
 
     if cal["x"].min() <= today <= cal["x"].max():
@@ -763,7 +767,7 @@ def _momentum_footnotes(s: pd.DataFrame):
                 notes.append(
                     f"Biggest single-round step in this window: "
                     f"{abbr(best['team'])} {best['step']:+.2f} pp at "
-                    f"{event_short(best['event'])}{extra}.")
+                    f"{event_short(best['event'], int(s['season'].iloc[0]))}{extra}.")
     except Exception:
         pass
 
@@ -991,6 +995,7 @@ def tab_context() -> html.Div:
                         "where, and the gardening-leave gaps the budget-cap era "
                         "turned into a long-term form lever"),
         hr_section(),
+        org_section(),
     ]
     if yrs:
         dm_card = driver_market_card(max(yrs))

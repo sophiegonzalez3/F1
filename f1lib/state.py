@@ -237,3 +237,45 @@ def initial_load() -> str:
     logger.warning("No event could be loaded at startup — dashboard starts "
                    "without session data.")
     return msg
+
+
+# ── Grand Prix starting grid ─────────────────────────────────
+
+def gp_grid(min_drivers: int = 8) -> dict[str, int] | None:
+    """The Grand Prix starting grid {driver_code: slot} for the loaded meeting.
+
+    NEVER returns the SPRINT grid. On a sprint weekend the Sprint session
+    carries its own `GridPosition` — a *different* grid — so any forecast that
+    reads grid positions off `laps`/`results` indiscriminately starts everyone
+    in their sprint slot. Zandvoort 2026 is the worked example: Leclerc lined up
+    3rd for the sprint but qualified 6th for the Grand Prix, and the pre-race
+    forecast put him on the podium ~53% of the time off the wrong P3.
+
+    Priority (each source superseding the next):
+      1. the Race session's `GridPosition`, once the race is loaded — ground
+         truth, already includes grid penalties and pit-lane starts;
+      2. else the main Qualifying classification (`Position` order) — the real
+         pre-race grid, modulo penalties, and replaced by (1) once the race runs;
+      3. else None, so the caller samples a predicted grid — the genuine
+         pre-qualifying case, on sprint and conventional weekends alike.
+
+    Keys are FIA three-letter codes (`Abbreviation`), matching `Driver_Short`.
+    """
+    import pandas as pd
+    r = results_raw
+    if r is None or getattr(r, "empty", True) or "session" not in r.columns:
+        return None
+
+    def _grid_from(session: str, col: str) -> dict[str, int] | None:
+        s = r[r["session"] == session]
+        if s.empty or col not in s.columns or "Abbreviation" not in s.columns:
+            return None
+        pos = pd.to_numeric(s[col], errors="coerce")
+        g = s.assign(_slot=pos).dropna(subset=["_slot"])
+        g = g[g["_slot"] > 0].drop_duplicates("Abbreviation")
+        if len(g) < min_drivers:
+            return None
+        return {str(a): int(v) for a, v in zip(g["Abbreviation"], g["_slot"])}
+
+    return (_grid_from("Race", "GridPosition")
+            or _grid_from("Qualifying", "Position"))

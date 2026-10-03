@@ -14,6 +14,7 @@ import dash_bootstrap_components as dbc
 
 from f1lib.config import (
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
+    SERIES_1, SERIES_2,
 )
 
 # ── Plotly theme ─────────────────────────────────────────────
@@ -158,14 +159,14 @@ def plain_line(text):
 PACE_MEASURES: dict[str, tuple[str, str, str]] = {
     # key: (label, colour, definition)
     "one-lap": (
-        "ONE-LAP SPEED", "#FF8A3D",
+        "ONE-LAP SPEED", SERIES_1,
         "ONE-LAP SPEED — a single flat-out lap: low fuel, fresh tyres, maximum "
         "attack. This is qualifying speed. Called SPEED, not pace, on purpose: "
         "in this dashboard 'pace' always means a rhythm sustained over many "
         "laps. It says nothing about how the car behaves over a stint, and a "
         "car can be strong here and weak on Sunday."),
     "race": (
-        "RACE PACE", "#3DD6C4",
+        "RACE PACE", SERIES_2,
         "RACE PACE — the MEDIAN of clean green-flag laps on race fuel and "
         "wearing tyres, corrected for fuel burn and track evolution, with "
         "dirty-air laps excluded. A rhythm sustained over many laps, which is "

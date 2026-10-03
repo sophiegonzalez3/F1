@@ -255,7 +255,7 @@ def main() -> int:
           f"({len(have)} already stored)\n")
     no_coords: list[str] = []
     for i, r in enumerate(todo, 1):
-        conf = _circuit_conf(str(r["event"]))
+        conf = _circuit_conf(str(r["event"]), int(r["season"]))
         if not conf or not conf.get("latlon"):
             skipped += 1
             no_coords.append(f"{int(r['season'])} {r['event']}")

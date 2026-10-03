@@ -20,7 +20,7 @@ import f1lib.state as state
 from f1lib.circuits import french_key
 from f1lib.components import card
 from f1lib.config import (
-    HISTORICAL_DIR, HIST_CIRCUIT_KEY_MAP, TEAM_COLORS,
+    HISTORICAL_DIR, HIST_CIRCUIT_KEY_MAP, team_color,
     ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )
 
@@ -387,7 +387,7 @@ def _driver_standings_widget(fl):
     body = (
         _standings_leaderboard_body(
             entities_sorted, rank_after, rank_before, after_pts, round_pts,
-            color_of=lambda d: TEAM_COLORS.get(team_of.get(d, ""), "#808080"),
+            color_of=lambda d: team_color(team_of.get(d, ""), season),
             primary_of=lambda d: d,
             secondary_of=lambda d: team_of.get(d, ""),
             entity_header="DRIVER",
@@ -517,7 +517,7 @@ def _constructor_standings_widget(fl):
     _champ_body = (
         _standings_leaderboard_body(
             _champ_rows_sorted, _rank_after, _rank_before, _after_pts, _session_team_pts,
-            color_of=lambda t: TEAM_COLORS.get(t, "#808080"),
+            color_of=lambda t: team_color(t, _champ_season),
             primary_of=lambda t: t,
             secondary_of=None,
             entity_header="CONSTRUCTOR",
@@ -629,10 +629,10 @@ def _champions_card():
 
     body_rows = []
     for i, r in enumerate(rows_data):
-        d1c = TEAM_COLORS.get(r["d1_team"], "#808080")
-        d2c = TEAM_COLORS.get(r["d2_team"], "#808080")
-        t1c = TEAM_COLORS.get(r["t1_team"], "#808080")
-        t2c = TEAM_COLORS.get(r["t2_team"], "#808080")
+        d1c = team_color(r["d1_team"], r["season"])
+        d2c = team_color(r["d2_team"], r["season"])
+        t1c = team_color(r["t1_team"], r["season"])
+        t2c = team_color(r["t2_team"], r["season"])
         d1n = names.get(r["d1_abbr"], r["d1_abbr"])
         d2n = names.get(r["d2_abbr"], r["d2_abbr"]) if r["d2_abbr"] else None
         body_rows.append(html.Div([
@@ -753,13 +753,40 @@ def _track_avail_years() -> list[int]:
     ), reverse=True)
 
 
+def circuit_rows(df: pd.DataFrame, circuit_key, event_col: str = "circuit_key",
+                 season_col: str = "season") -> pd.DataFrame:
+    """Rows of *df* that ran on the Track-Info circuit *circuit_key*, resolved
+    per (event, season) through `french_key`.
+
+    This replaces `HIST_CIRCUIT_KEY_MAP.get(key)`, which is season-blind: it
+    listed `spanish_grand_prix` under `espagne`, so Barcelona's history picked
+    up the 2026 Madrid race while `madrid` found nothing at all. Unregistered
+    events fall back to their own slug, matching `_loaded_circuit_key`."""
+    if df is None or df.empty or event_col not in df.columns:
+        return pd.DataFrame()
+    pairs = df[[event_col, season_col]].drop_duplicates() \
+        if season_col in df.columns else df[[event_col]].drop_duplicates()
+    hit = set()
+    for row in pairs.itertuples(index=False):
+        ev = row[0]
+        season = int(row[1]) if len(row) > 1 and pd.notna(row[1]) else None
+        fr = french_key(str(ev), season) or _slugify_event(ev)
+        if fr == circuit_key:
+            hit.add((ev, season))
+    if season_col in df.columns:
+        keys = list(zip(df[event_col], df[season_col].map(
+            lambda s: int(s) if pd.notna(s) else None)))
+    else:
+        keys = [(e, None) for e in df[event_col]]
+    return df[[k in hit for k in keys]].copy()
+
+
 def _circuit_race_years(circuit_key) -> list[int]:
     """Seasons for which the archive holds a race result for *circuit_key*."""
-    keys = HIST_CIRCUIT_KEY_MAP.get(circuit_key, [circuit_key])
     if HIST_RACE.empty or "circuit_key" not in HIST_RACE.columns:
         return []
     return sorted(int(y) for y in
-                  HIST_RACE[HIST_RACE["circuit_key"].isin(keys)]["season"].unique())
+                  circuit_rows(HIST_RACE, circuit_key)["season"].unique())
 
 
 def _circuit_display_season(circuit_key, avail_years: list[int] | None = None) -> int | None:

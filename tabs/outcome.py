@@ -43,14 +43,19 @@ from dash import dcc, html, callback, Input, Output, State
 import dash_bootstrap_components as dbc
 
 from f1lib.components import theme, card, GFX
-from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
+from f1lib.config import (
+    TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT, SERIES_COLORS,
+    SERIES_1, SERIES_2,
+)
 
 ODDS = Path("data/odds_snapshots.csv")
 RECORD = Path("data/backtest_race_forecast.csv")
 DETAIL = Path("data/backtest_race_forecast_detail.csv")
 
-MODEL_CLR = "#3DD6C4"
-MARKET_CLR = "#FF8A3D"
+# Model and market are not constructors — reserved non-team palette, so neither
+# reads as "this card is about Mercedes / McLaren" (see config.SERIES_COLORS).
+MODEL_CLR = SERIES_1
+MARKET_CLR = SERIES_2
 # Below this many priced drivers a market card is noise, not a thin signal:
 # coverage is very uneven (Hungary 2026 has 155 podium snapshots, Miami has 1).
 MIN_DRIVERS = 6
@@ -254,12 +259,18 @@ def _pick_fig(payload: dict, picked) -> go.Figure:
 # ─────────────────────────────────────────────────────────────
 
 def market_card(season: int, event: str, fc: pd.DataFrame,
-                market: str = "podium"):
+                market: str = "podium", show=None):
     """Where the model and the betting market disagree, this weekend.
 
     The single most informative card about the outcome layer: the market is a
     well-calibrated reference that exists before the race, so a systematic gap
     is evidence about the model — available without waiting for a result.
+
+    `show` is the sidebar driver selection. It picks which drivers are DRAWN;
+    the MIN_DRIVERS coverage gate is still judged on the full priced field,
+    because that gate asks "does this event have a usable book?" — a question
+    about the market, not about how many rows the reader wants to see. Without
+    that split, filtering to a teammate pair would make the card vanish.
     """
     if fc is None or fc.empty:
         return None
@@ -278,6 +289,11 @@ def market_card(season: int, event: str, fc: pd.DataFrame,
     d = fc.assign(mkt=fc["driver"].map(mkt)).dropna(subset=["mkt"])
     if len(d) < MIN_DRIVERS:
         return None
+    n_priced = len(d)
+    if show is not None:
+        sub = d[d["driver"].isin(set(show))]
+        if not sub.empty:
+            d = sub
     d = d.sort_values(col, ascending=False).head(12)
     d["gap"] = d[col] - d["mkt"]
 
@@ -312,7 +328,10 @@ def market_card(season: int, event: str, fc: pd.DataFrame,
                 info=f"Model probability against the last de-vigged market "
                      f"price before lights out ({hrs:.0f} h out), from "
                      f"{last['bookmaker'].nunique()} source(s). Prices are "
-                     f"filtered to a live, sane book. The market is a "
+                     f"filtered to a live, sane book. Showing {len(d)} of "
+                     f"{n_priced} priced drivers (sidebar filter, then the top "
+                     f"12 by model probability); neither dot moves when you "
+                     f"narrow the view. The market is a "
                      f"BENCHMARK — it is never fed to the model, or the model "
                      f"could not be scored against it.",
                 plain=f"Biggest disagreement: {big['driver']}, where the model "
@@ -327,18 +346,25 @@ def market_card(season: int, event: str, fc: pd.DataFrame,
 # ─────────────────────────────────────────────────────────────
 
 def movement_card(season: int, event: str, market: str = "podium",
-                  top: int = 6):
+                  top: int = 6, show=None):
     """How the market's opinion moved as the weekend ran.
 
     The reason the odds feed stores a TIMESTAMP and not just a price. The
     shape is usually flat for days and then steps hard when qualifying
     resolves the grid — which is the same information the model gets, so the
     two can be compared on when they learned, not just what they concluded.
+
+    `show` narrows the lines to the sidebar's drivers; the snapshot-count gate
+    is still judged on the whole book, for the same reason as `market_card`.
     """
     o = _usable_odds(season, event, market)
     if o.empty or o["snapshot_ts"].nunique() < MIN_SNAPSHOTS:
         return None
     last = o.sort_values("hours_to_lock").groupby("driver").head(1)
+    if show is not None:
+        sub = last[last["driver"].isin(set(show))]
+        if not sub.empty:
+            last = sub
     keep = list(last.nlargest(top, "p_devig_power")["driver"])
     d = o[o["driver"].isin(keep)].copy()
     d["h"] = d["hours_to_lock"].round(0)
@@ -365,7 +391,9 @@ def movement_card(season: int, event: str, market: str = "podium",
                 dcc.Graph(figure=fig, config=GFX),
                 info=f"Every de-vigged market price recorded for this event, "
                      f"from {span} h before the race to lights out "
-                     f"({o['snapshot_ts'].nunique()} snapshots). This is why "
+                     f"({o['snapshot_ts'].nunique()} snapshots), for the "
+                     f"{len(keep)} best-priced drivers of the sidebar "
+                     f"selection. This is why "
                      f"the feed stores a timestamp: a price is only observable "
                      f"while the market is open and cannot be reconstructed "
                      f"afterwards.",
@@ -415,7 +443,7 @@ def record_card(season: int | None = None):
         return None
 
     fig = go.Figure()
-    for (name, label), clr in zip(_TARGETS, ("#FF8A3D", MODEL_CLR, "#9B8CFF")):
+    for (name, label), clr in zip(_TARGETS, SERIES_COLORS):
         gcol, bcol = f"brier_grid_{name}", f"brier_{name}"
         if gcol not in per.columns or bcol not in per.columns:
             continue

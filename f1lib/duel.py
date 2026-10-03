@@ -439,7 +439,7 @@ def rain_forecast(season: int, meeting: str) -> dict | None:
     out = None
     try:
         from f1lib.track_scene import _circuit_conf
-        conf = _circuit_conf(meeting)
+        conf = _circuit_conf(meeting, season)
         if conf:
             import fastf1
             from f1lib.config import FASTF1_CACHE_DIR

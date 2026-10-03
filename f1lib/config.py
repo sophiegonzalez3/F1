@@ -15,8 +15,12 @@ TEAM_COLORS: dict[str, str] = {
     "Alpine":         "#FFC0CB",
     "Williams":       "#005AFF",
     "Racing Bulls":   "#2B4562",
-    "Haas F1 Team":   "#B0B0B0",
-    "Audi":           "#828788",
+    # Haas and Audi were both greys (#B0B0B0 / #828788) only ΔE 13.5 apart —
+    # indistinguishable in a chart. Haas takes its dark red and Audi the peach
+    # from its secondary livery colour. See TEAM_COLORS_BY_SEASON for the one
+    # season range where Haas cannot use red.
+    "Haas F1 Team":   "#B03050",
+    "Audi":           "#F2836B",
     "Cadillac":       "#C0A020",
     "Sauber":         "#00E701",
 
@@ -33,6 +37,42 @@ TEAM_COLORS: dict[str, str] = {
     "Alfa Romeo":         "#900000",   # Sauber lineage, Alfa-Romeo red (2022)
     "Alfa Romeo Racing":  "#900000",   # Sauber lineage, Alfa-Romeo red (2021)
 }
+
+# ── Season-conditional overrides ─────────────────────────────────
+# Haas's dark red only works from 2024 on. Through 2023 the Sauber entry raced
+# as Alfa Romeo in a near-identical red (#900000, ΔE 9.5 from Haas's red), so
+# any 2021-23 chart would put two reds side by side that read as one team. Those
+# seasons get Haas's silver instead — which is also what the car actually looked
+# like then. From 2024 the entry is Kick Sauber green and the clash disappears.
+HAAS_LEGACY_SILVER  = "#D8D8D8"
+HAAS_LEGACY_SEASONS = (2021, 2022, 2023)
+
+TEAM_COLORS_BY_SEASON: dict[int, dict[str, str]] = {
+    s: {"Haas F1 Team": HAAS_LEGACY_SILVER} for s in HAAS_LEGACY_SEASONS
+}
+
+TEAM_COLOR_FALLBACK = "#808080"
+
+
+def team_color(team, season=None, default: str = TEAM_COLOR_FALLBACK) -> str:
+    """Livery colour for a team, honouring any season-specific override.
+
+    Call this instead of reading TEAM_COLORS directly wherever the rendered
+    data can come from the historical archive (2021 onwards) — passing the
+    season is what keeps Haas from colliding with Alfa Romeo's red. Charts that
+    only ever show the current season can keep using TEAM_COLORS.
+
+    `season` accepts an int or a str (lap frames carry it as a string); anything
+    unparseable simply falls through to the default palette.
+    """
+    if season is not None:
+        try:
+            override = TEAM_COLORS_BY_SEASON.get(int(season))
+        except (TypeError, ValueError):
+            override = None
+        if override and team in override:
+            return override[team]
+    return TEAM_COLORS.get(team, default)
 
 COMPOUND_COLORS: dict[str, str] = {
     "SOFT":   "#FF3333",
@@ -211,9 +251,38 @@ TEXT_MAIN = "#FFFFFF"
 TEXT_DIM  = "#AAAAAA"
 GRID_CLR  = "#2A2A3E"
 
+# ─────────────────────────────────────────────
+# NON-TEAM CHART COLOURS
+# ─────────────────────────────────────────────
+# Reserved for series that do NOT stand for a constructor — model vs market,
+# one-lap vs long-run, air vs track temperature, a forecast distribution.
+# Reusing a livery hex for these is what made the BRIEF forecast look like it
+# was about Mercedes and McLaren. Nothing here is within ΔE 20 of a team colour.
+#
+# Which to reach for:
+#   NEUTRAL / NEUTRAL_ALT — the default. A lone series, a baseline, "everything
+#       else". Grey reads as "this is not a team" more strongly than any hue.
+#   SERIES_1..3 — when two or more non-team categories must be told apart at a
+#       glance and both matter equally. Two greys would recreate exactly the
+#       Haas/Audi problem (ΔE 13), so a pair gets violet + sky instead.
+NEUTRAL     = "#C9CDD4"   # light silver — default non-team series
+NEUTRAL_ALT = "#7E8AA0"   # cool slate — second neutral, ΔE 25 from NEUTRAL
+
+SERIES_1 = "#A78BFA"      # violet
+SERIES_2 = "#5EC8F2"      # sky
+SERIES_3 = "#E85BC0"      # magenta
+SERIES_COLORS = (SERIES_1, SERIES_2, SERIES_3)
+
+# Ordinal status ramp. Green→amber→red still carries the good/bad reading, but
+# these are deliberately NOT Mercedes teal (#00D2BE) and McLaren orange
+# (#FF8700), which is what the DATA and TRACK tabs were using verbatim.
+STATUS_OK   = "#34D399"
+STATUS_WARN = "#F5B942"
+STATUS_BAD  = "#F2545B"
+
 
 def get_driver_color(team: str, is_primary: bool = True) -> str:
-    base = TEAM_COLORS.get(team, "#808080")
+    base = TEAM_COLORS.get(team, TEAM_COLOR_FALLBACK)
     return base if is_primary else base + "AA"
 
 

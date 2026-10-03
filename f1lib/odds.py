@@ -378,18 +378,74 @@ def parse_ts(v) -> datetime | None:
         return None
 
 
+# A Kalshi event ticker carries an authoritative venue code — "KXF1RACE-DUTGP26"
+# is unambiguously the Dutch GP. This is worth consulting BEFORE the date match
+# for one reason: `close_time` is SETTLEMENT, and for a market still trading
+# ahead of its race Kalshi sets a PROVISIONAL settlement weeks out. The Dutch
+# 2026 book closed 2026-09-05 — 13 days past its own race (08-23) but one day
+# off the Italian GP (09-06), so the +/-4-day date match confidently resolved
+# every live Dutch price to Italy. The code does not drift within a season, so
+# when it names a calendar event we trust it; anything unrecognised returns None
+# and falls through to the date logic below, so this can only ever fix, never
+# regress. The codes mostly prefix their event's first word ("DUT"->"Dutch");
+# _VENUE_ALIASES holds the few that don't (Kalshi uses AUT for Austria to keep
+# it distinct from Australia's AUS).
+_VENUE_RE = re.compile(r"-([A-Z]{2,4})GP\d{2}")
+_VENUE_ALIASES = {"aut": "austrian"}
+
+
+def _event_first_word(event: str) -> str:
+    s = unicodedata.normalize("NFKD", str(event))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.split()[0].lower() if s.split() else ""
+
+
+def _venue_event(event_ticker: str | None, season: int, calendar: pd.DataFrame,
+                 close_dt: datetime | None) -> tuple[int, int, str] | None:
+    """(season, round, event) from a Kalshi ticker's venue code, or None.
+
+    None means "no confident venue match" — an absent/foreign ticker, an
+    unknown code, or an unbreakable tie — and the caller then resolves by date.
+    """
+    m = _VENUE_RE.search(str(event_ticker or ""))
+    if not m:
+        return None
+    code = m.group(1).lower()
+    cand = calendar[calendar["season"].astype(int) == season].copy()
+    if cand.empty:
+        return None
+    alias = _VENUE_ALIASES.get(code)
+    fw = cand["event"].map(_event_first_word)
+    hits = cand[fw.map(lambda w: w.startswith(code)) | (fw == alias)]
+    if hits.empty:
+        return None
+    if len(hits) > 1:                       # e.g. AUS -> Australian + Austrian
+        if close_dt is None:
+            return None
+        cd = pd.Timestamp(close_dt.date())
+        hits = hits.assign(
+            _d=(hits["event_date"] - cd).abs().dt.days).sort_values("_d")
+    top = hits.iloc[0]
+    return (season, int(top["round"]), str(top["event"]))
+
+
 def resolve_event(close_dt: datetime | None, sub_title: str, title: str,
-                  calendar: pd.DataFrame,
+                  calendar: pd.DataFrame, event_ticker: str | None = None,
                   window_days: int = 4) -> tuple[int | None, int | None, str | None]:
     """(season, round, event) for a Kalshi event, or (season, None, None).
 
-    Matched on race date: a pole market closes on the Saturday and a race
-    market on the Sunday, so a +/-4 day window catches both without ever
-    reaching the next event (the calendar's tightest gap is 7 days).
+    A Kalshi ticker's venue code is authoritative and checked first (see
+    `_venue_event`). Failing that, matched on race date: a pole market closes on
+    the Saturday and a race market on the Sunday, so a +/-4 day window catches
+    both without ever reaching the next event (the calendar's tightest gap is
+    7 days).
     """
     if close_dt is None or calendar.empty:
         return (None, None, None)
     season = close_dt.year
+    by_code = _venue_event(event_ticker, season, calendar, close_dt)
+    if by_code is not None:
+        return by_code
     cand = calendar[calendar["season"].astype(int) == season].copy()
     if cand.empty:
         return (season, None, None)

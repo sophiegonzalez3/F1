@@ -49,8 +49,8 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
-from f1lib.config import (HIST_CIRCUIT_KEY_MAP, SESSIONS_DIR,
-                         SESSIONS_LITE_DIR)
+from f1lib.circuits import french_key
+from f1lib.config import SESSIONS_DIR, SESSIONS_LITE_DIR
 
 VERBOSE = "--verbose" in sys.argv
 
@@ -67,14 +67,6 @@ OUT_PITS = Path("data/pit_league.csv")
 
 def _slugify(name) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(name).lower()).strip("_")
-
-
-# slug(event name) → circuit_key, slugifying both sides so accents ("São
-# Paulo") normalise the same way the archive filenames do.
-_EVENT_TO_CIRCUIT = {
-    _slugify(hist): fr
-    for fr, hists in HIST_CIRCUIT_KEY_MAP.items() for hist in hists
-}
 
 
 _ARCHIVE: pd.DataFrame | None = None
@@ -405,7 +397,7 @@ def main() -> None:
     for lp in lap_files:
         head = pd.read_parquet(lp, columns=["season", "meeting"]).iloc[0]
         season, meeting = int(head["season"]), str(head["meeting"])
-        circuit = _EVENT_TO_CIRCUIT.get(_slugify(meeting), "")
+        circuit = french_key(meeting, season) or ""
         index.append((lp, season, meeting, circuit,
                       rounds.get((season, _slugify(meeting)))))
     with_round = {(s, c) for _, s, _, c, r in index if r is not None and c}

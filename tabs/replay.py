@@ -30,7 +30,7 @@ import dash_bootstrap_components as dbc
 
 from f1lib.components import card, GFX
 from f1lib.config import (
-    TEAM_COLORS,
+    TEAM_COLORS, SERIES_1,
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )
 from f1lib.data_loader import load_session
@@ -620,7 +620,7 @@ def _radio_pip_children(payload: dict) -> list:
             style={"position": "absolute", "left": f"{r['f'] / n * 100:.2f}%",
                    "top": "2px", "width": "8px", "height": "8px",
                    "marginLeft": "-4px", "borderRadius": "50%",
-                   "background": "#00D2BE", "opacity": "0.85",
+                   "background": SERIES_1, "opacity": "0.85",
                    "cursor": "pointer"},
             **{"data-frame": str(r["f"])},
         ))
@@ -769,7 +769,7 @@ def replay_card(season: int, meeting: str, codes: list[str] | None = None) -> ht
             style={"display": "block" if (loaded and has_z) else "none"},
         ),
         html.Div(id="replay-radio-live", children="", style={
-            "color": "#00D2BE", "fontSize": "0.78rem", "fontStyle": "italic",
+            "color": SERIES_1, "fontSize": "0.78rem", "fontStyle": "italic",
             "minHeight": "20px", "margin": "4px 2px 0",
         }),
         controls,

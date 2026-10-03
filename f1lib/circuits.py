@@ -188,13 +188,15 @@ def circuit_label(cid: str) -> str:
 # config.HIST_CIRCUIT_KEY_MAP need a line here.
 #
 # Circuits deliberately absent — they have no curated reference rows, and must
-# NOT borrow their parent venue's: sakhir_outer (2020 outer loop), sepang,
+# NOT borrow their parent venue's: sakhir_outer (2020 outer loop),
 # mugello, nurburgring, portimao, istanbul, sochi, hockenheim. Absent resolves
 # to None, which the TRACK tab renders as "no reference data" rather than
 # quietly showing another circuit's numbers.
 _FR_BY_CIRCUIT: dict[str, str] = {
     "barcelona_catalunya": "espagne",
     "madring":             "madrid",
+    # its OWN row (Pirelli's 2026 return preview), never Sakhir's `bahrein`
+    "sepang":              "malaisie",
     "sakhir":              "bahrein",
     "silverstone":         "grande_bretagne",
     "red_bull_ring":       "autriche",
@@ -336,3 +338,56 @@ def audit_archive(archive_dir: Path | str | None = None) -> list[str]:
         for ev, grp in df.drop_duplicates(["season", "event_name"]).groupby("event_name")
         if not has_explicit_rule(ev)
     ]
+
+
+# FastF1 location spellings that are too long for an axis tick.
+_AXIS_LOCATION = {"Miami Gardens": "Miami"}
+
+
+def calendar_axis_labels(cal: pd.DataFrame) -> dict[tuple[int, str], str]:
+    """{(season, event): short x-axis label} for a season-calendar frame.
+
+    The country reads best on an axis, but it is not an identity: 2026 has two
+    Spanish rounds (Barcelona, Madrid) and three American ones, 2020-25 two or
+    three Italian ones, and the relocated 2026 Bahrain GP ran in Kuala Lumpur.
+    A shared category label also makes plotly MERGE the points, so a per-event
+    line doubles back on itself. Rule, per season:
+
+      * country, when it is unique in that season and the race ran at home
+      * the location, when the country repeats or the race was relocated
+      * the short GP name, when even the location repeats (Austrian + Styrian
+        at Spielberg, Bahrain + Sakhir at Sakhir)
+    """
+    out: dict[tuple[int, str], str] = {}
+    if cal is None or cal.empty:
+        return out
+    for season, g in cal.groupby("season"):
+        season = int(season)
+        n_country = g["country"].value_counts()
+        n_loc = g["location"].value_counts() if "location" in g else pd.Series(dtype=int)
+        for _, r in g.iterrows():
+            ev, country = str(r["event"]), str(r.get("country") or "")
+            loc = str(r.get("location") or "")
+            moved = circuit_id(ev, season) != circuit_id(ev)
+            if country and n_country.get(country, 0) == 1 and not moved:
+                label = country
+            elif loc and n_loc.get(loc, 0) == 1:
+                label = _AXIS_LOCATION.get(loc, loc)
+            else:
+                label = ev.replace(" Grand Prix", "").strip()
+            out[(season, ev)] = label
+    return out
+
+
+# The FIA names its decision documents after the event, but a relocated race
+# gets a qualified slug — every 2026 Sepang document is filed under
+# `2026_bahrain_grand_prix_in_malaysia_-_...pdf`, so the plain guess 404s.
+_FIA_SLUG_OVERRIDES: dict[tuple[int, str], str] = {
+    (2026, "bahrain_grand_prix"): "bahrain_grand_prix_in_malaysia",
+}
+
+
+def fia_doc_slug(event_name: str, season: int) -> str:
+    """Slug the FIA uses in `/decision-document/<season>_<slug>_-_<doc>.pdf`."""
+    slug = str(event_name).strip().lower().replace(" ", "_")
+    return _FIA_SLUG_OVERRIDES.get((int(season), slug), slug)

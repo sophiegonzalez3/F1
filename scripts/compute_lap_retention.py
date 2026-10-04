@@ -31,6 +31,8 @@ warnings.filterwarnings("ignore")
 
 import pandas as pd
 
+from f1lib.data_loader import event_name_from_stem
+
 from f1lib.processing import (clean_and_enrich_laps, flag_dirty_air,
                               flag_perturbed_laps)
 
@@ -126,7 +128,7 @@ def main() -> int:
             continue
         if args.season and season != args.season:
             continue
-        event = event_s.replace("_", " ")
+        event = event_name_from_stem(season, event_s)
         session = session_s.replace("_", " ")
         rows.extend(retention_rows(season, event, session, p))
 

@@ -87,6 +87,12 @@ def main() -> int:
                 # Race not run yet, or neither feed knows this meeting name.
                 print(f"  [none]  {season} {meeting} - no data from either source", flush=True)
                 empty += 1
+            elif df.attrs.get("partial"):
+                # Not cached by the loader, so the next run retries it.
+                print(f"  [partial] {season} {meeting} - {len(df)} stops vs "
+                      f"{df.attrs.get('expected')} pit-ins in the laps; not "
+                      "cached, will retry next run", flush=True)
+                empty += 1
             else:
                 src = df["source"].iloc[0]
                 print(f"  [ok]    {season} {meeting} - {len(df)} stops (source={src})",

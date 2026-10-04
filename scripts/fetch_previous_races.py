@@ -52,6 +52,19 @@ if "--season" in sys.argv:
     target_seasons = {int(s) for s in raw.split(",") if s.strip()}
 
 
+_SCHEDULES: dict[int, list[str]] = {}
+
+
+def _held(season: int, meeting: str) -> bool:
+    """Did *season*'s calendar contain an event with exactly this name?"""
+    if season not in _SCHEDULES:
+        import fastf1
+        fastf1.Cache.enable_cache(dl.FASTF1_CACHE_DIR)
+        sched = fastf1.get_event_schedule(season, include_testing=False)
+        _SCHEDULES[season] = [str(n) for n in sched["EventName"]]
+    return any(dl._event_names_match(meeting, n) for n in _SCHEDULES[season])
+
+
 def main() -> int:
     cached = dl.list_cached_sessions()
     if not cached:
@@ -66,6 +79,14 @@ def main() -> int:
         if not dl.is_cached(str(season - 1), meeting, sess)
         and (target_seasons is None or (season - 1) in target_seasons)
     ]
+    # A meeting name the earlier season never held (the 2026 "Barcelona
+    # Grand Prix" in 2025, a cancelled race) must be skipped, not fetched:
+    # FastF1 would fuzzy-match it to some other event. load_session now
+    # refuses that too, but filtering here keeps it out of the failure list.
+    not_held = [t for t in todo if not _held(t[0], t[1])]
+    todo = [t for t in todo if t not in not_held]
+    for season, meeting, sess in not_held:
+        print(f"  skip  {season} {meeting} – {sess}: no such event that season")
     print(f"{len(meetings)} cached meeting(s); {len(todo)} previous-season "
           f"session(s) to fetch ({', '.join(sessions_to_fetch)})\n", flush=True)
 

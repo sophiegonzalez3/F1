@@ -1219,10 +1219,16 @@ def _pitstops_card(rl: pd.DataFrame, meeting, shown_year) -> object:
                     "sidebar Driver/Team filter)."),
     ])
     fig = _pitstops_fig(ps, "", use_stationary)
-    src = ps["source"].iloc[0]
+    n_lt = int((ps["source"] == "livetiming").sum())
     note = html.P(
         ("Source: F1 live-timing PitStopSeries (true stationary times)."
-         if src == "livetiming" else
+         if n_lt == len(ps) else
+         # Live timing's PitStopSeries only ever carries part of the race, so
+         # the stop list comes from Jolpica and the stationary time exists
+         # only for the stops live timing also recorded.
+         f"Source: Jolpica archive for the stop list; true stationary times "
+         f"from F1 live timing for {n_lt} of {len(ps)} stops (the others "
+         "show pit-lane duration only)." if n_lt else
          "Source: Jolpica archive — pit-lane duration only (stationary "
          "times aren't recorded there)."),
         style={"color": TEXT_DIM, "fontSize": "0.72rem", "marginBottom": "4px"},

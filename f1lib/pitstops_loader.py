@@ -233,41 +233,103 @@ def _fetch_livetiming_stops(season, meeting) -> pd.DataFrame:
 # Public API
 # ─────────────────────────────────────────────────────────────
 
+def _expected_stops(season, meeting) -> int | None:
+    """Pit-ins recorded in the cached race laps, or None when not cached.
+
+    The lap feed and the pit feeds are independent, so this is the yardstick
+    for "did the pit feed give us the whole race?". It counts drive-throughs
+    and stop-go penalties too, hence the tolerance in _is_partial."""
+    from f1lib.config import SESSIONS_DIR
+    p = Path(SESSIONS_DIR) / (
+        f"{_sanitize(season)}__{_sanitize(meeting)}__Race__laps.parquet")
+    if not p.exists():
+        return None
+    try:
+        laps = pd.read_parquet(p, columns=["PitIn"])
+    except Exception:
+        return None
+    return int(laps["PitIn"].notna().sum())
+
+
+def _is_partial(n_stops: int, expected: int | None) -> bool:
+    return expected is not None and expected >= 5 and n_stops < 0.8 * expected
+
+
+def _merge_sources(lt: pd.DataFrame, jd: pd.DataFrame) -> pd.DataFrame:
+    """Combine the two feeds without letting a truncated one win.
+
+    Live timing has the true stationary times but its PitStopSeries can be
+    cut short (2026 Bahrain: 18 of 73 stops, first stops only). Jolpica has
+    every stop but no stationary time. Whichever holds MORE stops is the row
+    set; the other only contributes the columns it is better at.
+    """
+    if lt.empty:
+        return jd
+    if jd.empty:
+        return lt
+    if len(jd) > len(lt):
+        # Jolpica rows, stationary times grafted on where live timing has the
+        # same (car, lap). Matched rows keep the live-timing label.
+        key_j = jd["DriverNo"].astype(str) + "|" + jd["LapNo"].astype(float).astype(str)
+        key_l = lt["DriverNo"].astype(str) + "|" + lt["LapNo"].astype(float).astype(str)
+        stat = pd.Series(lt["StationaryTime_s"].values, index=key_l)
+        stat = stat[~stat.index.duplicated()]
+        out = jd.copy()
+        got = key_j.map(stat)
+        out["StationaryTime_s"] = got.values
+        out.loc[got.notna().values, "source"] = "livetiming"
+        logger.warning("[pitstops] %s %s: live timing has %d stops, Jolpica %d "
+                       "- using Jolpica's rows", jd["season"].iloc[0],
+                       jd["meeting"].iloc[0], len(lt), len(jd))
+        return out
+    # Live timing is complete: Jolpica knows the round number, driver codes and
+    # lap numbers (which some live-timing feeds omit) — enrich. Join key is
+    # (permanent number, stop index); the car whose racing number differs
+    # from its permanent number (the champion's #1) simply stays unfilled.
+    df = lt.copy()
+    jmap = jd.set_index([jd["DriverNo"].astype(str), jd["StopNo"].astype(int)])
+    idx = pd.MultiIndex.from_arrays(
+        [df["DriverNo"].astype(str), df["StopNo"].astype(int)])
+    df["LapNo"] = df["LapNo"].fillna(
+        pd.Series(jmap["LapNo"].reindex(idx).values, index=df.index))
+    need = df["Driver_Short"].fillna("").eq("")
+    codes = pd.Series(jmap["Driver_Short"].reindex(idx).values, index=df.index)
+    df.loc[need, "Driver_Short"] = codes[need].fillna("")
+    return df
+
+
 def load_pitstops(season, meeting, force: bool = False) -> pd.DataFrame:
     """Fetch (or load from cache) the pit stops of a meeting's race.
     Empty DataFrame when neither source has data (race not run yet, or
-    the meeting name resolves nowhere)."""
+    the meeting name resolves nowhere).
+
+    A result that covers clearly fewer stops than the cached race laps
+    record is returned but NOT cached (``df.attrs["partial"]`` is True), so
+    the next run fetches again instead of serving a truncated feed forever.
+    """
     pq = _parquet_path(season, meeting)
     if pq.exists() and not force:
         df = pd.read_parquet(pq)
         logger.info("[pitstops cache HIT] %s %s (%d stops)", season, meeting, len(df))
         return df
 
-    df = _fetch_livetiming_stops(season, meeting)
-    if df.empty:
-        df = _fetch_jolpica_stops(season, meeting)
-    else:
-        # Jolpica knows the round number, driver codes and lap numbers (which
-        # some live-timing feeds omit) — enrich when it answers. Join key is
-        # (permanent number, stop index); the car whose racing number differs
-        # from its permanent number (the champion's #1) simply stays unfilled.
-        rnd = _season_round(season, meeting)
-        if rnd is not None:
-            df["round"] = rnd
-        jd = _fetch_jolpica_stops(season, meeting)
-        if not jd.empty:
-            jmap = jd.set_index([jd["DriverNo"].astype(str),
-                                 jd["StopNo"].astype(int)])
-            idx = pd.MultiIndex.from_arrays(
-                [df["DriverNo"].astype(str), df["StopNo"].astype(int)])
-            df["LapNo"] = df["LapNo"].fillna(
-                pd.Series(jmap["LapNo"].reindex(idx).values, index=df.index))
-            need = df["Driver_Short"].fillna("").eq("")
-            codes = pd.Series(jmap["Driver_Short"].reindex(idx).values,
-                              index=df.index)
-            df.loc[need, "Driver_Short"] = codes[need].fillna("")
+    lt = _fetch_livetiming_stops(season, meeting)
+    jd = _fetch_jolpica_stops(season, meeting)
+    df = _merge_sources(lt, jd)
     if df.empty:
         logger.info("[pitstops] no data for %s %s", season, meeting)
+        return df
+    rnd = _season_round(season, meeting)
+    if rnd is not None:
+        df["round"] = rnd
+
+    expected = _expected_stops(season, meeting)
+    df.attrs["expected"] = expected
+    if _is_partial(len(df), expected):
+        df.attrs["partial"] = True
+        logger.warning("[pitstops] %s %s: only %d stops vs %d pit-ins in the "
+                       "race laps - NOT cached, re-run later", season, meeting,
+                       len(df), expected)
         return df
 
     pq.parent.mkdir(parents=True, exist_ok=True)

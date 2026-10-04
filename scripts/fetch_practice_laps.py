@@ -105,7 +105,7 @@ def fetch_one(season: int, meeting: str, session: str) -> bool:
     sess_name = dl._session_name(str(season), meeting, session)
     paths = _lite_paths(key)
 
-    ff1_sess = fastf1.get_session(season, meeting, dl._ff1_session_id(session))
+    ff1_sess = dl.get_ff1_session_strict(season, meeting, dl._ff1_session_id(session))
     ff1_sess.load(laps=True, telemetry=False, weather=True, messages=False)
 
     laps = dl._map_laps(ff1_sess.laps)

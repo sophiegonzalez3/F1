@@ -99,6 +99,77 @@ def _sanitize(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_\-]", "_", str(text)).strip("_")
 
 
+def _event_names_match(requested: str, resolved: str) -> bool:
+    """True when two event names denote the same event, ignoring case,
+    punctuation and accents ("São Paulo" == "Sao Paulo" == "S o Paulo")."""
+    import unicodedata
+
+    def _fold(s: str) -> str:
+        s = unicodedata.normalize("NFKD", str(s))
+        return re.sub(r"[^a-z0-9]", "", s.encode("ascii", "ignore").decode().lower())
+
+    return (_sanitize(requested).lower() == _sanitize(resolved).lower()
+            or _fold(requested) == _fold(resolved))
+
+
+def get_ff1_session_strict(season, meeting: str, ff1_id: str):
+    """fastf1.get_session, refusing FastF1's FUZZY event match.
+
+    Asked for an event name that season does not have, FastF1 silently
+    returns the closest-sounding real event. That is how the cache came to
+    hold "2023 Chinese GP" (really Japan), "2023 Emilia Romagna GP" (Belgium —
+    Imola was cancelled) and "2023-25 Barcelona GP" (the Spanish GP), each
+    double-counted by every derived table. Raise instead, before any data is
+    downloaded or written under the wrong name.
+    """
+    sess = fastf1.get_session(int(season), meeting, ff1_id)
+    resolved = str(sess.event.get("EventName", ""))
+    if resolved and not _event_names_match(meeting, resolved):
+        raise ValueError(
+            f"{season} has no event named {meeting!r} — FastF1 fuzzy-matched "
+            f"it to {resolved!r}; refusing to cache it under the wrong name")
+    return sess
+
+
+_STEM_NAMES: dict[tuple[int, str], str] | None = None
+
+
+def event_name_from_stem(season, stem: str) -> str:
+    """The real event name behind a cache-filename stem.
+
+    Cache filenames are `_sanitize`d (non-ASCII -> "_"), so the naive inverse
+    `stem.replace("_", " ")` turns "São Paulo Grand Prix" into "S o Paulo
+    Grand Prix" — a name no other table uses, so every join on it (round
+    numbers, the incident register vs the results archive) silently misses.
+    Resolve through the same sanitizer against the season calendar and the
+    results archive instead; fall back to the naive form only for an event
+    neither knows.
+    """
+    global _STEM_NAMES
+    if _STEM_NAMES is None:
+        names: dict[tuple[int, str], str] = {}
+        sources = [("data/season_calendar.csv", "event", "season")]
+        sources += [(f"data/historical_results/{f}_results_all.parquet",
+                     "event_name", "season") for f in ("race", "quali", "sprint")]
+        for path, ecol, scol in sources:
+            p = Path(path)
+            if not p.exists():
+                continue
+            try:
+                df = (pd.read_csv(p, usecols=[scol, ecol]) if p.suffix == ".csv"
+                      else pd.read_parquet(p, columns=[scol, ecol]))
+            except Exception:
+                continue
+            for s, e in df.drop_duplicates().itertuples(index=False):
+                try:
+                    names.setdefault((int(s), _sanitize(e)), str(e))
+                except (TypeError, ValueError):
+                    continue
+        _STEM_NAMES = names
+    return _STEM_NAMES.get((int(season), _sanitize(stem)),
+                           str(stem).replace("_", " "))
+
+
 def _session_key(season: str, meeting: str, session: str) -> str:
     return f"{_sanitize(season)}__{_sanitize(meeting)}__{_sanitize(session)}"
 
@@ -444,7 +515,7 @@ def load_session(
     print(f"  [FastF1]     {key} — this may take 1–3 min on first load…", flush=True)
 
     ff1_id   = _ff1_session_id(session)
-    ff1_sess = fastf1.get_session(int(season), meeting, ff1_id)
+    ff1_sess = get_ff1_session_strict(season, meeting, ff1_id)
 
     ff1_sess.load(
         laps=True,

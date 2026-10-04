@@ -89,11 +89,23 @@ def seed(season: int | None = None, event: str | None = None) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=COLS)
 
 
-def _latest() -> tuple[int, str]:
-    r = _archive()
-    r = r.dropna(subset=["season", "round_number"])
-    last = r.sort_values(["season", "round_number"]).iloc[-1]
-    return int(last["season"]), str(last["event_name"])
+def _latest() -> tuple[int, str] | None:
+    """The newest CACHED race (shared definition, f1lib.latest_race).
+
+    This used to be the newest race in the results archive, which lags the
+    flag: run on race day it named the PREVIOUS round, re-found that round's
+    rows already present, and reported "Added 0" as if the new race had no
+    retirements. Now the race is the right one, and a missing classification
+    is reported as exactly that.
+    """
+    from f1lib.latest_race import archive_has_race, latest_cached_race
+    season, event, _ = latest_cached_race()
+    if not archive_has_race(season, event):
+        print(f"[latest] {season} {event}: no classified result in the "
+              "archive yet, so its retirements are unknown - NOTHING SEEDED. "
+              "Re-run once the archive step has picked the race up.")
+        return None
+    return season, event
 
 
 def _report_todo() -> int:
@@ -128,7 +140,7 @@ def main() -> int:
     ap.add_argument("--season", type=int)
     ap.add_argument("--event")
     ap.add_argument("--latest", action="store_true",
-                    help="only the most recent race in the archive")
+                    help="only the most recent cached race")
     ap.add_argument("--todo", action="store_true",
                     help="report what is outstanding and exit")
     args = ap.parse_args()
@@ -138,7 +150,10 @@ def main() -> int:
 
     season, event = args.season, args.event
     if args.latest:
-        season, event = _latest()
+        got = _latest()
+        if got is None:
+            return 0
+        season, event = got
         print(f"[latest] {season} {event}")
 
     new = seed(season, event)

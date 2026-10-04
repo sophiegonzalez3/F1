@@ -80,7 +80,8 @@ def _discover() -> list[dict]:
     return out
 
 
-def _process_one(item: dict, ck_map: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _process_one(item: dict, ck_map: dict
+                 ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
     raw = pd.read_parquet(item["laps"])
     if raw.empty:
         return pd.DataFrame(), pd.DataFrame()
@@ -91,8 +92,14 @@ def _process_one(item: dict, ck_map: dict) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     fracs = load_corner_fractions(meeting, season)
     if fracs.empty:
-        print(f"  !! no track map for {meeting} — skipped", flush=True)
-        return pd.DataFrame(), pd.DataFrame()
+        # None, not an empty frame: the caller must NOT write the empty
+        # "already scanned" marker here. A missing map is a gap in OUR cache
+        # (or FastF1 has no corner layout for a new venue yet), not a property
+        # of the session — marked done, it was never retried once the map
+        # arrived (2026 Madrid + Sepang sat empty this way).
+        print(f"  !! no corner map for {season} {meeting} — skipped, "
+              "will retry next run", flush=True)
+        return None
 
     tel = pd.read_parquet(
         item["tel"],
@@ -180,10 +187,13 @@ def main() -> int:
             continue
         t0 = time.perf_counter()
         try:
-            agg, press = _process_one(item, ck_map)
+            got = _process_one(item, ck_map)
         except Exception as exc:
             print(f"  !! {item['base']}: {exc}", flush=True)
             continue
+        if got is None:                 # no corner map yet — retry next run
+            continue
+        agg, press = got
         if agg.empty:
             # empty marker (schema only) so the session isn't rescanned
             pd.DataFrame(columns=["season", "meeting", "circuit_key", "session",

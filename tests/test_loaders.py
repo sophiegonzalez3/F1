@@ -185,3 +185,65 @@ def test_circuit_characteristics_computed_schema():
             "lateral_load_score"} <= set(df.columns)
     for col in ("avg_speed_score", "full_throttle_score", "lateral_load_score"):
         assert df[col].dropna().between(1, 4).all()
+
+
+# ── event-name guard (fuzzy-match ghosts) ────────────────────
+
+from f1lib.data_loader import _event_names_match
+from f1lib.pitstops_loader import _COLUMNS, _is_partial, _merge_sources
+
+
+@pytest.mark.parametrize("a,b,expected", [
+    ("São Paulo Grand Prix", "São Paulo Grand Prix", True),
+    ("S o Paulo Grand Prix", "São Paulo Grand Prix", True),   # from a filename
+    ("Sao Paulo Grand Prix", "São Paulo Grand Prix", True),
+    ("spanish grand prix", "Spanish Grand Prix", True),
+    # the ghosts FastF1 produced by fuzzy matching
+    ("Chinese Grand Prix", "Japanese Grand Prix", False),
+    ("Emilia Romagna Grand Prix", "Belgian Grand Prix", False),
+    ("Barcelona Grand Prix", "Spanish Grand Prix", False),
+])
+def test_event_names_match(a, b, expected):
+    assert _event_names_match(a, b) is expected
+
+
+# ── pit-stop feed merge ──────────────────────────────────────
+
+def _stops(source, rows):
+    return pd.DataFrame([{
+        "season": "2026", "meeting": "X", "round": 1, "DriverNo": d,
+        "Driver_Short": code, "LapNo": float(lap), "StopNo": n,
+        "StationaryTime_s": stat, "PitLaneTime_s": 22.0, "Utc": "",
+        "source": source} for d, code, lap, n, stat in rows], columns=_COLUMNS)
+
+
+def test_merge_prefers_the_fuller_feed():
+    # live timing truncated to first stops; Jolpica has every stop
+    lt = _stops("livetiming", [("16", "", 9, 1, 2.4), ("44", "", 31, 1, 3.1)])
+    jd = _stops("jolpica", [("16", "LEC", 9, 1, np.nan), ("16", "LEC", 28, 2, np.nan),
+                            ("44", "HAM", 31, 1, np.nan)])
+    out = _merge_sources(lt, jd)
+    assert len(out) == 3
+    assert out["Driver_Short"].tolist() == ["LEC", "LEC", "HAM"]
+    # stationary times grafted where live timing has the same (car, lap)
+    assert out["StationaryTime_s"].tolist()[0] == 2.4
+    assert np.isnan(out["StationaryTime_s"].tolist()[1])
+    assert out["source"].tolist() == ["livetiming", "jolpica", "livetiming"]
+
+
+def test_merge_keeps_complete_live_timing():
+    lt = _stops("livetiming", [("16", "", 9, 1, 2.4)])
+    jd = _stops("jolpica", [("16", "LEC", 9, 1, np.nan)])
+    out = _merge_sources(lt, jd)
+    assert out["source"].tolist() == ["livetiming"]
+    assert out["Driver_Short"].tolist() == ["LEC"]
+
+
+@pytest.mark.parametrize("n,expected,partial", [
+    (18, 73, True),      # 2026 Bahrain as first cached
+    (60, 61, False),
+    (2, 3, False),       # too few stops to judge
+    (10, None, False),   # no laps cached to compare against
+])
+def test_is_partial(n, expected, partial):
+    assert _is_partial(n, expected) is partial

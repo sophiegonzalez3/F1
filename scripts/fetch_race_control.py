@@ -98,7 +98,7 @@ def pending(season: int | None) -> list[tuple[int, str, str]]:
 def fetch_one(season: int, meeting: str, session: str) -> bool:
     key = dl._session_key(str(season), meeting, session)
     sess_name = dl._session_name(str(season), meeting, session)
-    ff1_sess = fastf1.get_session(season, meeting, dl._ff1_session_id(session))
+    ff1_sess = dl.get_ff1_session_strict(season, meeting, dl._ff1_session_id(session))
     # messages ONLY — no laps, no telemetry, no weather
     ff1_sess.load(laps=False, telemetry=False, weather=False, messages=True)
     rcm = dl._safe_attr(ff1_sess, "race_control_messages")

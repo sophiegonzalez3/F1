@@ -37,6 +37,8 @@ warnings.filterwarnings("ignore")
 
 import pandas as pd
 
+from f1lib.data_loader import event_name_from_stem
+
 SESS = Path("data/sessions")
 LITE = Path("data/sessions_lite")
 OUT = Path("data/session_weather.csv")
@@ -106,7 +108,7 @@ def summarise(path: Path) -> dict | None:
     wet_tyre = (inter + wet) if pd.notna(inter) and pd.notna(wet) else float("nan")
     return {
         "season": season,
-        "event": event_s.replace("_", " "),
+        "event": event_name_from_stem(season, event_s),
         "session": session_s.replace("_", " "),
         "n_samples": int(len(w)),
         "rain_share": round(rain_share, 4) if pd.notna(rain_share) else None,

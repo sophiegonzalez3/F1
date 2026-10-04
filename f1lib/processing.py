@@ -1536,6 +1536,9 @@ def _session_t0(df: pd.DataFrame) -> "pd.Timestamp | None":
     return t0.median() if len(t0) else None
 
 
+_RCM_NO_T0_WARNED = False
+
+
 def _normalize_rcm(rcm: pd.DataFrame,
                    t0: "pd.Timestamp | None" = None) -> pd.DataFrame:
     """
@@ -1572,10 +1575,18 @@ def _normalize_rcm(rcm: pd.DataFrame,
             rcm["Time_s"] = rcm["Time"].dt.total_seconds()
         elif pd.api.types.is_datetime64_any_dtype(rcm["Time"]):
             if t0 is None:
-                logger.warning(
-                    "_normalize_rcm: Time is an absolute datetime but no "
-                    "session start was supplied — RCM timing signals will be "
-                    "inactive for this session.")
+                # Expected for every laps-only backfill session (its
+                # LapStartDate is null, see scripts/fetch_race_control.py),
+                # so say it ONCE per process rather than once per session —
+                # a full rebuild used to print it ~90 times.
+                global _RCM_NO_T0_WARNED
+                if not _RCM_NO_T0_WARNED:
+                    logger.warning(
+                        "_normalize_rcm: race-control Time is an absolute "
+                        "datetime but the session start is unknown (laps-only "
+                        "backfill sessions) — RCM timing signals are inactive "
+                        "for those sessions. Logged once per run.")
+                    _RCM_NO_T0_WARNED = True
                 rcm["Time_s"] = np.nan
             else:
                 rcm["Time_s"] = (rcm["Time"] - t0).dt.total_seconds()

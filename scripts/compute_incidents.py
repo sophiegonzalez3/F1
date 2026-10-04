@@ -56,6 +56,8 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
+from f1lib.data_loader import event_name_from_stem
+
 OUT_PATH = Path("data/incidents.csv")
 SESSIONS_DIR = Path("data/sessions")
 
@@ -222,7 +224,7 @@ def build_event(season: int, stem: str) -> pd.DataFrame:
     inc = collapse(parse_race_control(rc))
     if inc.empty:
         return inc
-    inc.insert(0, "event", stem.replace("_", " "))
+    inc.insert(0, "event", event_name_from_stem(season, stem))
     inc.insert(0, "season", season)
     return inc
 

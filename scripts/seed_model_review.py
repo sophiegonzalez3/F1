@@ -13,7 +13,7 @@ automatically, and appends a skeleton row per driver with two fields left
 blank for a human: `category` and `note`. Typically three to six rows a race.
 
     python scripts/seed_model_review.py --season 2026 --event "Belgian Grand Prix"
-    python scripts/seed_model_review.py --latest      # newest event in the pace table
+    python scripts/seed_model_review.py --latest      # newest cached race
 
 Then open data/model_review.csv and fill in the blanks.
 
@@ -407,14 +407,13 @@ def main() -> int:
     ap.add_argument("--season", type=int)
     ap.add_argument("--event")
     ap.add_argument("--latest", action="store_true",
-                    help="use the newest event in the pace table")
+                    help="use the newest cached race (f1lib.latest_race)")
     args = ap.parse_args()
 
     if args.latest or not (args.season and args.event):
-        from f1lib.pace_model import PaceModel
-        p = PaceModel().pace
-        last = p.sort_values(["season", "round"]).iloc[-1]
-        season, event = int(last["season"]), str(last["event"])
+        # Shared with seed_dnf_causes, so one run never seeds two races.
+        from f1lib.latest_race import latest_cached_race
+        season, event, _ = latest_cached_race()
         print(f"[latest] {season} {event}")
     else:
         season, event = args.season, args.event

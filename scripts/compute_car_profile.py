@@ -82,6 +82,8 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
+from f1lib.data_loader import event_name_from_stem
+
 from f1lib.processing import (
     clean_and_enrich_laps, field_deg_curves,
     flag_dirty_air, flag_perturbed_laps, enrich_track_evolution,
@@ -406,7 +408,7 @@ def cached_events(season: int) -> list[tuple[str, str]]:
     out = []
     for p in sorted(SESSIONS_DIR.glob(f"{season}__*__Qualifying__laps.parquet")):
         stem = p.name.split("__")[1]
-        out.append((stem, stem.replace("_", " ")))
+        out.append((stem, event_name_from_stem(season, stem)))
     return out
 
 

@@ -4,34 +4,23 @@ Prerequisite: the race weekend's sessions are cached under data/sessions/
 (run `scripts/during_weekend.py`, or load the event in the app's Data tab —
 this script computes from the cache, it does not fetch sessions).
 
-Steps, in dependency order (except the first, which jumps the queue because
-its source data expires — see the note on `odds` in STEPS):
+Steps, in dependency order — `--list` prints the live list; the comments on
+STEPS below say why each one is there and why it sits where it does. In short:
 
-  0. scripts/fetch_odds.py             market-implied probabilities for the
-                                       weekend just run, hourly, before Kalshi
-                                       prunes them (~2 months)
-  1. scripts/fetch_pitstops.py         real pit stops (race stats needs them)
-  2. f1lib.fetch_historical_results    results/quali/sprint archive + standings
-  3. scripts/compute_incidents.py      race-control incident register (DNF
-                                       causes + the decomposition's labels)
-  4. scripts/compute_team_pace.py      per-event team pace table (needs the archive)
-  5. f1lib.driver_ratings              per-event DRIVER pace table (BRIEF/DUEL)
-  6. scripts/compute_race_stats.py     SC rates, overtakes, pit league, ...
-  7. scripts/compute_atr.py            ATR sliding scale (needs standings)
-  8. scripts/compute_pu_topspeed.py    straight-line-speed / PU index (sessions)
-  9. scripts/compute_car_profile.py    car-concept axes for the STINTS tab
-                                       (telemetry, ~1 min per event)
- 10. scripts/backtest_pace_model.py    replays every weekend and re-scores the
-                                       pace model — feeds the BRIEF tab's
-                                       track-record card, so skipping it
-                                       silently leaves that card stale
- 11. scripts/compute_weekend_decomp.py 'where the points went' table for the
-                                       RACE tab (needs pace, stats, incidents)
- 12. scripts/compute_upgrade_study.py  panel event study on declared upgrades
-                                       (needs the pace table + upgrades.csv)
- 13. compute_mistakes.py               micro-mistake archive (telemetry, slow)
- 14. scripts/seed_dnf_causes.py       worklist of retirements race control
-                                      cannot explain, for hand curation
+  odds, forecast     what was knowable BEFORE the race (odds expire upstream)
+  pitstops           real pit stops (race stats reads them)
+  archive            official results + standings (Jolpica)
+  archivecheck       stops the chain if the newest cached race has no
+                     classification yet — everything below would silently
+                     work on the previous round
+  incidents          race-control incident register
+  teampace, driverpace   per-event pace tables (the model's inputs)
+  racestats, atr, topspeed, carprofile   measured cards (TRACK/SEASON/STINTS)
+  backtest           re-SCORES the pace model on every past weekend (no
+                     refit: its constants are tuned by hand with --tune)
+  decomp, upgradestudy   'where the points went', upgrade event study
+  mistakes, retention, sessionwx   per-session archives
+  review, dossier, dnfcauses   hand-curation worklists for the newest race
 
 Stops at the first failing step; every step is idempotent, so fix and re-run.
 Not covered here (needs a human or a browser): the `radio-review` skill, the
@@ -79,6 +68,13 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "scripts/fetch_pitstops.py"]),
     ("archive",   "results archive",
      [sys.executable, "-m", "f1lib.fetch_historical_results"]),
+    # The archive step only WARNS when the newest race has no classification
+    # yet (Jolpica lags the flag by hours), and exits 0. Everything after it
+    # then quietly works on the previous round: the decomposition skips the
+    # race, the DNF worklist seeds nothing. Stop here instead. The three
+    # steps above (the time-critical ones) have already run.
+    ("archivecheck", "latest race is in the archive",
+     [sys.executable, "-m", "f1lib.latest_race"]),
     ("incidents", "incident register",
      [sys.executable, "scripts/compute_incidents.py"]),
     ("teampace",  "team pace table",

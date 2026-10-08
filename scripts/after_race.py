@@ -7,7 +7,11 @@ this script computes from the cache, it does not fetch sessions).
 Steps, in dependency order — `--list` prints the live list; the comments on
 STEPS below say why each one is there and why it sits where it does. In short:
 
-  odds, forecast     what was knowable BEFORE the race (odds expire upstream)
+  odds, polymarket, forecast   what was knowable BEFORE the race (odds
+                     expire upstream; polymarket only works with the VPN on)
+  radio              fetch + whisper-transcribe the team radio (mp3s are
+                     purged upstream after a few weeks)
+  qualiscene         bake the QUALI 3D replay for the weekend
   pitstops           real pit stops (race stats reads them)
   archive            official results + standings (Jolpica)
   archivecheck       stops the chain if the newest cached race has no
@@ -21,11 +25,17 @@ STEPS below say why each one is there and why it sits where it does. In short:
   decomp, upgradestudy   'where the points went', upgrade event study
   mistakes, retention, sessionwx   per-session archives
   review, dossier, dnfcauses   hand-curation worklists for the newest race
+  checklist          the curated-CSV gaps for the weekend (prints only)
 
 Stops at the first failing step; every step is idempotent, so fix and re-run.
-Not covered here (needs a human or a browser): the `radio-review` skill, the
-hand-curated CSVs, and `build_quali_scenes.py <season> "<Meeting>"` — the
-closing checklist lists them.
+OPTIONAL steps (polymarket, radio, qualiscene, checklist) never stop the
+chain: their failure is collected and reported at the end, because none of
+them feeds a later step and each depends on something outside our control
+(a VPN, F1's audio archive, Overpass).
+
+What is left by hand is judgement, not mechanics: the radio REVIEW, the
+model-review and DNF-cause notes, and the curated CSVs. The closing
+checklist lists them.
 
 Usage
 -----
@@ -62,8 +72,22 @@ STEPS: list[tuple[str, str, list[str]]] = [
     # can reconstruct afterwards. Cheap (only new races) and idempotent; a row
     # left incomplete by the mid-weekend run is completed here, because every
     # lead time (D-1..D-3) has passed by now.
+    # Polymarket keeps resolved markets forever but is DNS-blocked in France,
+    # so it only works with the VPN on. It fails fast (exit 3) when blocked,
+    # so it rides along as OPTIONAL: VPN on = backfilled, VPN off = reported.
+    ("polymarket", "polymarket odds (needs VPN)",
+     [sys.executable, "scripts/fetch_odds.py", "--source", "polymarket"]),
     ("forecast",  "race-day rain forecast",
      [sys.executable, "scripts/fetch_race_forecast.py"]),
+    # Also time-critical: F1 purges the radio mp3s a few weeks after the race
+    # and they cannot be transcribed after that. Whisper on CPU takes a few
+    # minutes. Only the REVIEW of the transcripts stays manual (/radio-review).
+    ("radio",     "team radio transcription",
+     [sys.executable, "scripts/fetch_radio.py", "{season}", "{event}"]),
+    # The QUALI 3D replay for the weekend (Overpass + terrain, cached). Before
+    # archivecheck because it needs only the session cache, not the results.
+    ("qualiscene", "quali 3D replay scene",
+     [sys.executable, "scripts/build_quali_scenes.py", "{season}", "{event}"]),
     ("pitstops",  "pit stops",
      [sys.executable, "scripts/fetch_pitstops.py"]),
     ("archive",   "results archive",
@@ -77,6 +101,12 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "-m", "f1lib.latest_race"]),
     ("incidents", "incident register",
      [sys.executable, "scripts/compute_incidents.py"]),
+    # Every grid drop / pit-lane start from the FIA final starting grids —
+    # the cumulative ledger the engine championship's attrition panel sums
+    # (pu_penalties.csv only holds each driver's LATEST penalty). After
+    # archivecheck: car numbers are mapped to drivers through the archive.
+    ("gridpens",  "grid-penalty ledger",
+     [sys.executable, "scripts/fetch_grid_penalties.py"]),
     ("teampace",  "team pace table",
      [sys.executable, "scripts/compute_team_pace.py"]),
     ("driverpace", "driver pace table",
@@ -87,6 +117,10 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "scripts/compute_atr.py"]),
     ("topspeed",  "PU top-speed index",
      [sys.executable, "scripts/compute_pu_topspeed.py"]),
+    # SEASON "Car Profile by Section Type": every round's best qualifying
+    # laps cut into slow / medium / fast corners and straights.
+    ("sections",  "section profile",
+     [sys.executable, "scripts/compute_section_profile.py"]),
     ("carprofile", "car concept profile",
      [sys.executable, "scripts/compute_car_profile.py"]),
     ("backtest",   "pace-model scorecard",
@@ -119,9 +153,21 @@ STEPS: list[tuple[str, str, list[str]]] = [
     # would create curation work the register was about to do for free.
     ("dnfcauses", "DNF cause worklist",
      [sys.executable, "scripts/seed_dnf_causes.py", "--latest"]),
+    # Prints the weekend's hand-curated CSV gaps (tyre allocation, upgrades,
+    # PU + gearbox pools, penalties) with the source to read for each.
+    ("checklist", "curated-data checklist",
+     [sys.executable, "scripts/during_weekend.py", "{season}", "{event}",
+      "--check-only"]),
 ]
 
+# Failure is reported at the end instead of stopping the chain: none of these
+# feeds a later step, and each depends on something outside our control.
+OPTIONAL = {"polymarket", "radio", "qualiscene", "checklist"}
+
 FOLLOW_UPS = [
+    "radio review    /radio-review <Meeting>  - the clips are already",
+    "                transcribed by the `radio` step; this is the",
+    "                mishear-correction pass",
     "dnf causes      open data/dnf_causes.csv and fill `cause_family` for the",
     "                rows just seeded (the retirements race control could NOT",
     "                explain - a car that just stops draws no stewards' message,",
@@ -131,17 +177,25 @@ FOLLOW_UPS = [
     "                Outstanding count: python scripts/seed_dnf_causes.py --todo",
     "model review    open data/model_review.csv and fill in `category` +",
     "                `note` for the rows just seeded (3-12 a race), reading",
-    "                data/review_dossiers/<season>__<Event>.md alongside it —",
+    "                data/review_dossiers/<season>__<Event>.md alongside it -",
     "                that has the practice read, the laps behind each number,",
     "                the screens and the race-control log per driver.",
     "                The category vocabulary is listed by",
     "                python scripts/seed_model_review.py --help",
-    "radio review    /radio-review <Meeting>   (fetch the audio SOON - mp3s are",
-    "                purged upstream after a few weeks)",
-    'quali 3D scene  python scripts/build_quali_scenes.py <season> "<Meeting>"',
-    "curated CSVs    python scripts/during_weekend.py --check-only",
-    "                (tyre allocation, upgrades, PU + gearbox pools, penalties)",
+    "curated CSVs    fill the gaps the `checklist` step printed above",
 ]
+
+
+def _fill(cmd: list[str], latest: tuple | None) -> list[str] | None:
+    """Substitute {season}/{event} with the newest cached race; None when a
+    step needs them and there is no cached race."""
+    if not any("{" in c for c in cmd):
+        return cmd
+    if latest is None:
+        return None
+    season, event, _ = latest
+    return [c.replace("{season}", str(season)).replace("{event}", event)
+            for c in cmd]
 
 
 def main() -> int:
@@ -168,25 +222,45 @@ def main() -> int:
         return 2
 
     steps = [s for s in STEPS if s[0] not in skip]
+    from f1lib.latest_race import latest_cached_race
+    latest = latest_cached_race()
+    if latest is not None:
+        print(f"Latest cached race: {latest[0]} {latest[1]}")
 
     t0 = time.time()
+    soft_failed: list[str] = []
     for i, (key, name, cmd) in enumerate(steps, 1):
+        cmd = _fill(cmd, latest)
+        if cmd is None:
+            print(f"\n=== [{i}/{len(steps)}] {name}: no cached race - skipped ===")
+            continue
         print(f"\n=== [{i}/{len(steps)}] {name}: {' '.join(cmd[1:])} ===",
               flush=True)
         t = time.time()
         rc = subprocess.run(cmd, cwd=ROOT).returncode
+        if rc != 0 and key in OPTIONAL:
+            print(f"=== {name} FAILED (exit {rc}) - optional, carrying on ===",
+                  flush=True)
+            soft_failed.append(key)
+            continue
         if rc != 0:
             print(f"\nFAILED at step {i} ({name}, exit {rc}) - later steps "
                   "not run. Fix and re-run; every step is idempotent "
                   f"(or skip it: --skip {key}).")
+            if soft_failed:
+                print(f"Optional steps that also failed: {', '.join(soft_failed)}")
             return rc
         print(f"=== {name} done in {time.time() - t:.0f}s ===", flush=True)
 
     print(f"\nAll {len(steps)} steps done in {(time.time() - t0) / 60:.1f} min.")
+    if soft_failed:
+        print(f"\n!! optional step(s) failed, see their output above: "
+              f"{', '.join(soft_failed)}")
     print("\nStill to do by hand:")
     for line in FOLLOW_UPS:
         print(f"  {line}")
-    _polymarket_reminder()
+    if "polymarket" in skip or "polymarket" in soft_failed:
+        _polymarket_reminder()
     return 0
 
 

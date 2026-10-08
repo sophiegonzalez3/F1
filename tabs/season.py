@@ -2,8 +2,8 @@
 SEASON tab — championship-long form view.
 
 Answers "who's trending up?" across a whole season instead of one weekend:
-team one-lap speed gap and race pace gap round by round, the cumulative
-points race, and each team's Saturday-vs-Sunday character. All of it reads
+team one-lap speed gap and race pace gap round by round, recent scoring form
+and the gap to the front, and each team's Saturday-vs-Sunday character. All of it reads
 data/team_pace_by_event.csv (compute_team_pace.py); no session loads.
 """
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from dash import html, dcc, callback, Input, Output
+from dash import html, dcc, callback, Input, Output, State
 import dash_bootstrap_components as dbc
 
 from f1lib.components import (
@@ -23,7 +23,10 @@ from f1lib.components import (
 )
 from f1lib.glossary import gloss
 from f1lib.config import TEAM_COLORS, TEXT_DIM, TEXT_MAIN, GRID_CLR, ACCENT
-from tabs.pace_data import team_pace_df, seasons, event_short, season_calendar_df
+from tabs.pace_data import (
+    team_pace_df, seasons, event_short, season_calendar_df, filter_teams,
+    season_scope,
+)
 from tabs.regulations import regulations_block
 from tabs.finance import finance_block, compliance_card
 from tabs.hr import hr_section
@@ -35,7 +38,7 @@ from tabs.gearbox_pool import gearbox_pool_card
 from tabs.driver_market import driver_market_card
 from tabs.season_ops import (
     chaos_timeline_card, pit_league_card, lap1_league_card,
-    engine_championship_card, affinity_card, testing_card, penalties_card,
+    engine_championship_card, section_profile_card, testing_card, penalties_card,
     session_weather_card,
 )
 from tabs.season_intro import season_intro_block
@@ -87,7 +90,18 @@ def _trend_fig(s: pd.DataFrame, ycol: str, ytitle: str,
                            f"{ytitle}: %{{y:.2f}}<extra></extra>"),
         ))
     theme(fig, height)
-    if median_ref:
+    # Range from the plotted teams only. Pinned explicitly because a y=0 shape
+    # would otherwise drag the autorange out to the median car, which flattens
+    # a team-filtered view (the backmarkers all sit well above it) into lines
+    # too close together to read.
+    vals = s[ycol].dropna()
+    lo = hi = None
+    if not vals.empty:
+        lo, hi = float(vals.min()), float(vals.max())
+        pad = max((hi - lo) * 0.08, 0.05)
+        lo, hi = lo - pad, hi + pad
+        fig.update_yaxes(range=[lo, hi])
+    if median_ref and lo is not None and lo <= 0 <= hi:
         fig.add_hline(y=0, line=dict(color=TEXT_DIM, width=1, dash="dot"))
         fig.add_annotation(x=1, xref="paper", y=0, yshift=9, xanchor="right",
                            text="median car", showarrow=False,
@@ -95,29 +109,6 @@ def _trend_fig(s: pd.DataFrame, ycol: str, ytitle: str,
     fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,
                      tickangle=-40, title_text=None)
     fig.update_yaxes(title_text=ytitle)
-    fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                                  xanchor="left", x=0))
-    return fig
-
-
-def _points_fig(s: pd.DataFrame, height: int = 480) -> go.Figure:
-    fig = go.Figure()
-    rounds, labels = _round_axis(s)
-    for team in _team_order(s):
-        g = s[s["team"] == team].sort_values("round")
-        clr = TEAM_COLORS.get(team, "#808080")
-        fig.add_trace(go.Scatter(
-            x=g["round"], y=g["cum_points"], mode="lines", name=abbr(team),
-            line=dict(color=clr, width=2),
-            customdata=np.stack([g["event"].map(event_short), g["points"]], axis=-1),
-            hovertemplate=(f"<b>{abbr(team)}</b> · %{{customdata[0]}}<br>"
-                           "Total: %{y:.0f} pts (+%{customdata[1]:.0f})"
-                           "<extra></extra>"),
-        ))
-    theme(fig, height)
-    fig.update_xaxes(tickmode="array", tickvals=rounds, ticktext=labels,
-                     tickangle=-40)
-    fig.update_yaxes(title_text="Cumulative points")
     fig.update_layout(legend=dict(orientation="h", yanchor="bottom", y=1.02,
                                   xanchor="left", x=0))
     return fig
@@ -159,8 +150,13 @@ def _character_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
     if l is not None:
         pts.append(l.dropna())
     allv = pd.concat(pts)
-    lo = float(min(allv.min().min(), 0)) - 0.4
-    hi = float(max(allv.max().max(), 0)) + 0.4
+    # Fitted to the plotted teams, not forced through the median car: a
+    # team-filtered view of the backmarkers would otherwise spend most of the
+    # plot on empty space between them and zero.
+    span = float(allv.max().max() - allv.min().min())
+    pad = max(span * 0.12, 0.15)
+    lo = float(allv.min().min()) - pad
+    hi = float(allv.max().max()) + pad
     fig.add_trace(go.Scatter(
         x=[lo, hi], y=[lo, hi], mode="lines",
         line=dict(color=TEXT_DIM, width=1, dash="dot"),
@@ -259,7 +255,8 @@ def _momentum_noise(s: pd.DataFrame, w: int) -> float:
 
 
 def _momentum_headline_floor(s: pd.DataFrame, w: int,
-                             alpha: float = 0.05) -> float:
+                             alpha: float = 0.05,
+                             n: int | None = None) -> float:
     """The bar a team must clear to be NAMED as the field's biggest mover.
 
     Higher than _momentum_noise, for a reason that is easy to miss: that floor
@@ -272,8 +269,11 @@ def _momentum_headline_floor(s: pd.DataFrame, w: int,
     expected maximum — the expected max is exceeded by half of all trendless
     seasons by construction, and this sentence is the plain-English headline a
     newcomer reads as fact. ~2.8x the single-team floor with eleven teams.
+
+    `n` overrides the family size when the sentence only picks among a
+    sidebar-filtered subset of teams (the noise itself is still the field's).
     """
-    n = int(s["team"].nunique())
+    n = int(s["team"].nunique()) if n is None else n
     floor = _momentum_noise(s, w)
     if n < 2 or floor <= 0:
         return floor
@@ -370,11 +370,16 @@ def _momentum_frame(s: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).dropna(subset=["d_pace"])
 
 
-def _momentum_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
+def _momentum_fig(s: pd.DataFrame, height: int = 520,
+                  teams=None) -> go.Figure:
     """Change in one-lap speed against change in points share, over the last W
     rounds versus the W before. Quadrants say what kind of change it is; the
-    shaded band says when the change is too small to call."""
-    d = _momentum_frame(s)
+    shaded band says when the change is too small to call.
+
+    `s` is always the FULL field — the points share is of the whole pot and the
+    noise floor is the field's — and `teams` only decides which dots are drawn,
+    so the axes zoom onto them."""
+    d = filter_teams(_momentum_frame(s), teams)
     fig = go.Figure()
     if d.empty:
         theme(fig, height)
@@ -432,14 +437,21 @@ def _momentum_fig(s: pd.DataFrame, height: int = 520) -> go.Figure:
     return fig
 
 
-def _form_fig(s: pd.DataFrame, height: int = 560) -> go.Figure:
+def _form_fig(s: pd.DataFrame, height: int = 560,
+              filtered: bool = False) -> go.Figure:
     """Two panels: rolling points-per-round (are they scoring NOW?) and the
-    points gap to the championship leader (is the title fight closing?)."""
+    points gap to the championship leader (is the title fight closing?).
+
+    With a sidebar team filter the gap is to the best team IN THE SELECTION —
+    the midfield fight read on its own terms instead of as 300 points behind a
+    leader who is not on the chart."""
     from plotly.subplots import make_subplots
     rounds, labels = _round_axis(s)
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
                         vertical_spacing=0.09,
                         subplot_titles=("Points per round · 3-round rolling",
+                                        "Points behind the best selected team"
+                                        if filtered else
                                         "Points behind the leader"))
     lead = (s.groupby("round")["cum_points"].max()
             if "cum_points" in s.columns else None)
@@ -465,7 +477,10 @@ def _form_fig(s: pd.DataFrame, height: int = 560) -> go.Figure:
                 showlegend=False,
                 customdata=np.stack([g["event"].map(event_short)], axis=-1),
                 hovertemplate=(f"<b>{abbr(team)}</b> · %{{customdata[0]}}<br>"
-                               "%{y:.0f} pts behind the leader<extra></extra>"),
+                               "%{y:.0f} pts behind "
+                               + ("the best selected team" if filtered
+                                  else "the leader")
+                               + "<extra></extra>"),
             ), row=2, col=1)
     # BASE_NO_AXES + theme_axes rather than BASE: layout.xaxis only reaches
     # panel 1 of a subplot figure, so the shared styling (and the house hover
@@ -642,37 +657,19 @@ def _fastest_team(s: pd.DataFrame, col: str):
     return None if avg.empty else avg.index[0]
 
 
-def _points_plain(s: pd.DataFrame):
-    last = (s.sort_values("round").groupby("team")["cum_points"].last()
-            .sort_values(ascending=False))
-    if last.empty:
-        return None
-    leader, pts = _fmt_team(last.index[0]), last.iloc[0]
-    n = int(s["round"].max())
-    tail = (" The team with the most points at the end of the year wins the "
-            "Constructors' title.")
-    if len(last) >= 2:
-        margin, second = pts - last.iloc[1], _fmt_team(last.index[1])
-        if margin >= 1:
-            return (f"{n} rounds in, {leader} lead with {pts:.0f} points — "
-                    f"{margin:.0f} ahead of {second}.{tail}")
-        return (f"{n} rounds in, {leader} and {second} are locked together at "
-                f"the top on about {pts:.0f} points.{tail}")
-    return f"{leader} lead with {pts:.0f} points.{tail}"
-
-
-def _quali_plain(s: pd.DataFrame):
+def _quali_plain(s: pd.DataFrame, filtered: bool = False):
     fastest = _fastest_team(s, "onelap_speed_pct")
     if fastest is None:
         return None
+    of = " of the teams shown" if filtered else ""
     return (f"Over a single flat-out lap this season, {_fmt_team(fastest)} have "
-            "been the quickest car on average — the strongest qualifiers, so "
+            f"been the quickest car{of} on average — the strongest qualifiers, so "
             "they tend to line up near the front for the race. This is "
             "one-lap speed only; how quick they are over a full stint is the "
             "next chart down, and it can tell a different story.")
 
 
-def _race_plain(s: pd.DataFrame, quali_fastest):
+def _race_plain(s: pd.DataFrame, quali_fastest, filtered: bool = False):
     fastest = _fastest_team(s, "race_pace_pct")
     if fastest is None:
         return None
@@ -683,12 +680,13 @@ def _race_plain(s: pd.DataFrame, quali_fastest):
     else:
         tail = (" — the same car that tops one-lap speed, the mark of an "
                 "all-round-strong package.")
+    of = " of the teams shown" if filtered else ""
     return (f"Over long runs on wearing tyres, {_fmt_team(fastest)} have the "
-            f"best race pace on average{tail}")
+            f"best race pace{of} on average{tail}")
 
 
-def _momentum_plain(s: pd.DataFrame):
-    d = _momentum_frame(s)
+def _momentum_plain(s: pd.DataFrame, teams=None):
+    d = filter_teams(_momentum_frame(s), teams)
     if d.empty:
         return None
     early, late = _momentum_window(s)
@@ -697,7 +695,8 @@ def _momentum_plain(s: pd.DataFrame):
     # window in 2026), so this line named a riser and a faller every round
     # regardless. The per-team floor is not enough either, because this
     # sentence reports the extreme of eleven teams — see the docstring.
-    floor = _momentum_headline_floor(s, len(late))
+    floor = _momentum_headline_floor(s, len(late),
+                                     n=len(d) if teams else None)
     riser = d.sort_values("d_pace").iloc[0]          # biggest speed gain
     faller = d.sort_values("d_pace").iloc[-1]        # biggest speed loss
     span = (f"the last {len(late)} races against the {len(early)} before them")
@@ -734,7 +733,7 @@ def _momentum_title(s: pd.DataFrame):
             f"{_span(late)} vs {_span(early)}")
 
 
-def _momentum_footnotes(s: pd.DataFrame):
+def _momentum_footnotes(s: pd.DataFrame, teams=None):
     """The two things the scatter cannot say for itself: what the calendar was
     doing under the comparison, and where the biggest single-round move came
     from (which is usually an upgrade, and lives on another card)."""
@@ -750,7 +749,7 @@ def _momentum_footnotes(s: pd.DataFrame):
     try:
         from tabs.upgrades import _upgrade_rounds
         _, late = _momentum_window(s)
-        g = s[s["round"].isin(late)].copy()
+        g = filter_teams(s[s["round"].isin(late)], teams).copy()
         prev = (s.sort_values("round").groupby("team")["onelap_speed_pct"]
                 .shift(1))
         g["step"] = g["onelap_speed_pct"] - prev.reindex(g.index)
@@ -796,12 +795,29 @@ def _character_plain(s: pd.DataFrame):
             "they are in qualifying.")
 
 
-def _season_content(season: int) -> html.Div:
+def _season_content(season: int, teams=None, drivers=None) -> html.Div:
+    """`teams` / `drivers` are the sidebar selections, already None when
+    everything is selected (pace_data.active_selection). They become a team
+    scope for the team cards and a driver scope for the per-driver cards —
+    see pace_data.season_scope for the seat-change rule. Each card draws only
+    what is in scope, with its axes fitted to it; field-relative numbers (the
+    median car, the share of the points pot, noise floors) are still measured
+    on the whole grid, so a filtered view zooms in without changing what any
+    value means. Field-wide cards (chaos timeline, weather, the engine
+    championship) are not team views and ignore it."""
     df = team_pace_df()
-    s = df[df["season"] == season]
-    if s.empty:
+    s_all = df[df["season"] == season]
+    if s_all.empty:
         return html.P("No pace data for this season — run compute_team_pace.py.",
                       style={"color": TEXT_DIM})
+    teams, drivers = season_scope(season, teams, drivers)
+    s = filter_teams(s_all, teams)
+    if s.empty:
+        return html.P(f"None of the selected teams or drivers raced in {season}.",
+                      style={"color": TEXT_DIM})
+    filtered = teams is not None and len(s["team"].unique()) < len(s_all["team"].unique())
+    if not filtered:
+        teams = None
     n_race = s["race_pace_pct"].notna().sum()
     quali_fastest = _fastest_team(s, "onelap_speed_pct")
     # The season-calendar ribbon now lives at the top of the tab, above the
@@ -827,7 +843,7 @@ def _season_content(season: int) -> html.Div:
                   "happened to finish on Saturday. For the Saturday result "
                   "itself (which mixes pace with session progression, traffic "
                   "and penalties) use the grid in the QUALI tab."),
-            plain=_quali_plain(s),
+            plain=_quali_plain(s, filtered),
         ),
         card(
             [*gloss("race pace", "Race Pace"), " by Round"],
@@ -857,17 +873,7 @@ def _season_content(season: int) -> html.Div:
                   "from the one-lap chart above, and often a different "
                   "pecking order. Reading them together is the point: a car "
                   "above its one-lap position here is a race car."),
-            plain=_race_plain(s, quali_fastest),
-        ),
-        card(
-            [*gloss("constructor", "Constructors'"), " ",
-             *gloss("points", "Points"), " Race"],
-            dcc.Graph(figure=_points_fig(s), config=GFX),
-            info=("Data: cumulative constructor points (race + sprint) after "
-                  "each round. Why: the championship story in one picture — "
-                  "where gaps opened, and whether pace trends above are "
-                  "converting into points."),
-            plain=_points_plain(s),
+            plain=_race_plain(s, quali_fastest, filtered),
         ),
         card(
             "Saturday vs Sunday Character",
@@ -888,10 +894,10 @@ def _season_content(season: int) -> html.Div:
             plain=_character_plain(s),
         ),
         card(
-            _momentum_title(s),
+            _momentum_title(s_all),
             html.Div([
-                dcc.Graph(figure=_momentum_fig(s), config=GFX),
-                _momentum_footnotes(s),
+                dcc.Graph(figure=_momentum_fig(s_all, teams=teams), config=GFX),
+                _momentum_footnotes(s_all, teams),
             ]),
             measure="one-lap",
             info=("Data: each team's average session-normalised ONE-LAP SPEED, "
@@ -921,32 +927,36 @@ def _season_content(season: int) -> html.Div:
                   "adjustment was built and tested out-of-sample; it helped in "
                   "2026 (+17%) but made 2024 and 2025 worse, so the confound is "
                   "named under the chart instead of silently removed."),
-            plain=_momentum_plain(s),
+            plain=_momentum_plain(s_all, teams),
         ),
         card(
             "Form Guide — recent scoring and the gap to the front",
-            dcc.Graph(figure=_form_fig(s), config=GFX),
+            dcc.Graph(figure=_form_fig(s, filtered=filtered), config=GFX),
             info=("Data: top — points scored per round on a 3-round rolling "
                   "mean, so a single big score doesn't dominate. Bottom — how "
                   "far each team is behind the championship leader after every "
                   "round, axis inverted so higher on the chart is closer to "
-                  "the front. Why: the cumulative points chart above is "
+                  "the front. Why: a cumulative points chart is "
                   "monotonic, which makes recent form nearly invisible — by "
                   "round 11 a team scoring 40 points in three rounds and one "
                   "scoring 4 look almost identical on it. These two panels are "
                   "the derivative view: who is scoring NOW, and whether the "
                   "gap to the front is opening or closing."),
         ),
-    ] + [c for c in (affinity_card(season), chaos_timeline_card(season),
-                      # next to affinity and chaos on purpose: those two ask
+    ] + [c for c in (section_profile_card(season, teams=teams),
+                      chaos_timeline_card(season),
+                      # next to the section profile and chaos on purpose: those ask
                       # what a circuit does to the racing, and the weather is
                       # the other half of that question
                       session_weather_card(season),
-                      pit_league_card(season), lap1_league_card(season),
-                      testing_card(season),
-                      reliability_card(season), contact_card(season),
-                      penalties_card(season),
-                      pu_pool_card(season), gearbox_pool_card(season),
+                      pit_league_card(season, teams=teams),
+                      lap1_league_card(season, drivers=drivers),
+                      testing_card(season, teams=teams),
+                      reliability_card(season, teams=teams),
+                      contact_card(season, teams=teams),
+                      penalties_card(season, teams=teams),
+                      pu_pool_card(season, drivers=drivers),
+                      gearbox_pool_card(season, drivers=drivers),
                       engine_championship_card(season))
          if c is not None])
 
@@ -1011,11 +1021,15 @@ def tab_context() -> html.Div:
     return html.Div(parts)
 
 
-def tab_season(standings=None, upgrades=None) -> html.Div:
+def tab_season(standings=None, upgrades=None, teams=None,
+               drivers=None) -> html.Div:
     """SEASON tab: only what moves when a race happens — the calendar, the
     championship standings, the season form and momentum charts, the race-ops
     league tables and the car-upgrade payoff. The static reference material
-    (regulations, finance, HR, infrastructure) lives in CONTEXT."""
+    (regulations, finance, HR, infrastructure) lives in CONTEXT.
+
+    `teams` / `drivers` are the active sidebar selections; see
+    _season_content."""
     yrs = seasons()
     form_block = (
         html.Div(dbc.Alert(
@@ -1035,7 +1049,8 @@ def tab_season(standings=None, upgrades=None) -> html.Div:
                                     "fontSize": "0.85rem"}),
             ], style={"display": "flex", "alignItems": "center",
                       "marginBottom": "16px"}),
-            dcc.Loading(html.Div(_season_content(max(yrs)), id="season-content"),
+            dcc.Loading(html.Div(_season_content(max(yrs), teams, drivers),
+                                 id="season-content"),
                         type="default"),
         ])
     )
@@ -1054,7 +1069,7 @@ def tab_season(standings=None, upgrades=None) -> html.Div:
         ]
     parts += [
         _section_header("SEASON FORM",
-                        "pace gaps, points race and race-day character, "
+                        "pace gaps, scoring form and race-day character, "
                         "round by round"),
         form_block,
     ]
@@ -1079,6 +1094,12 @@ def tab_season(standings=None, upgrades=None) -> html.Div:
 
 @callback(Output("season-content", "children"),
           Input("season-select", "value"),
+          State("team-filter", "value"),
+          State("driver-filter", "value"),
           prevent_initial_call=True)
-def _update_season(season):
-    return _season_content(int(season))
+def _update_season(season, teams, drivers):
+    import f1lib.state as state
+    from tabs.pace_data import active_selection
+    return _season_content(int(season),
+                           active_selection(teams, state.TEAMS),
+                           active_selection(drivers, state.DRIVERS))

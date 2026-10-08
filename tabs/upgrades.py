@@ -19,7 +19,7 @@ import dash_bootstrap_components as dbc
 import f1lib.state as state
 from f1lib.components import kpi, badge, card, theme, GFX, abbr
 from f1lib.config import TEAM_COLORS, CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR
-from tabs.pace_data import team_pace_df, event_short
+from tabs.pace_data import team_pace_df, event_short, filter_teams, season_scope
 
 # Curated, human-maintained table of the technical upgrades each team brings
 # to a given Grand Prix — mirrors the FIA "Car Presentation" documents
@@ -446,12 +446,17 @@ def _team_trend_fig(season: int, team: str) -> go.Figure:
     return fig
 
 
-def _impact_section() -> html.Div:
+def _impact_section(teams=None, drivers=None) -> html.Div:
     season = _impact_season()
     if season is None:
         return html.Div()
-    eff = _effect_rows(season)
-    ups = _upgrade_rounds(season)
+    # team cards: a driver filter narrows to the teams those drivers raced for
+    teams, _ = season_scope(season, teams, drivers)
+    # Effects are measured against the WHOLE field's control and only then
+    # narrowed to the sidebar selection, so a filtered board shows the same
+    # numbers, just fewer rows (and an x-axis fitted to them).
+    eff = filter_teams(_effect_rows(season), teams)
+    ups = filter_teams(_upgrade_rounds(season), teams)
     teams = sorted(ups["team"].unique()) if not ups.empty else []
     if not teams:
         return html.Div()
@@ -537,7 +542,7 @@ def _update_impact_trend(team):
     return _team_trend_fig(season, team)
 
 
-def upgrade_impact_section() -> html.Div:
+def upgrade_impact_section(teams=None, drivers=None) -> html.Div:
     """Upgrade-effectiveness analysis: the team pace-trend card and the
     'did it work?' effect board. Rendered in the SEASON tab (CAR UPGRADES).
 
@@ -550,7 +555,7 @@ def upgrade_impact_section() -> html.Div:
             "No upgrade-impact data yet — needs both data/upgrades.csv and a "
             "season pace table (compute_team_pace.py) for the same year.",
             style={"color": TEXT_DIM, "fontSize": "0.8rem"})
-    section = _impact_section()
+    section = _impact_section(teams, drivers)
     # _impact_section() returns an empty Div when there are upgrades but not
     # enough surrounding rounds to measure anything — keep a note in that case.
     if not getattr(section, "children", None):

@@ -5,7 +5,7 @@ team does besides building a fast car, measured from the race archive:
   pit_league_card       – each team's median & best stationary pit-stop time
   lap1_league_card      – average positions gained on lap 1, per driver
   pu_points_card        – constructor points grouped by power-unit maker
-  affinity_card         – power-track vs technical-track pace character
+  section_profile_card  – car character by driving phase (low-speed cornering, traction, top speed)
   testing_card          – pre-season testing mileage per team (curated,
                           data/testing_mileage.csv)
   penalties_card        – the stewarding ledger: major penalties, DSQs and
@@ -22,16 +22,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from dash import html, dcc, dash_table
+from dash import html, dcc, dash_table, callback, Input, Output
 import dash_bootstrap_components as dbc
 
 from f1lib.components import card, theme, GFX, abbr
-from f1lib.circuits import french_key
 from f1lib.config import (
     TEAM_COLORS, team_color, CARD_BG, ACCENT,
     TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )
-from tabs.pace_data import team_pace_df, event_short
+from tabs.pace_data import (
+    team_pace_df, event_short, filter_teams, filter_drivers,
+)
 from tabs.race_stats_data import race_stats_df, lap1_df, pits_df
 
 
@@ -82,7 +83,7 @@ def chaos_timeline_card(season: int) -> html.Div | None:
         info=("Data: SC / VSC deployments and red flags per round, counted "
               "from each race's track-status feed (compute_race_stats.py); "
               "🌧 marks races where rain fell. Why: interruptions reshuffle "
-              "strategy and points — a swing on the points-race chart above "
+              "strategy and points — a swing on the Form Guide above "
               "often lines up with a chaotic round here, and teams whose "
               "results lean on chaos read differently from teams with pace."),
     )
@@ -92,11 +93,12 @@ def chaos_timeline_card(season: int) -> html.Div | None:
 # Pit-stop league — team stationary times
 # ─────────────────────────────────────────────────────────────
 
-def pit_league_card(season: int) -> html.Div | None:
+def pit_league_card(season: int, teams=None) -> html.Div | None:
     df = pits_df()
     if df.empty:
         return None
-    s = df[(df["season"] == season) & (df["team"] != "")].copy()
+    s = filter_teams(df[(df["season"] == season) & (df["team"] != "")],
+                     teams).copy()
     s["stationary_s"] = pd.to_numeric(s["stationary_s"], errors="coerce")
     s = s.dropna(subset=["stationary_s"])
     # a jammed wheel gun (20 s+) is a story, not crew pace — cap the tail so
@@ -143,19 +145,34 @@ def pit_league_card(season: int) -> html.Div | None:
 # Lap-1 league — positions gained at the start
 # ─────────────────────────────────────────────────────────────
 
-def lap1_league_card(season: int, min_races: int = 3) -> html.Div | None:
+def lap1_league_card(season: int, min_races: int = 3,
+                     drivers=None) -> html.Div | None:
+    """`drivers` is the season driver scope (pace_data.season_scope): a
+    per-driver card keeps every start of a driver in scope, including the ones
+    in another team's car."""
     df = lap1_df()
     if df.empty:
         return None
-    s = df[df["season"] == season]
+    s = filter_drivers(df[df["season"] == season], drivers)
     if s.empty:
         return None
-    g = (s.groupby(["driver", "team"])["gain"]
+    # ONE bar per driver. Grouping by (driver, team) gave a mid-season seat
+    # change two bars on the same y label — Lawson's Racing Bulls and Red Bull
+    # starts drawn on top of each other as "LAW".
+    g = (s.groupby("driver")["gain"]
          .agg(mean="mean", n="count").reset_index())
+    seats = s.groupby(["driver", "team"]).size().rename("k").reset_index()
+    main = (seats.sort_values("k", ascending=False)
+            .drop_duplicates("driver").set_index("driver")["team"])
+    label = {
+        d: ", ".join(f"{t} ({k})" if len(x) > 1 else t
+                     for t, k in zip(x["team"], x["k"]))
+        for d, x in seats.sort_values("k", ascending=False).groupby("driver")}
+    g["team"] = g["driver"].map(main)          # colour = his main seat
+    g["seats"] = g["driver"].map(label)
     g = g[g["n"] >= min_races]
     if g.empty:
         return None
-    # a driver who switched teams keeps his latest team colour
     g = g.sort_values("mean")
 
     fig = go.Figure(go.Bar(
@@ -164,7 +181,7 @@ def lap1_league_card(season: int, min_races: int = 3) -> html.Div | None:
                     line=dict(color="#000", width=0.5)),
         text=[f"{m:+.1f}" for m in g["mean"]], textposition="outside",
         textfont=dict(size=9),
-        customdata=np.stack([g["team"], g["n"]], axis=-1),
+        customdata=np.stack([g["seats"], g["n"]], axis=-1),
         hovertemplate=("<b>%{y}</b> (%{customdata[0]})<br>"
                        "Avg lap-1 gain: %{x:>+.2f} places over "
                        "%{customdata[1]} starts<extra></extra>"),
@@ -270,6 +287,7 @@ def _eng_hbar(makers: list[str], values: list[float], colors: list[str],
         y=makers, x=values, orientation="h",
         marker=dict(color=colors, line=dict(color="#000", width=0.5)),
         text=text, textposition="outside", textfont=dict(size=10),
+        cliponaxis=False,                  # value labels must not be cut off
         customdata=customdata,
         hovertemplate=hovertmpl,
     ))
@@ -287,42 +305,158 @@ def _eng_hbar(makers: list[str], values: list[float], colors: list[str],
     return fig
 
 
-def _non_contact_dnf_per_car(season: int, pu: pd.DataFrame) -> dict:
-    """maker → retirements per car that contact does NOT explain.
+_GRID_PEN_PATH = Path("data/grid_penalties.csv")
 
-    The archive has recorded a bare "Retired" since 2023, so this cannot say
-    "the engine let go" — it says "the car stopped and nobody hit it", which
-    is the closest the data supports. The incident register
-    (scripts/compute_incidents.py) is what removes the collisions.
-    """
-    from pathlib import Path
+
+def _pu_penalty_ledger(season: int) -> pd.DataFrame:
+    """Every PU-element grid drop and pit-lane start of the season, one row per
+    car per event (scripts/fetch_grid_penalties.py, from the FIA's final
+    starting grids). Cumulative by construction — unlike pu_penalties.csv,
+    which keeps only each driver's LATEST penalty and, summed, forgot 70 of
+    2026's 310 places by round 16."""
+    if not _GRID_PEN_PATH.exists():
+        return pd.DataFrame()
+    try:
+        g = pd.read_csv(_GRID_PEN_PATH)
+    except Exception:
+        return pd.DataFrame()
+    g = g[(g["season"] == season)
+          & g["pu"].astype(str).str.lower().eq("true")].copy()
+    g["pit_lane"] = g["pit_lane"].astype(str).str.lower().eq("true")
+    return g
+
+
+def _pu_failures(season: int) -> pd.DataFrame:
+    """Every race the power unit ended — retirements AND did-not-starts whose
+    resolved cause names the PU (f1lib.dnf_causes.is_pu_failure). One row per
+    car-race: round, event, driver, team at that race.
+
+    Read through resolve_cause, so it inherits both layers: race control's
+    collisions are never counted, and a curated override (Russell, Canada
+    2026 — a no-action brush with Antonelli three laps before a battery
+    failure) is. A retirement nobody has researched yet is NOT counted: the
+    bar is a floor, and says so."""
     from f1lib.config import HISTORICAL_DIR
-    from f1lib.incidents import classify_retirement
+    from f1lib.dnf_causes import resolve_cause, is_pu_failure
 
+    cols = ["round", "event", "driver", "team", "dns"]
     p = Path(HISTORICAL_DIR) / "race_results_all.parquet"
-    if not p.exists() or pu.empty:
-        return {}
+    if not p.exists():
+        return pd.DataFrame(columns=cols)
     try:
         r = pd.read_parquet(p)
     except Exception:
-        return {}
-    r = r[(r["season"] == season) & (r["Status"].astype(str) == "Retired")]
-    if r.empty:
-        return {}
-    maker_of = dict(zip(pu["driver"].astype(str).str.upper(), pu["maker"]))
-    cars = pu.groupby("maker")["driver"].nunique()
-    counts: dict = {}
-    for row in r.itertuples():
-        maker = maker_of.get(str(getattr(row, "Abbreviation", "")).upper())
-        if not maker:
-            continue
-        got = classify_retirement(season, str(getattr(row, "event_name", "")),
-                                  getattr(row, "Abbreviation", None),
-                                  getattr(row, "Laps", None))
-        if got["cause"] == "collision":
-            continue
-        counts[maker] = counts.get(maker, 0) + 1
-    return {m: n / max(int(cars.get(m, 1)), 1) for m, n in counts.items()}
+        return pd.DataFrame(columns=cols)
+    st = r["Status"].astype(str)
+    r = r[(r["season"] == season)
+          & ~st.isin(["Finished", "Lapped"]) & ~st.str.startswith("+")]
+    rows = []
+    for x in r.itertuples():
+        got = resolve_cause(season, str(x.event_name), x.Abbreviation, x.Laps)
+        if is_pu_failure(got):
+            rows.append({"round": int(x.round_number), "event": x.event_name,
+                         "driver": x.Abbreviation, "team": x.TeamName,
+                         "dns": str(x.Status) == "Did not start"})
+    return pd.DataFrame(rows, columns=cols)
+
+
+# Plain championship points for a finishing position (2026 table). The PU
+# cost panel reads grid slots through it AS IF they were finishing places —
+# the owner's choice, deliberately simple: a car's race is not guaranteed to
+# end where it started, but neither is the counterfactual of any other model.
+_RACE_POINTS = (25, 18, 15, 12, 10, 8, 6, 4, 2, 1)
+
+
+def _pts(pos) -> float:
+    try:
+        p = int(pos)
+    except (TypeError, ValueError):
+        return 0.0
+    return float(_RACE_POINTS[p - 1]) if 1 <= p <= len(_RACE_POINTS) else 0.0
+
+
+def _pu_points_cost(season: int) -> pd.DataFrame:
+    """Every way the power unit cost a car this season, one row per car-race
+    and kind, in two currencies — championship POINTS on the plain points
+    table, and PLACES:
+
+      grid     a PU-element grid penalty or pit-lane start.
+               points: points of the qualifying position minus points of the
+                       grid slot actually started.
+               places: the NOMINAL penalty the stewards handed out (owner's
+                       choice: the points view already measures the real
+                       effect, so this view gives the perspective of how hard
+                       the PU was hit — Honda's 2026 drops read 130 here and 0
+                       in points). A pit-lane start, which has no nominal
+                       figure, counts from its qualifying slot to the back.
+      failure  a PU retirement or did-not-start, from the grid slot it started
+               (for a DNS, the slot it would have taken) — not the running
+               position at the stop, since a car limping for laps has already
+               shed places to the same fault.
+               points: points of that slot.
+               places: that slot to the back of the field.
+
+    Additive by construction: a car penalised AND failing in one race costs
+    exactly what its qualifying position was worth, never more.
+    """
+    from f1lib.config import HISTORICAL_DIR
+    hist = Path(HISTORICAL_DIR)
+    cols = ["kind", "round", "event", "driver", "team", "from_pos", "to_pos",
+            "points", "places"]
+    try:
+        race = pd.read_parquet(hist / "race_results_all.parquet")
+        quali = pd.read_parquet(hist / "quali_results_all.parquet")
+    except Exception:
+        return pd.DataFrame(columns=cols)
+    race = race[race["season"] == season]
+    quali = quali[quali["season"] == season]
+    grid_of = {(int(r.round_number), r.Abbreviation): r.GridPosition
+               for r in race.itertuples()}
+    q_of = {(int(r.round_number), r.Abbreviation): r.Position
+            for r in quali.itertuples()}
+    field = race.groupby("round_number").size().to_dict()
+
+    def _num(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return None
+        return None if v != v else v
+
+    rows = []
+
+    led = _pu_penalty_ledger(season)
+    for (rnd, drv), g in led.groupby(["round", "driver"]):
+        k = (int(rnd), drv)
+        q, grid = q_of.get(k), grid_of.get(k)
+        pit = bool(g["pit_lane"].any())
+        # GridPosition 0 = started from the pit lane: no points from there
+        start = 0 if pit or (grid is not None and grid == 0) else grid
+        n = field.get(int(rnd), 22)
+        qn = _num(q)
+        back = n if not start else _num(start)
+        nominal = float(g["places"].sum())
+        if not nominal and pit:
+            nominal = max(back - qn, 0.0) if qn is not None else 0.0
+        rows.append({"kind": "grid", "round": int(rnd),
+                     "event": g["event"].iloc[0], "driver": drv,
+                     "team": g["team"].iloc[0],
+                     "from_pos": q, "to_pos": "pit lane" if not start else start,
+                     "points": max(_pts(q) - _pts(start), 0.0),
+                     "places": nominal})
+
+    for f in _pu_failures(season).itertuples():
+        k = (int(f.round), f.driver)
+        grid = grid_of.get(k)
+        start = q_of.get(k) if f.dns or not grid else grid
+        sn = _num(start)
+        rows.append({"kind": "failure", "round": int(f.round),
+                     "event": f.event, "driver": f.driver, "team": f.team,
+                     "from_pos": start, "to_pos": "DNS" if f.dns else "DNF",
+                     "points": _pts(start),
+                     "places": (max(field.get(int(f.round), 22) - sn, 0.0)
+                                if sn is not None else 0.0)})
+    return pd.DataFrame(rows, columns=cols)
 
 
 def engine_championship_card(season: int) -> html.Div | None:
@@ -380,98 +514,126 @@ def engine_championship_card(season: int) -> html.Div | None:
         customdata=np.stack([pa["points"], pa["cars"], pa["teams"]], axis=-1),
     )
 
-    # ── Panel B · PU attrition — what the wear actually COST ──────
+    # ── Panel B · what the power unit COST, in championship points ──
     #
-    # This panel used to plot total elements used per car, which measures the
-    # wrong thing twice over. Element count is a PLANNING decision as much as a
-    # reliability one — a team can take a fresh engine early at a cheap circuit
-    # — and a fleet MEAN dilutes a catastrophe: in 2026 Ferrari's six cars all
-    # sat on an identical 3/3/3/3/3/2 allocation and read WORSE (17.2 elements
-    # per car) than Mercedes (16.6), despite Ferrari taking zero grid penalties
-    # and Mercedes twenty. That is the opposite of the story on track.
+    # One panel, two causes stacked, because both are the same currency now:
+    #   grid     PU-element grid penalties / pit-lane starts — points of the
+    #            qualifying slot minus points of the slot actually started
+    #   failure  PU retirements and DNS — points of the starting slot
+    # priced on the plain points table (see _pu_points_cost for why plain).
+    # Per car supplied, like the points panel, so an eight-car and a two-car
+    # maker compare. Hue stays the maker's (the card's only use of hue); the
+    # grid-penalty segment is hatched to tell the two causes apart.
     #
-    # So the bar is now the realised sporting cost — grid places served, per car
-    # supplied — with the pool depth as colour so a maker still on zero is not
-    # painted safe when its next element costs ten places. The element counts
-    # move to the hover, where they belong.
-    from tabs.pu_pool import _LIMITS_2026, _ELEMENTS
-
-    pu = pu_df(season)
+    # Replaces two panels (grid places served; races lost). Grid places
+    # weighed a backmarker's 30-place drop from P21 the same as a front-
+    # runner's 10 from P3, which cost the second car 15 points and the first
+    # none; a race count treated a DNF from pole like one from P20.
+    cars = pts.set_index("maker")["cars"]
+    cost = _pu_points_cost(season)
+    cost = cost.assign(maker=cost["team"].map(team2maker))
     fig_rel, rel_note = None, ""
-    # ANC included — pu_pool.py counts seven elements and this panel counted
-    # six, so the same tab disagreed with itself about what a PU element is.
-    ecols = [e for e, _ in _ELEMENTS]
-    if not pu.empty and set(ecols).issubset(pu.columns):
-        pu = pu.copy()
-        pu["maker"] = pu["pu_supplier"].map(_pu_short)
-        pu["elems"] = pu[ecols].sum(axis=1)
-        # deepest single element pool this car has eaten, as a share of its
-        # season allowance: 1.0 = exactly at the limit, >1.0 = already over
-        pu["pool"] = pu.apply(
-            lambda r: max(float(r[e]) / _LIMITS_2026[e] for e in ecols), axis=1)
-        rel = (pu.groupby("maker")
-               .agg(places=("penalties_places", "sum"),
-                    worst_car_places=("penalties_places", "max"),
-                    worst_driver=("driver", lambda s: s.iloc[0]),
-                    elems_car=("elems", "mean"), ice_car=("ice", "mean"),
-                    pool=("pool", "max"),
-                    cars=("driver", "nunique")).reset_index())
-        # name the car that actually took the worst hit, not the first row
-        worst = (pu.sort_values("penalties_places", ascending=False)
-                   .drop_duplicates("maker").set_index("maker")["driver"])
-        rel["worst_driver"] = rel["maker"].map(worst)
-        rel["places_car"] = rel["places"] / rel["cars"].clip(lower=1)
-        # Retirements NOT explained by contact, per car. Reported in the hover
-        # and deliberately kept OUT of the bar: the archive records a bare
-        # "Retired", so this is "mechanical or unknown" — a gearbox, a
-        # hydraulic leak and a blown ICE are indistinguishable in it. Baking an
-        # unattributable number into a PU index would make the index mean less,
-        # not more.
-        rel["dnf_car"] = rel["maker"].map(_non_contact_dnf_per_car(season, pu))
-        rb = _reindex(rel, "maker")
+    fig_fail, fail_note = None, ""
 
-        # The bar is the realised cost and NOTHING else. Pool depth used to be
-        # encoded here as well — first as the fill colour, which collided with
-        # the livery palette, then briefly as hatching — but "how close is the
-        # next penalty" is already the whole subject of pu_pool_card, which
-        # renders immediately ABOVE this card (tabs/season.py) as a per-driver
-        # heatmap with an at-limit legend. Re-stating it here in one bar per
-        # MAKER was a lower-resolution duplicate of the card above, so this
-        # panel answers its own question only; the pool figure stays in the
-        # hover for anyone reading a single bar closely.
-        fig_rel = _eng_hbar(
-            order, rb["places_car"].tolist(),
-            [_PU_COLORS.get(m, ACCENT) for m in order],
-            [f"{v:.1f}" if v == v and v > 0 else "0" for v in rb["places_car"]],
-            "PU attrition — what it cost",
-            "Grid places served per car supplied",
-            ("<b>%{y}</b><br>%{x:.1f} grid places per car "
-             "(%{customdata[0]:.0f} total over %{customdata[1]:.0f} cars)<br>"
-             "worst car: %{customdata[2]} with %{customdata[3]:.0f} places<br>"
-             "deepest element pool: %{customdata[4]:.0%} of the allowance<br>"
-             "%{customdata[7]:.2f} non-contact retirements per car<br>"
-             "<span style='opacity:.7'>%{customdata[5]:.1f} elements per car · "
-             "%{customdata[6]:.1f} engines (ICE)</span><extra></extra>"),
-            customdata=np.stack([rb["places"], rb["cars"], rb["worst_driver"],
-                                 rb["worst_car_places"], rb["pool"],
-                                 rb["elems_car"], rb["ice_car"],
-                                 rb["dnf_car"].fillna(0)], axis=-1),
-        )
+    def _cost_fig(metric: str, unit: str, title: str, xtitle: str):
+        def _who(kind: str) -> pd.Series:
+            d = cost[cost["kind"] == kind].sort_values(metric, ascending=False)
+            out = {}
+            for m, g in d.groupby("maker"):
+                bits = []
+                for r in g.itertuples():
+                    fp = "?" if pd.isna(r.from_pos) else f"P{int(r.from_pos)}"
+                    tp = (r.to_pos if isinstance(r.to_pos, str)
+                          else f"P{int(r.to_pos)}")
+                    bits.append(f"{r.driver} {event_short(r.event, season)} "
+                                f"{fp}→{tp}: {getattr(r, metric):.0f} {unit}")
+                out[m] = "<br>".join(bits)
+            return pd.Series(out, dtype=object)
+
+        tot = (cost.groupby(["maker", "kind"])[metric].sum()
+               .unstack(fill_value=0).reindex(order).fillna(0))
+        for k in ("grid", "failure"):
+            if k not in tot.columns:
+                tot[k] = 0.0
+        n = cars.reindex(order).clip(lower=1)
+        per = tot.div(n, axis=0)
+        fig = go.Figure()
+        for kind, label, hatch in (("failure", "PU failures (DNF/DNS)", ""),
+                                   ("grid", "PU grid penalties", "/")):
+            who = _who(kind).reindex(order).fillna("none")
+            fig.add_trace(go.Bar(
+                y=order, x=per[kind], orientation="h", name=label,
+                marker=dict(color=[_PU_COLORS.get(m, ACCENT) for m in order],
+                            line=dict(color="#000", width=0.5),
+                            pattern=dict(shape=hatch, fgcolor="rgba(0,0,0,0.55)",
+                                         size=6, solidity=0.4)),
+                customdata=np.stack([tot[kind], n, who], axis=-1),
+                hovertemplate=(f"<b>%{{y}}</b> · {label}<br>"
+                               f"%{{x:.1f}} {unit} per car (%{{customdata[0]:.0f}} "
+                               "over %{customdata[1]:.0f} cars)<br>"
+                               "%{customdata[2]}<extra></extra>"),
+                showlegend=False,
+            ))
+            # Legend key in a NEUTRAL grey: the real traces are coloured per
+            # maker, so their own swatch would show the first maker's colour
+            # and read as "this legend is about Mercedes".
+            fig.add_trace(go.Bar(
+                y=[None], x=[None], orientation="h", name=label,
+                marker=dict(color=TEXT_DIM, line=dict(color="#000", width=0.5),
+                            pattern=dict(shape=hatch,
+                                         fgcolor="rgba(0,0,0,0.55)",
+                                         size=6, solidity=0.4)),
+                hoverinfo="skip"))
+        total = per.sum(axis=1)
+        fig.add_trace(go.Scatter(
+            y=order, x=total, mode="text", showlegend=False, hoverinfo="skip",
+            text=[f"  {v:.1f}" if v > 0 else "  0" for v in total],
+            textposition="middle right", textfont=dict(size=10),
+            cliponaxis=False))
+        theme(fig, max(300, 46 * len(order) + 170), title)
+        fig.update_xaxes(title_text=xtitle,
+                         range=[0, max(float(total.max()), 1.0) * 1.3])
+        fig.update_yaxes(title_text=None, tickfont=dict(size=11),
+                         autorange="reversed")
+        # Legend BELOW the plot: above it, it sat on top of the title.
+        fig.update_layout(barmode="stack", bargap=0.32,
+                          margin=dict(l=78, r=50, t=50, b=96),
+                          legend=dict(orientation="h", yanchor="top",
+                                      y=-0.22, xanchor="left", x=0,
+                                      font=dict(size=10)))
+        return fig
+
+    if not cost.empty or _GRID_PEN_PATH.exists():
+        # Points and places are complementary, and the gap between them is
+        # the story: a backmarker's PU trouble costs many PLACES and no
+        # POINTS (Aston Martin-Honda, 2026), a front-runner's few places and a
+        # lot of points.
+        fig_rel = _cost_fig("points", "pts", "PU cost — points per car",
+                            "Points lost per car (plain points table)")
+        fig_fail = _cost_fig("places", "places",
+                             "PU cost — places per car",
+                             "Places per car (nominal penalty · failure: "
+                             "slot → back)")
         rel_note = (
-            " The attrition panel reads the FIA component audit "
-            "(data/pu_penalties.csv) and plots the grid places a maker's cars "
-            "have actually SERVED, divided by the number of cars it supplies. "
-            "It deliberately does NOT plot elements consumed: taking a fresh "
-            "engine is a strategy call as much as a breakage, and a fleet mean "
-            "hides a single blown-up car among healthy siblings — on 2026 data "
-            "the element view ranked Ferrari worse than Mercedes despite "
-            "Ferrari serving no penalties and Mercedes twenty. It plots the "
-            "cost ALREADY PAID and nothing else — a bar of zero means no grid "
-            "places served so far, not that the next component is free. How "
-            "close each car is to its next penalty is the subject of the "
-            "Power-Unit Pool & Penalty Risk card directly above, per driver "
-            "rather than per maker; the deepest pool, element and engine "
-            "counts are also in this panel's hover.")
+            " What the PU cost: championship points lost to the power unit, "
+            "per car supplied, priced on the plain points table (P1 25 … P10 "
+            "1). Grid penalties (hatched): points of the qualifying position "
+            "minus points of the grid slot actually started, from the FIA "
+            "final starting grids (data/grid_penalties.csv) — a pit-lane "
+            "start for new elements counts as starting from nowhere. PU "
+            "failures (solid): retirements and did-not-starts whose cause "
+            "names the power unit (data/dnf_causes.csv, race control first), "
+            "priced at the points of the STARTING slot — not the running "
+            "position at the stop, because a car that limps for laps has "
+            "already shed places to the same fault. Both are deliberately "
+            "simple: no car is guaranteed to finish where it starts. A "
+            "failure nobody has researched yet is not counted, so the bar is "
+            "a floor. The PLACES twin counts the same events in positions: "
+            "the NOMINAL grid penalty the stewards handed out (a pit-lane "
+            "start, which has none, counts from its qualifying slot to the "
+            "back), and starting slot to the back of the field for a failure. "
+            "Read the two together: a backmarker's PU trouble costs many "
+            "places and no points, a front-runner's the opposite.")
 
     # ── Panel C · computed straight-line-speed index ──────────────
     ts = topspeed_df()
@@ -510,23 +672,25 @@ def engine_championship_card(season: int) -> html.Div | None:
                         "car's drag level, not the engine alone.")
 
     # ── Assemble ──────────────────────────────────────────────────
-    cols = [dbc.Col(dcc.Graph(figure=fig_pts, config=GFX), lg=4, md=6)]
-    if fig_rel is not None:
-        cols.append(dbc.Col(dcc.Graph(figure=fig_rel, config=GFX), lg=4, md=6))
-    if fig_spd is not None:
-        cols.append(dbc.Col(dcc.Graph(figure=fig_spd, config=GFX), lg=4, md=12))
+    # A 2x2 grid, not four in a row: at a quarter of the card each panel's
+    # title, legend and axis label collided with its neighbours. The two PU
+    # cost views share the second row so points and places read side by side.
+    figs = [f for f in (fig_pts, fig_spd, fig_rel, fig_fail) if f is not None]
+    cols = [dbc.Col(dcc.Graph(figure=f, config=GFX), lg=6, md=12)
+            for f in figs]
 
     leader = order[0]
     intro = html.P(
         ["A power unit isn't one team's story — in 2026 five manufacturers "
          "supply the grid in very different numbers (Mercedes power eight cars, "
          "Honda just two), so a raw points total flatters the big suppliers. "
-         "This reads the engine race three fairer ways: championship points ",
-         html.Strong("per car"), " supplied, power-unit ",
-         html.Strong("reliability"), ", and a computed ",
+         "This reads the engine race fairer ways: championship points ",
+         html.Strong("per car"), " supplied, what the power unit has ",
+         html.Strong("cost in points"), " — grid penalties and failures — "
+         "and a computed ",
          html.Strong("straight-line speed"), " index. On points per car, ",
          html.Strong(leader), " lead the field. Colour means the same thing in "
-         "all three panels — which manufacturer the bar is."],
+         "every panel — which manufacturer the bar is."],
         style={"color": TEXT_DIM, "fontSize": "0.78rem", "marginBottom": "10px"})
 
     return card(
@@ -537,7 +701,7 @@ def engine_championship_card(season: int) -> html.Div | None:
               "team's constructor points (standings archive) grouped by its "
               "supplier (facilities.csv) and divided by the number of cars that "
               "supplier fields, so an eight-car and a two-car maker compare "
-              "fairly." + rel_note + spd_note +
+              "fairly." + rel_note + fail_note + spd_note +
               " Why: the raw 'sum the points by engine' table rewards whoever "
               "supplies the most teams; normalising by fleet size, and adding "
               "reliability and measured straight-line pace, shows which power "
@@ -568,11 +732,11 @@ def testing_df() -> pd.DataFrame:
     return _TEST_CACHE["df"]
 
 
-def testing_card(season: int) -> html.Div | None:
+def testing_card(season: int, teams=None) -> html.Div | None:
     df = testing_df()
     if df.empty:
         return None
-    s = df[df["season"] == season].copy()
+    s = filter_teams(df[df["season"] == season], teams).copy()
     if s.empty:
         return None
     s["laps"] = pd.to_numeric(s["laps"], errors="coerce")
@@ -639,11 +803,11 @@ def penalties_df() -> pd.DataFrame:
     return _PEN_CACHE["df"]
 
 
-def penalties_card(season: int) -> html.Div | None:
+def penalties_card(season: int, teams=None) -> html.Div | None:
     df = penalties_df()
     if df.empty:
         return None
-    d = df[df["season"] == season].copy()
+    d = filter_teams(df[df["season"] == season], teams).copy()
     if d.empty:
         return None
     d = d.sort_values("date", ascending=False)
@@ -715,80 +879,249 @@ def penalties_card(season: int) -> html.Div | None:
 
 
 # ─────────────────────────────────────────────────────────────
-# Circuit-type affinity — power vs technical tracks
+# Car character — low-speed cornering · traction · top speed
 # ─────────────────────────────────────────────────────────────
+#
+# Successor of "Track-Type Affinity" (whole circuits by average speed: Suzuka
+# classed with Monza, ranking failed split-half) and of the short-lived corner-
+# class version (apex speed slow/medium/fast: passed in 2026, collapsed to
+# -0.03…0.50 in 2025). Data: scripts/compute_section_profile.py, which cuts
+# every lap into slices classed by DRIVING PHASE from the reference car's own
+# telemetry. Only three phases carry a team trait that holds across tracks,
+# across seasons AND in race pace (mean split-half r over 300 random track
+# halves, 2026 Q / 2025 Q / 2026 R):
+#     low-speed cornering  .84 / .63 / .68      traction  .70 / .64 / .67
+#     top speed            .82 / .73 / .80
+# High-speed cornering (≥ 200 km/h under load) is computed but NOT a column:
+# its team gaps follow overall lap pace at r ≈ 0.99 — mid/high-speed aero IS
+# the pace, so after removing pace there is nothing distinctive left to show.
+#
+# Every cell is PACE-ADJUSTED: the team's deficit in that phase minus what a
+# car of its overall lap pace typically loses there (a field-wide fit).
 
-def affinity_card(season: int, min_events: int = 2) -> html.Div | None:
-    pace = team_pace_df()
-    if pace.empty:
-        return None
-    # Session-normalised ONE-LAP SPEED, not the raw gap to pole: a team whose
-    # best lap flips Q-session between a power and a technical round would
-    # otherwise book ~0.6 pp of track evolution as a concept preference.
-    pcol = "onelap_speed_pct" if "onelap_speed_pct" in pace.columns else "quali_result_gap_pct"
-    s = pace[(pace["season"] == season) & pace[pcol].notna()].copy()
-    if s.empty:
+_SECTION_PATH = Path("data/section_profile.csv")
+_TRAITS = (("low_speed", "Low-speed cornering", "under load below 200 km/h"),
+           ("traction", "Traction", "accelerating below 200 km/h"),
+           ("top_speed", "Top speed", "full throttle ≥ 270 km/h"))
+_CONTEXT = "high_speed"
+_RELIABILITY_BAR = 0.6
+_SKY, _AMBER, _MID = "#2F7FA3", "#A8781E", "#24243A"
+_SECTION_CACHE: dict = {}
+
+
+def _phase_residuals(d: pd.DataFrame):
+    """(residual pp team×phase, lap deficit % per team, raw phase %)."""
+    g = d.groupby(["team", "section"])[["team_s", "median_s"]].sum()
+    raw = ((g["team_s"] / g["median_s"] - 1) * 100).unstack()
+    lap = (d.groupby("team")[["team_s", "median_s"]].sum())
+    lap = (lap["team_s"] / lap["median_s"] - 1) * 100
+    res = pd.DataFrame(index=raw.index)
+    for k in raw.columns:
+        ok = raw[k].notna() & lap.reindex(raw.index).notna()
+        if ok.sum() < 6:
+            continue
+        b = np.polyfit(lap[raw.index[ok]], raw[k][ok], 1)
+        res[k] = raw[k] - np.polyval(b, lap.reindex(raw.index))
+    return res, lap, raw
+
+
+def _character_stats(d: pd.DataFrame, key) -> dict:
+    """Residuals, cross-track reliability (mean r over random track halves)
+    and bootstrap SE — cached on the CSV's mtime."""
+    if key in _SECTION_CACHE:
+        return _SECTION_CACHE[key]
+    res, lap, raw = _phase_residuals(d)
+    rng = np.random.default_rng(0)
+    rounds = np.array(sorted(d["round"].unique()))
+    rs = {c: [] for c in res.columns}
+    # 120 splits / 100 bootstraps: the reliability figure is stable to ±0.01
+    # by then (checked against 300), and the first render stays ~3 s
+    for _ in range(120):
+        perm = rng.permutation(rounds)
+        h = len(rounds) // 2
+        ra = _phase_residuals(d[d["round"].isin(perm[:h])])[0]
+        rb = _phase_residuals(d[d["round"].isin(perm[h:])])[0]
+        for c in rs:
+            if c in ra and c in rb:
+                j = ra[c].dropna().index.intersection(rb[c].dropna().index)
+                if len(j) >= 6:
+                    rs[c].append(np.corrcoef(ra.loc[j, c], rb.loc[j, c])[0, 1])
+    rel = {c: float(np.nanmean(v)) if v else float("nan") for c, v in rs.items()}
+    boots = [_phase_residuals(pd.concat(
+        [d[d["round"] == r] for r in rng.choice(rounds, len(rounds))]))[0]
+        for _ in range(100)]
+    se = pd.concat(boots).groupby(level=0).std()
+    share = (d.drop_duplicates(["round", "section"])
+             .groupby("section")["lap_share"].mean())
+    pace_r = (float(np.corrcoef(lap.reindex(raw.index), raw[_CONTEXT])[0, 1])
+              if _CONTEXT in raw and raw[_CONTEXT].notna().all() else float("nan"))
+    out = {"res": res, "raw": raw, "lap": lap, "rel": rel, "se": se,
+           "share": share, "rounds": len(rounds), "pace_r": pace_r}
+    _SECTION_CACHE[key] = out
+    return out
+
+
+def _character_fig(st: dict, order: list) -> go.Figure:
+    keys = [k for k, _, _ in _TRAITS]
+    r = st["res"].reindex(index=order, columns=keys)
+    e = st["se"].reindex(index=order, columns=keys)
+    ok_col = [st["rel"].get(k, 0) >= _RELIABILITY_BAR for k in keys]
+    lim = float(np.nanmax(np.abs(r.to_numpy()))) if r.notna().any().any() else 1.0
+    z = r.to_numpy()
+    z = np.where(np.abs(z) >= 2 * e.to_numpy(), z, z * 0.3)   # fade noise
+    zc = z.copy(); zc[:, [not o for o in ok_col]] = np.nan
+    zg = np.full_like(z, np.nan); zg[:, [not o for o in ok_col]] = 0.0
+    xlab = [f"{lbl}<br><span style='font-size:10px'>{desc} · "
+            f"{st['share'].get(k, 0):.0%} of lap · r {st['rel'].get(k, float('nan')):+.2f}</span>"
+            for k, lbl, desc in _TRAITS]
+    text = [["—" if v != v else f"{v:+.2f}" for v in row] for row in r.to_numpy()]
+    # the TRUE value rides in customdata: z is faded toward 0 for noise cells
+    custom = np.dstack([st["raw"].reindex(index=order, columns=keys).to_numpy(),
+                        e.to_numpy(), r.to_numpy()])
+    hover = ("<b>%{y}</b> · %{x}<br>%{customdata[2]:>+.2f} pp vs a car of the "
+             "same lap pace<br>raw: %{customdata[0]:>+.2f}% vs field median · "
+             "±%{customdata[1]:.2f} SE<extra></extra>")
+    ylab = [abbr(t) for t in order]
+    fig = go.Figure(go.Heatmap(
+        z=zc, x=xlab, y=ylab, text=text, texttemplate="%{text}",
+        textfont=dict(size=12, color=TEXT_MAIN), customdata=custom,
+        hovertemplate=hover, colorscale=[[0, _SKY], [0.5, _MID], [1, _AMBER]],
+        zmin=-lim, zmax=lim, zmid=0, xgap=3, ygap=3,
+        colorbar=dict(title=dict(text="pp", side="right"), thickness=10,
+                      len=0.75, tickvals=[-lim * 0.8, 0, lim * 0.8],
+                      ticktext=["stronger", "as expected", "weaker"])))
+    if not all(ok_col):
+        fig.add_trace(go.Heatmap(
+            z=zg, x=xlab, y=ylab, text=text, texttemplate="%{text}",
+            textfont=dict(size=12, color=TEXT_DIM), customdata=custom,
+            hovertemplate=hover.replace(
+                "<extra>", "<br><i>below the reliability bar</i><extra>"),
+            colorscale=[[0, "#2E2E3E"], [1, "#2E2E3E"]], showscale=False,
+            xgap=3, ygap=3))
+    theme(fig, max(360, 30 * len(order) + 150))
+    fig.update_yaxes(autorange="reversed", title_text=None,
+                     tickfont=dict(size=11), showgrid=False)
+    fig.update_xaxes(side="top", title_text=None, tickfont=dict(size=11),
+                     showgrid=False)
+    fig.update_layout(margin=dict(l=60, r=20, t=80, b=20))
+    return fig
+
+
+def _character_plain(st: dict, order: list) -> str:
+    bits = []
+    for k, lbl, _ in _TRAITS:
+        if st["rel"].get(k, 0) < _RELIABILITY_BAR or k not in st["res"]:
+            continue
+        col = st["res"].loc[order, k]
+        sig = col[np.abs(col) >= 2 * st["se"].reindex(order)[k]]
+        if sig.empty:
+            continue
+        best, worst = sig.idxmin(), sig.idxmax()
+        part = []
+        if sig[best] < 0:
+            part.append(f"{abbr(best)} strongest")
+        if sig[worst] > 0 and worst != best:
+            part.append(f"{abbr(worst)} weakest")
+        if part:
+            bits.append(f"{lbl.lower()}: " + ", ".join(part))
+    return ("Each car's character once its overall pace is accounted for — "
+            "where it gains or loses more than a car that quick normally would. "
+            + ("; ".join(bits) + "." if bits else
+               "No team stands out beyond the noise yet."))
+
+
+def section_profile_card(season: int, teams=None) -> html.Div | None:
+    if not _SECTION_PATH.exists():
         return None
     try:
-        chars = pd.read_csv("data/circuit_characteristics.csv")
+        d = pd.read_csv(_SECTION_PATH)
     except Exception:
         return None
-    speed = {str(r.circuit_key): int(r.avg_speed_score)
-             for r in chars.itertuples()}
-    s["circuit"] = s["event"].map(lambda e: french_key(e, season))
-    s["kind"] = s["circuit"].map(
-        lambda c: "power" if speed.get(c, 0) >= 3
-        else ("technical" if speed.get(c) else None))
-    s = s.dropna(subset=["kind"])
-
-    rows = []
-    for team, g in s.groupby("team"):
-        p = g[g["kind"] == "power"][pcol]
-        t = g[g["kind"] == "technical"][pcol]
-        if len(p) < min_events or len(t) < min_events:
-            continue
-        rows.append({"team": team, "delta": float(t.mean() - p.mean()),
-                     "np": len(p), "nt": len(t)})
-    if len(rows) < 3:
+    if "session" not in d.columns:
         return None
-    d = pd.DataFrame(rows).sort_values("delta")
+    d = d[d["season"] == season]
+    mt = _SECTION_PATH.stat().st_mtime
+    stats = {}
+    for sess in ("Qualifying", "Race"):
+        ds = d[d["session"] == sess]
+        if ds["round"].nunique() >= 6:
+            stats[sess] = _character_stats(ds, (season, sess, mt))
+    if "Qualifying" not in stats:
+        return None
+    q = stats["Qualifying"]["res"]
+    order = [t for t in (q["top_speed"] - q["low_speed"]).sort_values().index]
+    order = [t for t in order if teams is None or not filter_teams(
+        pd.DataFrame({"team": [t]}), teams).empty]
+    if not order:
+        return None
 
-    fig = go.Figure(go.Bar(
-        y=[abbr(t) for t in d["team"]], x=d["delta"], orientation="h",
-        marker=dict(color=[team_color(t, season) for t in d["team"]],
-                    line=dict(color="#000", width=0.5)),
-        text=[f"{v:+.2f}%" for v in d["delta"]], textposition="outside",
-        textfont=dict(size=9),
-        customdata=np.stack([d["team"], d["np"], d["nt"]], axis=-1),
-        hovertemplate=("<b>%{customdata[0]}</b><br>"
-                       "Technical-track gap minus power-track gap: "
-                       "%{x:>+.2f}%<br>(%{customdata[1]} power / "
-                       "%{customdata[2]} technical events)<extra></extra>"),
-    ))
-    theme(fig, max(340, 24 * len(d) + 130))
-    lim = float(d["delta"].abs().max()) * 1.4 or 0.5
-    fig.update_xaxes(
-        title_text="← relatively faster on technical tracks   ·   "
-                   "relatively faster on power tracks →",
-        range=[-lim, lim])
-    fig.add_vline(x=0, line=dict(color=TEXT_DIM, width=1, dash="dot"))
-    fig.update_yaxes(title_text=None, tickfont=dict(size=10))
-    fig.update_layout(margin=dict(l=60, r=40, t=50, b=60), showlegend=False,
-                      bargap=0.3)
+    def block(sess):
+        st = stats[sess]
+        note = html.P(
+            [html.B("Not a column: high-speed cornering. "),
+             f"Above 200 km/h under load ({st['share'].get(_CONTEXT, 0):.0%} of "
+             f"the lap) the gaps between teams follow overall lap pace at "
+             f"r = {st['pace_r']:.2f} — fast-corner aero IS the pace, so once "
+             "pace is removed there is no separate trait to show. "
+             f"{st['rounds']} rounds."],
+            style={"color": TEXT_DIM, "fontSize": "0.74rem", "marginTop": "4px",
+                   "marginBottom": 0})
+        return html.Div([
+            html.P(_character_plain(st, order),
+                   style={"color": TEXT_MAIN, "fontSize": "0.82rem",
+                          "marginBottom": "6px"}),
+            dcc.Graph(figure=_character_fig(st, order), config=GFX), note])
 
+    sessions = [s for s in ("Qualifying", "Race") if s in stats]
+    body = html.Div([
+        dcc.RadioItems(
+            id="char-session",
+            options=[{"label": "Qualifying (one lap)" if s == "Qualifying"
+                      else "Race pace", "value": s} for s in sessions],
+            value="Qualifying", inline=True,
+            inputStyle={"marginRight": "6px", "accentColor": ACCENT},
+            labelStyle={"marginRight": "18px", "fontSize": "0.8rem",
+                        "color": TEXT_MAIN},
+            style={"marginBottom": "8px"}),
+        *[html.Div(block(s), id=f"char-{s.lower()}",
+                   style={} if s == "Qualifying" else {"display": "none"})
+          for s in sessions],
+    ])
     return card(
-        "Track-Type Affinity — Power vs Technical",
-        dcc.Graph(figure=fig, config=GFX),
-        measure="one-lap",
-        info=("Data: each team's average session-normalised ONE-LAP SPEED on high-speed "
-              "'power' circuits (avg-speed score ≥ 3 in "
-              "circuit_characteristics.csv) minus its average gap on slower "
-              "technical circuits, this season (min. "
-              f"{min_events} events per bucket). Why: a car concept has a "
-              "shape — drag-efficient cars gain on power tracks, "
-              "high-downforce cars on technical ones — so this hints at "
-              "who should be strong at the type of circuits still to come."),
+        "Car Character — Low-Speed Cornering · Traction · Top Speed",
+        body,
+        measure=("one-lap", "race"),
+        info=("Data: every lap of the season cut into 1,000 slices, each classed "
+              "by what the reference car is doing there — cornering under load "
+              "(≥ 1.5 g) below 200 km/h, accelerating below 200 km/h, full "
+              "throttle at ≥ 270 km/h, braking, high-speed cornering — from its "
+              "own speed, throttle, brake and lateral-load telemetry "
+              "(scripts/compute_section_profile.py). Qualifying uses each "
+              "team's best clean lap; race pace the fastest quarter of each "
+              "driver's clean green-flag laps. Laps are aligned to a clean "
+              "reference lap and rejected on telemetry dropouts. Each cell is "
+              "PACE-ADJUSTED: the team's time deficit in that phase minus what a "
+              "car of its overall lap pace typically loses there, in percentage "
+              "points; blue = stronger than its pace predicts, amber = weaker. "
+              "Faded cells sit inside two standard errors (bootstrapped by "
+              "round). Header: share of lap time and cross-track reliability — "
+              "the mean correlation between profiles built on two random halves "
+              "of the tracks, 120 splits; the bar is 0.6. Why these three: in a "
+              "test of track classifications they were the only phases whose "
+              "team profile held across tracks, across seasons (2025 and 2026) "
+              "and in both qualifying and race pace. Classifying corners by "
+              "apex speed collapsed in 2025; speed bands flipped between "
+              "seasons; high-speed cornering simply tracks overall pace."),
     )
+
+
+@callback(Output("char-qualifying", "style"),
+          Output("char-race", "style"),
+          Input("char-session", "value"),
+          prevent_initial_call=True)
+def _toggle_character(sess):
+    show, hide = {}, {"display": "none"}
+    return (show, hide) if sess == "Qualifying" else (hide, show)
 
 
 # ─────────────────────────────────────────────────────────────

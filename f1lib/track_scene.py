@@ -87,6 +87,21 @@ CIRCUITS: dict[str, dict] = {
     "vegas":          {"latlon": (36.1147, -115.1728), "dtm": None},
     "qatar":          {"latlon": (25.4900, 51.4542),   "dtm": None},
     "abu_dhabi":      {"latlon": (24.4672, 54.6031),   "dtm": None},
+    # Former venues and old event names. Not needed for current 3D scenes, but
+    # fetch_race_forecast.py seeds its weather lookup from this table, and
+    # without them 19 races of 2019-2022 had no forecast — two of them wet.
+    "mexican":        {"latlon": (19.4042, -99.0907),  "dtm": None},
+    "brazilian":      {"latlon": (-23.7036, -46.6997), "dtm": None},
+    "styrian":        {"latlon": (47.2197, 14.7647),   "dtm": None},
+    "70th":           {"latlon": (52.0786, -1.0169),   "dtm": None},
+    "sakhir":         {"latlon": (26.0325, 50.5106),   "dtm": None},
+    "french":         {"latlon": (43.2506, 5.7917),    "dtm": None},
+    "german":         {"latlon": (49.3278, 8.5656),    "dtm": None},
+    "russian":        {"latlon": (43.4057, 39.9578),   "dtm": None},
+    "tuscan":         {"latlon": (43.9975, 11.3719),   "dtm": None},
+    "eifel":          {"latlon": (50.3356, 6.9475),    "dtm": None},
+    "portuguese":     {"latlon": (37.2270, -8.6267),   "dtm": None},
+    "turkish":        {"latlon": (40.9517, 29.4050),   "dtm": None},
 }
 
 

@@ -115,7 +115,9 @@ def classify_retirement(season, event: str, driver: str, last_lap) -> dict:
     Returns {"cause": "collision" | "unclassified",
              "incident_lap": float | None,
              "counterparty": str,
-             "earlier_contact": bool}
+             "earlier_contact": bool,
+             "penalty": str}   # collision only: the stewards' penalty on
+                               # THIS driver for it, "" when none
 
     `earlier_contact` is reported separately and deliberately NOT treated as a
     cause: a lap-3 tangle followed by a lap-43 retirement is two events, not
@@ -146,6 +148,64 @@ def classify_retirement(season, event: str, driver: str, last_lap) -> dict:
     # message's: "collision on lap 71" for a car classified at 66 laps is a
     # number no reader or downstream consumer can use.
     lap = min(float(row["_lap"]), float(last))
-    out.update(cause="collision", incident_lap=lap,
-               counterparty=str(row.get("counterparty", "") or ""))
+    # A penalty message often names no counterparty, and it is the LATEST row,
+    # so take the other car from whichever causal row names one.
+    named = causal.get("counterparty", pd.Series(dtype=object)
+                       ).dropna().astype(str).str.strip()
+    named = named[named.ne("") & named.ne("nan")]
+    cp = str(row.get("counterparty", "") or "")
+    if cp in ("", "nan") and not named.empty:
+        cp = named.iloc[-1]
+    # The stewards' ruling on THIS contact, when they penalised this driver.
+    # Read by f1lib.dnf_causes to impute an at-fault collision to the driver.
+    # Only a penalty FOR CAUSING A COLLISION: the same window can hold a
+    # penalty for something else entirely — Bortoleto, Australia 2025, was
+    # penalised for an unsafe release; Sainz, Bahrain 2025, for forcing
+    # Antonelli off — and neither ruling says who caused the contact.
+    #
+    # The penalty is matched to the INCIDENT, not to the retirement window:
+    # the decision can be published long after the car stopped — Ocon, Monaco
+    # 2024, out on lap 0 after hitting Gasly, penalised on lap 8 — so it is the
+    # driver's next "causing a collision" penalty after the incident, provided
+    # no other collision of his sits in between.
+    cp = "" if cp == "nan" else cp
+    incident_lap = float(causal["_lap"].min())
+    out.update(cause="collision", incident_lap=lap, counterparty=cp,
+               penalty=_collision_penalty(c, incident_lap),
+               counterparty_penalty=_collision_penalty(
+                   _driver_rows(season, event, cp), incident_lap) if cp else "")
     return out
+
+
+def _driver_rows(season, event: str, driver: str) -> pd.DataFrame:
+    c = contact_for(season, event)
+    if c.empty:
+        return c
+    c = c[c["driver"].astype(str).str.upper() == str(driver).strip().upper()]
+    return c.assign(_lap=pd.to_numeric(c["lap"], errors="coerce")
+                    ).dropna(subset=["_lap"])
+
+
+def _collision_penalty(rows: pd.DataFrame, incident_lap: float) -> str:
+    """The penalty a driver received FOR CAUSING the collision at
+    `incident_lap` ("10 second time penalty"), or "" when none. Penalties for
+    anything else (unsafe release, forcing off) never count."""
+    if rows is None or rows.empty:
+        return ""
+    reason = rows.get("reason", pd.Series("", index=rows.index)
+                      ).astype(str).str.upper()
+    outcome = rows.get("outcome", pd.Series("", index=rows.index)).astype(str)
+    coll = reason.eq("CAUSING A COLLISION")
+    is_pen = outcome.str.startswith("penalty")
+    pens = rows[coll & is_pen & (rows["_lap"] >= incident_lap - 1)
+                ].sort_values("_lap")
+    if pens.empty:
+        return ""
+    p = pens.iloc[0]
+    # another collision of his between the incident and this penalty means
+    # the penalty may be for THAT one
+    between = rows[coll & ~is_pen & (rows["_lap"] > incident_lap + 1)
+                   & (rows["_lap"] < p["_lap"])]
+    if not between.empty:
+        return ""
+    return str(p["outcome"]).replace("penalty: ", "")

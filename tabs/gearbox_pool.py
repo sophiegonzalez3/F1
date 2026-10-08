@@ -148,8 +148,9 @@ def gb_df(season: int) -> pd.DataFrame:
     return df[df["season"] == season].copy() if not df.empty else df
 
 
-def _gb_heatmap_fig(season: int) -> go.Figure:
-    d = gb_df(season)
+def _gb_heatmap_fig(season: int, drivers=None) -> go.Figure:
+    from tabs.pace_data import filter_drivers
+    d = filter_drivers(gb_df(season), drivers)
     fig = go.Figure()
     if d.empty:
         fig.update_layout(paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
@@ -205,7 +206,7 @@ def _gb_heatmap_fig(season: int) -> go.Figure:
     return fig
 
 
-def gearbox_pool_card(season: int):
+def gearbox_pool_card(season: int, drivers=None):
     """Gearbox RNC-pool tracker for SEASON FORM, or None if no data for the
     season (only maintained for the 2026+ era). Sibling of pu_pool_card."""
     d = gb_df(season)
@@ -239,7 +240,7 @@ def gearbox_pool_card(season: int):
     return card(
         [*gloss("gearbox", "Gearbox"), " Pool & Penalty Risk"],
         html.Div([
-            dcc.Graph(figure=_gb_heatmap_fig(season), config=GFX),
+            dcc.Graph(figure=_gb_heatmap_fig(season, drivers), config=GFX),
             _gb_legend(),
             html.P(
                 ["PLACEHOLDER DATA — the FIA publishes no per-driver gearbox "

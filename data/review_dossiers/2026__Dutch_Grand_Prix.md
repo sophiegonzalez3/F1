@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R12 · Dutch Grand Prix · dossier built 2026-08-23
+2026 R12 · Dutch Grand Prix · dossier built 2026-10-06
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 
@@ -139,7 +139,7 @@ predicted -1.682 → actual -2.379 · **miss -0.696%** (1.6 sd) · FASTER than p
 - **What made the actual**: 31 clean laps of 72 run (laps 17–67 of 72) · SOFT 14, MEDIUM 10, HARD 7
 - **Dropped before the median**: 30 dirty-air, 18 perturbed, 10 invalid
 - **What the filter did**: kept 43% of his laps (field 48%). Model measured -2.613%; over EVERY racing lap he is -2.504%. Scoring him on all laps would move the miss -0.696% → **-0.586%** (shrinks by 16%).
-- **Pit stops** (4): lap 2; lap 21 (4.2s stationary); lap 43; lap 55  ·  *3 not in pitstops.parquet*
+- **Pit stops** (4): lap 2; lap 21 (4.2s stationary); lap 43; lap 55
 - **Radio** 14:28:39: "Now back to our spots. What do you mean back to our spots?"
 
   > category: ______   note: ______
@@ -159,7 +159,7 @@ predicted +1.684 → actual +1.020 · **miss -0.663%** (1.2 sd) · FASTER than p
 - **Race control** (race):
     - `2026-08-23 14:01:26  CAR 18 (STR) TIME 1:19.923 DELETED - TRACK LIMITS AT TURN 3 LAP 20 16:00:15`
 - *(5 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
-- **Pit stops** (4): lap 2; lap 15 (2.6s stationary); lap 35; lap 45  ·  *3 not in pitstops.parquet*
+- **Pit stops** (4): lap 2; lap 15 (2.6s stationary); lap 35; lap 45  ·  *1 not in pitstops.parquet*
 - **Radio** 14:10:48: "I don't understand why you boxed me, man. We said that the Cadillacs would be a problem, we didn't. I understood, Lance. We thought we were struggling so much on the soft, we thought the hard would give us better perform"
 
   > category: ______   note: ______
@@ -185,7 +185,7 @@ predicted +0.822 → actual +1.305 · **miss +0.483%** (1.1 sd) · SLOWER than p
 - *(15 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
 - **Incident** lap 1: procedural — FAILING TO FOLLOW RACE DIRECTORS INSTRUCTIONS → no action
 - **Incident** lap 71: contact — CAUSING A COLLISION vs ALB → penalty: 10 second time penalty
-- **Pit stops** (3): lap 2; lap 30 (2.7s stationary); lap 65  ·  *2 not in pitstops.parquet*
+- **Pit stops** (3): lap 2; lap 30 (2.7s stationary); lap 65
 
   > category: ______   note: ______
 
@@ -207,7 +207,7 @@ predicted +0.043 → actual +0.893 · **miss +0.850%** (2.1 sd) · SLOWER than p
     - `2026-08-23 13:50:51  FIA STEWARDS: PENALTY SERVED - DRIVE THROUGH PENALTY FOR CAR 41 (LIN) - YELLOW FLAG INFRINGEMENT (15:04:49)`
 - *(6 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
 - **Incident** lap 3: procedural — YELLOW FLAG INFRINGEMENT → penalty: drive through
-- **Pit stops** (3): lap 2; lap 5; lap 36 (3.2s stationary)  ·  *2 not in pitstops.parquet*
+- **Pit stops** (3): lap 2; lap 5; lap 36 (3.2s stationary)
 
   > category: ______   note: ______
 
@@ -228,7 +228,7 @@ predicted -1.347 → actual -0.450 · **miss +0.897%** (2.1 sd) · SLOWER than p
     - `2026-08-23 15:02:48  FIA STEWARDS: INCIDENT INVOLVING CAR 30 (LAW) UNDER INVESTIGATION - YELLOW FLAG INFRINGEMENT (16:44:04)`
     - `2026-08-23 15:04:30  FIA STEWARDS: 10 SECOND TIME PENALTY FOR CAR 30 (LAW) - YELLOW FLAG INFRINGEMENT (16:44:04)`
 - **Incident** lap 62: procedural — YELLOW FLAG INFRINGEMENT → penalty: 10 second time penalty
-- **Pit stops** (3): lap 2; lap 21; lap 47  ·  *3 not in pitstops.parquet*
+- **Pit stops** (3): lap 2; lap 21; lap 47
 
   > category: ______   note: ______
 

@@ -384,10 +384,15 @@ def calendar_axis_labels(cal: pd.DataFrame) -> dict[tuple[int, str], str]:
 # `2026_bahrain_grand_prix_in_malaysia_-_...pdf`, so the plain guess 404s.
 _FIA_SLUG_OVERRIDES: dict[tuple[int, str], str] = {
     (2026, "bahrain_grand_prix"): "bahrain_grand_prix_in_malaysia",
+    # the FIA keeps the old Catalunya slug for the 2026 Barcelona round
+    (2026, "barcelona_grand_prix"): "barcelona-catalunya_grand_prix",
 }
 
 
 def fia_doc_slug(event_name: str, season: int) -> str:
     """Slug the FIA uses in `/decision-document/<season>_<slug>_-_<doc>.pdf`."""
-    slug = str(event_name).strip().lower().replace(" ", "_")
+    import unicodedata
+    name = (unicodedata.normalize("NFKD", str(event_name))
+            .encode("ascii", "ignore").decode("ascii"))     # São -> Sao
+    slug = name.strip().lower().replace(" ", "_")
     return _FIA_SLUG_OVERRIDES.get((int(season), slug), slug)

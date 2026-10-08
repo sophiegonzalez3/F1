@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R1 · Australian Grand Prix · dossier built 2026-08-08
+2026 R1 · Australian Grand Prix · dossier built 2026-10-06
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 
@@ -66,7 +66,7 @@ predicted -0.872 → actual -1.790 · **miss -0.918%** (1.0 sd) · FASTER than p
 - **What the filter did**: kept 71% of his laps (field 53%). Model measured -1.947%; over EVERY racing lap he is -2.243%. Scoring him on all laps would move the miss -0.918% → **-1.213%** (GROWS by 32%).
 - **SCREEN** · COMPOUND SKEW  ran HARD 93%, MEDIUM 7% vs field HARD 67%, MEDIUM 20%, SOFT 13% — worth +0.18% of a lap at this race's measured offsets
 - **SCREEN** · PACE STEP  +0.88% at lap 53 (slower afterwards; bigger than 100% of shuffled orderings) — check this lap against race control before calling it damage; an unexplained step is not yet a cause
-- **Pit stops** (1): lap 12 (2.5s stationary)
+- **Pit stops** (1): lap 12
 
   > category: ______   note: ______
 
@@ -89,7 +89,7 @@ predicted +1.720 → actual +2.961 · **miss +1.240%** (1.3 sd) · SLOWER than p
 - *(23 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
 - **Incident** lap 21: contact — FORCING ANOTHER DRIVER OFF THE TRACK vs LAW → no action
 - **Incident** lap 27: procedural — IGNORING BLUE FLAGS → no action
-- **Pit stops** (2): lap 18 (5.5s stationary); lap 43  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 18; lap 43
 
   > category: ______   note: ______
 

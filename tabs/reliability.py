@@ -7,10 +7,11 @@ widgets use). Each car-race carries a FastF1/Ergast-style ``Status`` string; we
 bucket those into finished vs. the reasons a car failed to finish, per team, for
 the selected season.
 
-Caveat baked into the UI: recent-season data (e.g. 2026) often only carries a
-generic "Retired" status, so those DNFs land in "DNF — unclassified" rather than
-a mechanical/incident split. Older seasons (2024/2025) carry the full cause
-vocabulary and split cleanly.
+The buckets answer WHO the retirement is imputable to — the car (and team),
+the driver, or neither (a collision) — using the shared families and status
+map in f1lib/dnf_causes.py. From 2023 the archive carries a bare "Retired", so
+those DNFs are rebuilt from race control and curated press (resolve_cause);
+until then the archive's own status vocabulary names the cause.
 """
 from __future__ import annotations
 
@@ -23,6 +24,9 @@ from dash import html, dcc
 from f1lib.components import card, theme, GFX
 from f1lib.glossary import gloss
 from f1lib.config import HISTORICAL_DIR, TEAM_COLORS, TEXT_MAIN, TEXT_DIM
+from f1lib.dnf_causes import (
+    CAR, COLLISION, DRIVER, DSQ, STATUS_FAMILY, DNS_STATUSES,
+)
 
 _RACE_PATH = Path(HISTORICAL_DIR) / "race_results_all.parquet"
 
@@ -41,22 +45,15 @@ _RACE = _load_race()
 # ── Status → bucket mapping ───────────────────────────────────
 _FINISHED = {"Finished", "Lapped", "+1 Lap", "+2 Laps", "+3 Laps",
              "+4 Laps", "+5 Laps", "+6 Laps"}
-_MECHANICAL = {"Engine", "Gearbox", "Hydraulics", "Power Unit", "Turbo",
-               "Brakes", "Suspension", "Electrical", "Fuel leak",
-               "Fuel pressure", "Fuel pump", "Water leak", "Water pressure",
-               "Water pump", "Oil leak", "Cooling system", "Driveshaft",
-               "Differential", "Power loss", "Vibrations", "Mechanical",
-               "Wheel nut", "Undertray", "Front wing", "Rear wing"}
-_INCIDENT = {"Accident", "Collision", "Collision damage", "Spun off",
-             "Damage", "Puncture"}
-_DNS = {"Did not start", "Withdrew", "Illness"}
-# Everything else that isn't a finish (notably the generic "Retired" used by
-# recent-season data, plus "Disqualified") lands in the unclassified bucket.
+# The cause-naming statuses live in f1lib.dnf_causes.STATUS_FAMILY (shared
+# with the DUEL tab). Everything else that isn't a finish — notably the
+# generic "Retired" of 2023+ — lands in the unclassified bucket until race
+# control or curation explains it.
 
 _FINISH_KEY = "Finished"
-_MECH_KEY = "DNF — mechanical"
-_INC_KEY = "DNF — incident"
-_ERR_KEY = "DNF — solo accident"
+_MECH_KEY = "DNF — car imputable"
+_INC_KEY = "DNF — collision"
+_ERR_KEY = "DNF — driver imputable"
 _DSQ_KEY = "Disqualified"
 _UNC_KEY = "DNF — unclassified"
 _DNS_KEY = "Did not start"
@@ -64,22 +61,21 @@ _BUCKET_ORDER = [_FINISH_KEY, _MECH_KEY, _INC_KEY, _ERR_KEY, _DSQ_KEY,
                  _UNC_KEY, _DNS_KEY]
 
 # cause_family (f1lib.dnf_causes) -> bucket.
-_FAMILY_TO_BUCKET = {"mechanical": _MECH_KEY, "collision": _INC_KEY,
-                     "solo accident": _ERR_KEY, "disqualified": _DSQ_KEY}
+_FAMILY_TO_BUCKET = {CAR: _MECH_KEY, COLLISION: _INC_KEY,
+                     DRIVER: _ERR_KEY, DSQ: _DSQ_KEY}
 
-# Which buckets can only ever be filled by CURATION, never by race control.
-# Race control classifies exactly one thing — contact — so every other family
-# arrives from data/dnf_causes.csv. These render hatched, so a reader can see
-# at a glance which part of the chart is measured and which is reported.
-_PRESS_ONLY = {_MECH_KEY, _ERR_KEY, _DSQ_KEY}
+# Hatching = "a person read this in the press". Decided per season from where
+# each bucket's rows actually came from (reliability_table -> attrs), not from
+# a fixed list: the old fixed list hatched 2019-22's car failures too, which
+# the ARCHIVE recorded, and left press-curated collisions solid.
 
 # Status-style palette (good → bad), not team colours: the bars are keyed to
 # teams on the y-axis, the segments to failure type.
 _BUCKET_COLORS = {
     _FINISH_KEY: "#0ca30c",   # good
-    _MECH_KEY:   "#fab219",   # warning — the team's own reliability
-    _INC_KEY:    "#d03b3b",   # critical — racing incidents
-    _ERR_KEY:    "#b5651d",   # off or into the wall, no other car involved
+    _MECH_KEY:   "#fab219",   # warning — the car / team's own doing
+    _INC_KEY:    "#d03b3b",   # critical — somebody else's doing
+    _ERR_KEY:    "#b5651d",   # the driver's own doing
     _DSQ_KEY:    "#8a2be2",   # not a reliability event at all — kept separate
     _UNC_KEY:    "#ec835a",   # serious — cause not recorded
     _DNS_KEY:    "#7A7A7A",   # muted — never started
@@ -89,13 +85,10 @@ _BUCKET_COLORS = {
 def _bucket(status: str) -> str:
     if status in _FINISHED:
         return _FINISH_KEY
-    if status in _MECHANICAL:
-        return _MECH_KEY
-    if status in _INCIDENT:
-        return _INC_KEY
-    if status in _DNS:
+    if status in DNS_STATUSES:
         return _DNS_KEY
-    return _UNC_KEY
+    fam = STATUS_FAMILY.get(status)
+    return _FAMILY_TO_BUCKET[fam] if fam else _UNC_KEY
 
 
 def _apply_incident_register(r: pd.DataFrame, season: int) -> tuple[pd.DataFrame, int]:
@@ -121,6 +114,7 @@ def _apply_incident_register(r: pd.DataFrame, season: int) -> tuple[pd.DataFrame
 
     laps_col = "Laps" if "Laps" in r.columns else None
     n = 0
+    r["source"] = "archive"
     for idx, row in r[r["bucket"] == _UNC_KEY].iterrows():
         got = resolve_cause(
             season, str(row.get("event_name", "")), row.get("Abbreviation"),
@@ -128,6 +122,7 @@ def _apply_incident_register(r: pd.DataFrame, season: int) -> tuple[pd.DataFrame
         bucket = _FAMILY_TO_BUCKET.get(got["cause_family"])
         if bucket:
             r.loc[idx, "bucket"] = bucket
+            r.loc[idx, "source"] = got["cause_source"]
             n += 1
     return r, n
 
@@ -141,6 +136,12 @@ def reliability_table(season: int) -> pd.DataFrame:
         return pd.DataFrame()
     r["bucket"] = r["Status"].astype(str).map(_bucket)
     r, _ = _apply_incident_register(r, season)
+    # Buckets MOSTLY filled from the press this season render hatched. A
+    # segment has one pattern, so a mixed bucket follows its majority — 2023
+    # is the mixed season: the archive still named a few causes ("Accident",
+    # "Undertray") while most retirements were already a bare "Retired".
+    share = (r["source"] == "press").groupby(r["bucket"]).mean()
+    press = set(share[share > 0.5].index)
     piv = (r.pivot_table(index="TeamName", columns="bucket", values="Status",
                          aggfunc="size", fill_value=0))
     for b in _BUCKET_ORDER:
@@ -150,11 +151,16 @@ def reliability_table(season: int) -> pd.DataFrame:
     piv["starts"] = piv.sum(axis=1)
     piv["dnf"] = piv["starts"] - piv[_FINISH_KEY]
     piv["finish_rate"] = piv[_FINISH_KEY] / piv["starts"]
+    piv.attrs["press_buckets"] = press
     return piv
 
 
-def _reliability_fig(season: int) -> go.Figure:
+def _reliability_fig(season: int, teams=None) -> go.Figure:
+    from tabs.pace_data import team_mask
     piv = reliability_table(season)
+    press = piv.attrs.get("press_buckets", set())
+    if teams and not piv.empty:
+        piv = piv[team_mask(piv.index.to_series(), teams).to_numpy()]
     fig = go.Figure()
     if piv.empty:
         theme(fig, 300, "No race-results archive for this season")
@@ -171,13 +177,12 @@ def _reliability_fig(season: int) -> go.Figure:
         # Label the finished segment with each team's finish-rate %.
         text = ([f"{r*100:.0f}%" for r in piv["finish_rate"]]
                 if b == _FINISH_KEY else None)
-        # Hatch the families only curation can fill. Race control classifies
-        # contact and nothing else, so a solid segment is an FIA record and a
-        # hatched one is a person reading the press — a distinction the chart
-        # must not swallow.
+        # Hatch what a person read in the press; solid is an FIA record (the
+        # results archive or race control) — a distinction the chart must not
+        # swallow.
         marker = dict(color=_BUCKET_COLORS[b],
                       line=dict(color="#0d0d1a", width=1))
-        if b in _PRESS_ONLY:
+        if b in press:
             marker["pattern"] = dict(shape="/", size=5, solidity=0.35,
                                      fgcolor="#0d0d1a")
         fig.add_trace(go.Bar(
@@ -226,7 +231,7 @@ def _contact_table(season: int) -> pd.DataFrame:
     # whose damage took a dozen laps to end the race (curated, e.g. Piastri at
     # the Hungaroring 2026) counts alongside the ones race control tied to the
     # retirement directly.
-    from f1lib.dnf_causes import resolve_cause
+    from f1lib.dnf_causes import resolve_cause, is_collision
 
     dnf = _RACE[(_RACE["season"] == season)
                 & ~_RACE["Status"].isin(_FINISHED)]
@@ -235,7 +240,9 @@ def _contact_table(season: int) -> pd.DataFrame:
         got = resolve_cause(season, str(row.get("event_name", "")),
                             row.get("Abbreviation"),
                             row.get("Laps") if "Laps" in dnf.columns else None)
-        if got["cause_family"] == "collision":
+        # whoever it is imputed to — an at-fault driver's knock still ended
+        # his race by contact
+        if is_collision(got):
             ended.add((str(row.get("event_name", "")),
                        str(row.get("Abbreviation", ""))))
     # Count DRIVER-RACES, not contact rows: a driver with two logged knocks in
@@ -254,8 +261,9 @@ def _contact_table(season: int) -> pd.DataFrame:
     return out.sort_values("contacts", ascending=False)
 
 
-def _contact_fig(season: int) -> go.Figure:
-    t = _contact_table(season)
+def _contact_fig(season: int, teams=None) -> go.Figure:
+    from tabs.pace_data import filter_teams
+    t = filter_teams(_contact_table(season), teams)
     fig = go.Figure()
     if t.empty:
         theme(fig, 300, "No incident register for this season")
@@ -283,7 +291,7 @@ def _contact_fig(season: int) -> go.Figure:
     return fig
 
 
-def contact_card(season: int):
+def contact_card(season: int, teams=None):
     """Season contact record, or None when the register hasn't been built."""
     from f1lib.incidents import has_incidents
     if not has_incidents(season):
@@ -294,7 +302,7 @@ def contact_card(season: int):
     worst = t.iloc[0]
     return card(
         "Contact Record — who is in the wars",
-        dcc.Graph(figure=_contact_fig(season), config=GFX),
+        dcc.Graph(figure=_contact_fig(season, teams), config=GFX),
         plain=(
             f"Not every knock ends a race — most don't. This counts every "
             f"contact race control logged, whether or not the car retired. "
@@ -335,7 +343,7 @@ def _provenance(season: int) -> tuple[int, int, int, int]:
     which is a person reading the press — and to distinguish a retirement
     nobody has researched from one where the press simply never said.
     """
-    from f1lib.dnf_causes import causes_df, FAMILIES, resolve_cause
+    from f1lib.dnf_causes import causes_df, normalise_family, resolve_cause
 
     if _RACE.empty:
         return 0, 0, 0, 0
@@ -354,15 +362,14 @@ def _provenance(season: int) -> tuple[int, int, int, int]:
     looked = never = 0
     if not d.empty:
         s = d[pd.to_numeric(d["season"], errors="coerce") == season]
-        fam = s["cause_family"].astype(str).str.strip().str.lower()
         chk = s["press_checked"].astype(str).str.strip()
-        blank = ~fam.isin(FAMILIES)
+        blank = s["cause_family"].map(normalise_family).eq("")
         looked = int((blank & chk.ne("") & chk.ne("nan")).sum())
         never = int((blank & (chk.eq("") | chk.eq("nan"))).sum())
     return measured, reported, looked, never
 
 
-def reliability_card(season: int):
+def reliability_card(season: int, teams=None):
     """Reliability card for the SEASON FORM section, or None if no archive."""
     piv = reliability_table(season)
     if piv.empty:
@@ -400,20 +407,26 @@ def reliability_card(season: int):
     _total_dnf, _starts = int(piv["dnf"].sum()), int(piv["starts"].sum())
     _best = piv["finish_rate"].idxmax()
     _plain = (
-        "Not every car reaches the finish — a crash or a mechanical failure "
-        "ends its race early (a 'DNF', short for Did Not Finish). This season "
+        "Not every car reaches the finish — the car fails, the driver makes a "
+        "mistake, or someone else takes them out, and the race ends early (a "
+        "'DNF', short for Did Not Finish). This season "
         f"{_total_dnf} of {_starts} car-races ended that way. {_best} have been "
         "the most reliable, finishing the biggest share of their races — pace "
         "means nothing if the car doesn't make it home.")
     return card(
         ["Reliability & ", *gloss("dnf", "DNFs")],
-        dcc.Graph(figure=_reliability_fig(season), config=GFX),
+        dcc.Graph(figure=_reliability_fig(season, teams), config=GFX),
         plain=_plain,
         info=("Data: every car-race in the historical results archive for this "
               "season, bucketed into a finish vs. the reason it failed to "
-              "finish (mechanical, racing incident, solo accident, "
-              "disqualification, unclassified, or did-not-start). Solid "
-              "segments are established by race control, hatched ones are "
+              "finish, by WHO it is imputable to: the car (any failure, and "
+              "any team decision to stop the car), the driver (a crash or off "
+              "with no other car, fitness or illness, and floor damage of "
+              "unstated origin — usually a kerb taken too hard), or neither "
+              "(a collision, debris or a foreign object); plus "
+              "disqualification, unclassified and did-not-start. Solid "
+              "segments are FIA records (the results archive or race "
+              "control), hatched ones are "
               "curated from the press. The % on each green "
               "bar is the team's finish rate. Why: reliability is points left "
               "on the table — a fast car that keeps breaking or crashing "

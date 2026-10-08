@@ -34,7 +34,9 @@ from pathlib import Path
 import pandas as pd
 
 from f1lib.config import HISTORICAL_DIR
-from f1lib.dnf_causes import CAUSES_PATH, COLS, FAMILIES, causes_df
+from f1lib.dnf_causes import (
+    CAUSES_PATH, COLS, FAMILIES, causes_df, normalise_family,
+)
 from f1lib.incidents import classify_retirement
 
 ARCHIVE = Path(HISTORICAL_DIR) / "race_results_all.parquet"
@@ -113,9 +115,9 @@ def _report_todo() -> int:
     if d.empty:
         print("data/dnf_causes.csv not seeded yet - run without --todo first.")
         return 0
-    fam = d["cause_family"].astype(str).str.strip().str.lower()
+    fam = d["cause_family"].map(normalise_family)
     checked = d["press_checked"].astype(str).str.strip()
-    filled = fam.isin(FAMILIES)
+    filled = fam.ne("")
     looked = (~filled) & checked.ne("") & checked.ne("nan")
     todo = (~filled) & (~looked)
     print(f"{len(d)} seeded retirement(s)")
@@ -125,7 +127,7 @@ def _report_todo() -> int:
     print(f"  {int(todo.sum()):4d} not yet looked at")
     if filled.any():
         print()
-        print(d[filled]["cause_family"].value_counts().to_string())
+        print(fam[filled].value_counts().to_string())
     if todo.any():
         print()
         print("Oldest outstanding:")

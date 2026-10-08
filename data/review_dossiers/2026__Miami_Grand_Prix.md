@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R4 · Miami Grand Prix · dossier built 2026-08-08
+2026 R4 · Miami Grand Prix · dossier built 2026-10-06
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 
@@ -165,7 +165,7 @@ predicted +2.029 → actual +1.264 · **miss -0.765%** (1.2 sd) · FASTER than p
     - `2026-05-03 17:35:19  CAR 18 (STR) TIME 1:40.953 DELETED - TRACK LIMITS AT TURN 17 LAP 15 13:32:27`
     - `2026-05-03 17:37:01  CAR 18 (STR) TIME 1:36.371 DELETED - TRACK LIMITS AT TURN 5 LAP 17 13:34:39`
 - *(7 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
-- **Pit stops** (2): lap 21 (2.8s stationary); lap 37  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 21 (2.8s stationary); lap 37
 
   > category: ______   note: ______
 
@@ -190,7 +190,7 @@ predicted -1.818 → actual -1.109 · **miss +0.709%** (2.1 sd) · SLOWER than p
 - **Incident** lap 57: contact — CAUSING A COLLISION vs LEC → investigated after race
 - **Incident** lap 57: contact — CAUSING A COLLISION vs VER → investigated after race
 - **Incident** lap 57: contact — MOVING UNDER BRAKING → no action
-- **Pit stops** (1): lap 20  ·  *1 not in pitstops.parquet*
+- **Pit stops** (1): lap 20
 
   > category: ______   note: ______
 
@@ -213,7 +213,7 @@ predicted +2.616 → actual +3.696 · **miss +1.080%** (1.3 sd) · SLOWER than p
     - `2026-05-03 18:15:29  BLACK AND WHITE FLAG FOR CAR 77 (BOT) - IGNORING BLUE FLAGS`
 - *(20 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
 - **Incident** lap 26: procedural — SPEEDING IN THE PIT LANE → penalty: drive through
-- **Pit stops** (3): lap 6 (3.0s stationary); lap 21; lap 30  ·  *2 not in pitstops.parquet*
+- **Pit stops** (3): lap 6 (3.0s stationary); lap 21; lap 30
 
   > category: ______   note: ______
 

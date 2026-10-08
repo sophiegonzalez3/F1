@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R2 · Chinese Grand Prix · dossier built 2026-08-08
+2026 R2 · Chinese Grand Prix · dossier built 2026-10-06
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 

@@ -315,10 +315,13 @@ def _standings_leaderboard_body(entities_sorted, rank_after, rank_before,
     ])
 
 
-def _driver_standings_widget(fl):
+def _driver_standings_widget(fl, scope=None):
     """Drivers' Championship leaderboard for the season/round loaded in the Data
     tab — same look as the Constructor Championship widget. Falls back to points
-    from the loaded race laps if the meeting isn't in the historical archive."""
+    from the loaded race laps if the meeting isn't in the historical archive.
+
+    `scope` (a driver scope, None = all) hides rows but never re-ranks:
+    positions and arrows stay the real championship ones."""
     season, rnd, event = _loaded_meeting_season_round()
     after_src  = _driver_standings_after_round(season, rnd)
     prev_rnd   = _prev_round(season, rnd)
@@ -363,6 +366,8 @@ def _driver_standings_widget(fl):
     all_before_zero = all(v == 0 for v in before_pts.values())
     entities_sorted = sorted(
         drivers, key=lambda d: (rank_after.get(d, 99), -after_pts.get(d, 0)))
+    if scope is not None:
+        entities_sorted = [d for d in entities_sorted if d in scope]
 
     season_lbl = str(season) if season else "current"
     if from_archive and event:
@@ -409,7 +414,7 @@ def _driver_standings_widget(fl):
         info=info,
     )
 
-def _constructor_standings_widget(fl):
+def _constructor_standings_widget(fl, scope=None):
     """Constructor Championship leaderboard for the loaded season/round —
     the constructor twin of _driver_standings_widget. Standings come from
     the historical archive; falls back to points scored in the loaded race
@@ -488,6 +493,11 @@ def _constructor_standings_widget(fl):
         _all_champ_teams,
         key=lambda t: (_rank_after.get(t, 99), -_after_pts.get(t, 0)),
     )
+    # Team scope (sidebar filter): hide rows, keep the real positions.
+    if scope is not None:
+        from tabs.pace_data import team_mask
+        _keep = team_mask(pd.Series(_champ_rows_sorted, dtype=object), scope)
+        _champ_rows_sorted = [t for t, k in zip(_champ_rows_sorted, _keep) if k]
 
     _champ_from_archive = _champ_round is not None
     _season_lbl = str(_champ_season) if _champ_season else "current"
@@ -659,16 +669,26 @@ def _champions_card():
     )
 
 
-def _season_standings_row(fl):
+def _season_standings_row(fl, teams=None, drivers=None):
     """Both championship leaderboards side by side — the head of the
     SEASON tab (drivers left, constructors right). A compact 'Recent Champions'
-    card fills the gap left beneath the shorter constructor table."""
-    right = [_constructor_standings_widget(fl)]
+    card fills the gap left beneath the shorter constructor table.
+
+    `teams` / `drivers` are the active sidebar selections (None = all); they
+    are turned into the loaded season's team and driver scopes, the same rule
+    as the SEASON FORM cards (tabs/pace_data.season_scope)."""
+    team_scope = driver_scope = None
+    if teams or drivers:
+        from tabs.pace_data import season_scope
+        season = _loaded_meeting_season_round()[0]
+        if season:
+            team_scope, driver_scope = season_scope(int(season), teams, drivers)
+    right = [_constructor_standings_widget(fl, team_scope)]
     champs = _champions_card()
     if champs is not None:
         right.append(champs)
     return dbc.Row([
-        dbc.Col(_driver_standings_widget(fl), lg=6),
+        dbc.Col(_driver_standings_widget(fl, driver_scope), lg=6),
         dbc.Col(right, lg=6),
     ], className="g-3")
 

@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R13 · Italian Grand Prix · dossier built 2026-09-13
+2026 R13 · Italian Grand Prix · dossier built 2026-10-06
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 
@@ -156,7 +156,7 @@ predicted +0.730 → actual -0.342 · **miss -1.071%** (2.1 sd) · FASTER than p
     - `2026-09-06 13:08:30  CAR 55 (SAI) LAP DELETED - TRACK LIMITS AT TURN 5 LAP 1 15:04:11`
     - `2026-09-06 13:25:10  CAR 55 (SAI) LAP 1 WILL BE REINSTATED`
     - `2026-09-06 14:36:10  CAR 55 (SAI) TIME 1:26.235 DELETED - TRACK LIMITS AT TURN 5 LAP 39 16:35:07`
-- **Pit stops** (2): lap 3; lap 27 (2.6s stationary)  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 3; lap 27 (2.6s stationary)
 
   > category: ______   note: ______
 
@@ -172,7 +172,7 @@ predicted +2.410 → actual +1.545 · **miss -0.865%** (1.6 sd) · FASTER than p
 - **Race control** (race):
     - `2026-09-06 14:49:04  CAR 77 (BOT) TIME 1:37.053 DELETED - TRACK LIMITS AT TURN 2 LAP 47 16:47:44`
 - *(13 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
-- **Pit stops** (2): lap 3; lap 27 (6.9s stationary)  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 3; lap 27 (6.9s stationary)
 
   > category: ______   note: ______
 
@@ -186,7 +186,7 @@ predicted +0.010 → actual -0.557 · **miss -0.566%** (1.3 sd) · FASTER than p
 - **Dropped before the median**: 25 dirty-air, 10 perturbed, 5 invalid
 - **What the filter did**: kept 43% of his laps (field 43%). Model measured -0.285%; over EVERY racing lap he is -0.452%. Scoring him on all laps would move the miss -0.566% → **-0.733%** (GROWS by 29%).
 - **SCREEN** · PACE STEP  -0.50% at lap 48 (faster afterwards; bigger than 98% of shuffled orderings) — check this lap against race control before calling it damage; an unexplained step is not yet a cause
-- **Pit stops** (1): lap 3  ·  *1 not in pitstops.parquet*
+- **Pit stops** (1): lap 3
 
   > category: ______   note: ______
 
@@ -206,7 +206,7 @@ predicted +0.250 → actual -0.272 · **miss -0.521%** (1.1 sd) · FASTER than p
     - `2026-09-06 13:48:29  CAR 43 (COL) TIME 2:47.838 DELETED - TRACK LIMITS AT TURN 6 LAP 6 15:46:31`
     - `2026-09-06 14:41:22  CAR 43 (COL) TIME 1:26.278 DELETED - TRACK LIMITS AT TURN 1 LAP 43 16:40:06`
 - **Incident** lap 1: procedural — FAILING TO FOLLOW RACE DIRECTORS INSTRUCTIONS – PRACTICE START INFRINGEMENT → investigated after race
-- **Pit stops** (1): lap 3  ·  *1 not in pitstops.parquet*
+- **Pit stops** (1): lap 3
 
   > category: ______   note: ______
 
@@ -227,7 +227,7 @@ predicted -1.557 → actual -0.453 · **miss +1.104%** (2.3 sd) · SLOWER than p
     - `2026-09-06 13:59:05  CAR 44 (HAM) TIME 1:26.415 DELETED - TRACK LIMITS AT TURN 5 LAP 14 15:57:50`
     - `2026-09-06 14:29:32  CAR 44 (HAM) TIME 1:26.929 DELETED - TRACK LIMITS AT TURN 1 LAP 35 16:28:12`
 - **Incident** lap 2: contact — INCIDENT (reason unstated) vs LEC → no action
-- **Pit stops** (1): lap 3  ·  *1 not in pitstops.parquet*
+- **Pit stops** (1): lap 3
 - **Radio** 14:29:38: "This tyre is terrible, mate."
 - **Radio** 15:01:54: "That one hurts, that one really hurts, but thank you for continuing to show up mate, great job all weekend guys, the garage is always still in me, but I've seen it through to you, thank you for turning out, giving us you"
 

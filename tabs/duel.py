@@ -1182,8 +1182,10 @@ def _chaos_section(ctx, a, b, ta, tb, ca, cb):
         m = m.iloc[0]
         rel_rows.append({"Team": _abbr(team), "Starts": int(m["starts"]),
                          "DNFs": int(m["dnfs"]),
-                         "Mechanical": int(m["mech"]),
-                         "Incidents": int(m["incidents"]),
+                         "Car": int(m["car"]),
+                         "Driver": int(m["driver"]),
+                         "Collision": int(m["collision"]),
+                         "Other": int(m["other"]),
                          "DNF rate (shrunk)": f"{m['rate']*100:.1f}%"})
     rel_children = [dash_table.DataTable(data=rel_rows,
                     columns=[{"name": c, "id": c} for c in rel_rows[0]],
@@ -1192,8 +1194,8 @@ def _chaos_section(ctx, a, b, ta, tb, ca, cb):
                 style={"color": TEXT_DIM})]
     if ta == tb and rel_rows:
         rel_children.append(html.P(
-            "Same car on both sides of this duel — reliability largely "
-            "cancels out, except for driver-induced incidents.",
+            "Same car on both sides of this duel — car-imputable DNFs "
+            "cancel out; the driver column is what separates them.",
             style={"color": TEXT_DIM, "fontSize": "0.75rem",
                    "marginTop": "8px", "marginBottom": 0}))
     rel = html.Div(rel_children)
@@ -1211,7 +1213,12 @@ def _chaos_section(ctx, a, b, ta, tb, ca, cb):
             dbc.Col(card("RELIABILITY — LAST 3 SEASONS",
                          rel,
                          info="Retirements per start from the results "
-                              "archive, split mechanical vs incident. The "
+                              "archive, split by who each is imputable to: "
+                              "the car (failures and team decisions), the "
+                              "driver (crashes, fitness, floor damage of "
+                              "unstated origin) or a collision; 'Other' is "
+                              "disqualified, unexplained or did-not-start. "
+                              "The "
                               "shrunk rate (pulled toward the field mean) is "
                               "what the duel simulation uses as each car's "
                               "DNF probability."), md=6),

@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R15 · Azerbaijan Grand Prix · dossier built 2026-10-02
+2026 R15 · Azerbaijan Grand Prix · dossier built 2026-10-06
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 
@@ -156,7 +156,8 @@ predicted -1.076 → actual +0.449 · **miss +1.524%** (4.6 sd) · SLOWER than p
 - **SCREEN** · ATTEMPTS  3 flying laps against a field median of 12
 - **SCREEN** · FEW ATTEMPTS  the actual is a MINIMUM over those laps, worth 0.170% each — 3 vs 12 predicts a +1.53% penalty, moving the miss +1.524% → -0.006%. Consider `measurement_artifact` before blaming the model.
 - **SCREEN** · BEST LAP from Q1 (105.504s)  [Q1 105.504]
-- **SCREEN** · ELIMINATED in Q1 — the counted lap was set on a greener track than the Q3 runners'; quali_norm corrects for this, so treat a residual as real
+- **SCREEN** · NO TIME IN Q2  reached Q2 (P16) but set no lap there — the counted lap is a Q1 lap, so it under-states what the car could do. Ask why (a sacrificed run, a tow, a grid penalty, a problem)
+- **SCREEN** · ELIMINATED in Q2 — the counted lap was set on a greener track than the Q3 runners'; quali_norm corrects for this, so treat a residual as real
 
   > category: ______   note: ______
 
@@ -188,7 +189,7 @@ predicted +0.890 → actual +0.226 · **miss -0.665%** (1.3 sd) · FASTER than p
 - **SCREEN** · THIN SAMPLE  only 10 clean laps entered the median (field median 15+ is normal)
 - **Race control** (race):
     - `2026-09-26 12:45:44  CAR 31 (OCO) TIME 1:48.925 DELETED - TRACK LIMITS AT TURN 15 LAP 51 16:41:51`
-- **Pit stops** (2): lap 30 (3.3s stationary); lap 36  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 30 (3.3s stationary); lap 36
 
   > category: ______   note: ______
 
@@ -205,7 +206,7 @@ predicted +0.709 → actual +0.165 · **miss -0.544%** (1.0 sd) · FASTER than p
 - **SCREEN** · COMPOUND SKEW  ran SOFT 100% vs field MEDIUM 58%, SOFT 42% — worth -0.17% of a lap at this race's measured offsets
 - **Race control** (race):
     - `2026-09-26 12:45:49  CAR 87 (BEA) TIME 1:48.360 DELETED - TRACK LIMITS AT TURN 15 LAP 51 16:41:53`
-- **Pit stops** (2): lap 30 (3.5s stationary); lap 36  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 30 (3.5s stationary); lap 36
 - **Radio** 10:59:17: "When in the pit stop, remind me of the white line on pit entry, it's quite easy to cross accidentally, a lot of F2 drivers did it."
 
   > category: ______   note: ______
@@ -240,7 +241,7 @@ predicted -1.610 → actual -0.910 · **miss +0.700%** (1.8 sd) · SLOWER than p
 - **What made the actual**: 20 clean laps of 51 run (laps 12–48 of 51) · MEDIUM 13, SOFT 7
 - **Dropped before the median**: 24 dirty-air, 15 perturbed, 9 invalid
 - **What the filter did**: kept 39% of his laps (field 38%). Model measured -1.076%; over EVERY racing lap he is -1.009%. Scoring him on all laps would move the miss +0.700% → **+0.767%** (GROWS by 10%).
-- **Pit stops** (2): lap 30 (2.6s stationary); lap 36  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 30 (2.6s stationary); lap 36
 
   > category: ______   note: ______
 

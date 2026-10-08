@@ -88,10 +88,10 @@ def main() -> int:
                 print(f"  [none]  {season} {meeting} - no data from either source", flush=True)
                 empty += 1
             elif df.attrs.get("partial"):
-                # Not cached by the loader, so the next run retries it.
+                # pitstops_cached() treats it as missing, so the next run retries.
                 print(f"  [partial] {season} {meeting} - {len(df)} stops vs "
-                      f"{df.attrs.get('expected')} pit-ins in the laps; not "
-                      "cached, will retry next run", flush=True)
+                      f"{df.attrs.get('expected')} pit-ins in the laps; "
+                      "will retry next run", flush=True)
                 empty += 1
             else:
                 src = df["source"].iloc[0]

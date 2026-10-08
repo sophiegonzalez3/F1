@@ -127,9 +127,9 @@ def _pu_makers() -> dict[str, str]:
 def _finish_rate(season: int) -> pd.DataFrame:
     """Finish rate and DNF count per team from the results archive.
 
-    The cause split (mechanical vs incident) is NOT available for recent
-    seasons — 2024 onward the archive carries a bare "Retired" — so this
-    reports the rate only rather than inventing a breakdown.
+    Rate only. The cause split (car / driver / collision imputable) is
+    rebuilt from race control + curated press in f1lib.dnf_causes and shown
+    on the SEASON tab's reliability card; it is not repeated here.
     """
     if not RACE_PATH.exists():
         return pd.DataFrame()
@@ -586,10 +586,11 @@ def car_concept_section(season: int | None = None,
                   "power-unit pool from data/pu_penalties.csv. Why: the "
                   "cheapest lap time in F1 is the lap you actually complete — "
                   "a fast car that retires scores the same as a slow one. "
-                  "Caveat: from 2024 the archive records a bare 'Retired' with "
-                  "no cause, so this is a rate only — the mechanical-vs-"
-                  "incident split older seasons allow is genuinely not in the "
-                  "data, and is not guessed at here."),
+                  "Caveat: this is a rate only. Who each retirement is "
+                  "imputable to — the car, the driver or a collision — is on "
+                  "the SEASON tab's Reliability & DNFs card, rebuilt from race "
+                  "control and curated press since the archive records a bare "
+                  "'Retired' from 2023."),
         ))
 
     # 5 — the axis that failed, shown honestly

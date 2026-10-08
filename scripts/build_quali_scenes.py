@@ -81,20 +81,26 @@ def build_one(season: int, meeting: str, force: bool = False) -> str:
             f"terrain={'y' if sur.get('terrain') else 'n'}")
 
 
-def main() -> None:
+def main() -> int:
     force = "--force" in sys.argv
     args = [a for a in sys.argv[1:] if a != "--force"]
     todo = [(int(args[0]), args[1])] if len(args) >= 2 else MEETINGS
+    failed = 0
     for season, meeting in todo:
         t0 = time.time()
         try:
             msg = build_one(season, meeting, force=force)
         except Exception as exc:            # keep going — one bad circuit
             msg = f"FAILED: {exc}"          # shouldn't sink the batch
+        failed += msg.startswith("FAILED")
         print(f"[{season} {meeting}] {msg}  ({time.time() - t0:.0f}s)",
               flush=True)
-        time.sleep(3)                       # be polite to Overpass
+        if len(todo) > 1:
+            time.sleep(3)                   # be polite to Overpass
+    # Non-zero so after_race.py can REPORT a failed bake (it runs this as an
+    # optional step: reported at the end, never stops the chain).
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

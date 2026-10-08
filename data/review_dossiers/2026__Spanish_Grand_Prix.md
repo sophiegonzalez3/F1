@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R14 · Spanish Grand Prix · dossier built 2026-09-14
+2026 R14 · Spanish Grand Prix · dossier built 2026-10-06
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 
@@ -191,7 +191,7 @@ predicted +0.566 → actual -0.116 · **miss -0.682%** (1.3 sd) · FASTER than p
 - **What the filter did**: kept 45% of his laps (field 61%). Model measured +0.000%; over EVERY racing lap he is +0.924%. Scoring him on all laps would move the miss -0.682% → **+0.242%** (shrinks by 65%).
 - **SCREEN** · FILTER ARTIFACT  using every racing lap cuts the miss to +0.242%. The measured pace describes a slice of his race, not his race — consider `measurement_artifact` before any other cause.
 - *(3 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
-- **Pit stops** (2): lap 33 (4.5s stationary); lap 43  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 33 (4.5s stationary); lap 43
 
   > category: ______   note: ______
 
@@ -208,7 +208,11 @@ predicted -1.221 → actual -1.889 · **miss -0.668%** (1.2 sd) · FASTER than p
 - **SCREEN** · PACE STEP  +0.98% at lap 12 (slower afterwards; bigger than 98% of shuffled orderings) — check this lap against race control before calling it damage; an unexplained step is not yet a cause
 - **Race control** (race):
     - `2026-09-13 14:34:03  CAR 1 (NOR) TIME 1:36.934 DELETED - TRACK LIMITS AT TURN 6 LAP 54 16:32:29`
-- **Pit stops** (1): lap 15  ·  *1 not in pitstops.parquet*
+- **Pit stops** (1): lap 15
+- **Radio** 13:51:25: "Russell's deployment is like a boost press into turn five every lap, I'll have to do something else."
+- **Radio** 14:01:34: "I know the hard tyre looks robust, but if you have some pace, we think we should use it. Maintain the precision, pace is there."
+- **Radio** 14:36:37: "Yeah, he went off. He went off defending against me. He cut the chicane, he just passed it around the business ship. Pretty obvious. Yeah, we're on our way."
+- **Radio** 14:43:44: "Let's take it on the chin, go too quick, that's all it was, very unlucky today guys, we deserve the win quite easily so a big thank you, didn't think we're gonna have a chance here, we should have won. Well done guys, ke"
 
   > category: ______   note: ______
 
@@ -271,6 +275,9 @@ predicted -0.857 → actual -1.445 · **miss -0.588%** (1.1 sd) · FASTER than p
 - **Incident** lap 4: off-track — LEAVING THE TRACK AND GAINING AN ADVANTAGE → no action
 - **Incident** lap 57: off-track — LEAVING THE TRACK AND GAINING AN ADVANTAGE → no action
 - **Pit stops** (1): lap 14 (2.4s stationary)
+- **Radio** 13:09:48: "Max, we think we should give the position back to Hamilton, so that will mean letting Antonelli through as well."
+- **Radio** 13:09:48: "Wait, what are you guys talking about? If I just stay on the track, we are out of the race."
+- **Radio** 14:41:11: "Solid there by Max, well done, it's P2, not what we get out of that one, so well done. Well done Max, you extracted everything once again today, it was a strong fight, I know we have to think the same a little bit, but i"
 
   > category: ______   note: ______
 
@@ -289,6 +296,12 @@ predicted -1.867 → actual -1.403 · **miss +0.464%** (1.1 sd) · SLOWER than p
     - `2026-09-13 13:15:06  CAR 12 (ANT) TIME 1:41.166 DELETED - TRACK LIMITS AT TURN 17 LAP 6 15:13:39`
     - `2026-09-13 13:43:26  CAR 12 (ANT) TIME 1:39.145 DELETED - TRACK LIMITS AT TURN 6 LAP 23 15:41:55`
 - **Pit stops** (1): lap 14 (3.0s stationary)
+- **Radio** 13:03:12: "[unintelligible]"
+- **Radio** 13:34:40: "Just make sure you stay on top of the management, we don't want to open these tyres up, they are bulletproof."
+- **Radio** 13:43:19: "Check the car. Which corner? No, I didn't touch any wall, but the thing feels weird."
+- **Radio** 13:45:49: "We have two track limits now, so turn six and then turn 17 will be at hour eight, so no more track limits please, keep it clean."
+- **Radio** 14:40:40: "Beautiful work, Kimi, absolute masterpiece. Good job, guys. Well done, mate. That took a lot of mental strength and I think you did the job. Yeah, lucky for the safety car, weirdo. Yeah, feel a bit bad for Lando, but rea"
+- **Radio** 14:43:13: "Kimi, well done, another one, that's so good points in the pocket, with some not finishing. Very, very good. Yeah, thank you, Toto. Can you contain this one, Sergi? Sergi, home race! Good effort."
 
   > category: ______   note: ______
 
@@ -346,7 +359,8 @@ predicted +2.341 → actual +3.247 · **miss +0.906%** (1.7 sd) · SLOWER than p
 - **What the filter did**: kept 72% of his laps (field 61%). Model measured +3.363%; over EVERY racing lap he is +3.366%. Scoring him on all laps would move the miss +0.906% → **+0.909%** (GROWS by 0%).
 - **SCREEN** · PACE STEP  +1.82% at lap 42 (slower afterwards; bigger than 96% of shuffled orderings) — check this lap against race control before calling it damage; an unexplained step is not yet a cause
 - *(25 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
-- **Pit stops** (2): lap 29 (2.9s stationary); lap 43  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 29 (2.9s stationary); lap 43
+- **Radio** 14:02:37: "My left seat is very, very hot, my heel is very hot."
 
   > category: ______   note: ______
 
@@ -379,7 +393,9 @@ predicted +0.836 → actual +2.198 · **miss +1.362%** (2.3 sd) · SLOWER than p
 - **Incident** lap 4: contact — CAUSING A COLLISION vs TSU → no action
 - **Incident** lap 16: contact — INCIDENT (reason unstated) vs ALO → investigated
 - **Incident** lap 27: procedural — 5 SECOND TIME PENALTY FOR CAR 55 (SAI) → penalty: 5 second time penalty
-- **Pit stops** (3): lap 23 (17.9s stationary); lap 31; lap 43  ·  *2 not in pitstops.parquet*
+- **Pit stops** (3): lap 23 (17.9s stationary); lap 31; lap 43  ·  *1 not in pitstops.parquet*
+- **Radio** 14:06:08: "Yeah, the track limits, Verstappen by, he touched me too quick, that's the shooting car. We'll be understood with feedback."
+- **Radio** 14:06:39: "I had no other way to get out of the way, in that sector."
 
   > category: ______   note: ______
 

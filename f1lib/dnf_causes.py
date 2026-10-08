@@ -9,8 +9,8 @@ Race control recovers PART of it. `f1lib.incidents` reads back every contact
 the stewards investigated, which is why 48 of 237 retirements (2023-26) are
 classified as collisions. But race control only logs what it INVESTIGATES: a
 car that simply stops draws no stewards' message at all, so 169 retirements
-have no contact row and never will. Those are mechanical failures, solo
-accidents and disqualifications, and press is the only remaining source.
+have no contact row and never will. Those are car failures, driver crashes
+and disqualifications, and press is the only remaining source.
 
 THE RULE THIS MODULE ENFORCES: measured beats reported, always. `cause_source`
 is never collapsed. A cause from race control outranks anything curated; a
@@ -42,29 +42,86 @@ import pandas as pd
 
 CAUSES_PATH = Path("data/dnf_causes.csv")
 
-# Families, not details. "Mechanical vs collision vs solo accident vs
-# disqualified" is reportable with confidence; "hydraulics vs gearbox" often is
-# not, and one combined field pressures the curator into guessing the half they
-# do not know. `cause_detail` is free text and may be blank.
+# Families, not details — and since 2026-10-07 the families answer ONE
+# question: WHO IS THE RETIREMENT IMPUTABLE TO? (They used to be descriptive —
+# "mechanical", "solo accident" — and the rename is a deliberate change of
+# meaning, decided with the dashboard's owner.) "hydraulics vs gearbox" stays
+# in the free-text `cause_detail`, because it often is not reportable.
+#
+#   car imputable     the car or the TEAM: any component failure, and any
+#                     team decision to stop a healthy car (strategy, saving
+#                     the engine, ending a test run, an operational error at a
+#                     stop). Was "mechanical".
+#   driver imputable  the driver: crashes and offs with no other car,
+#                     the driver's fitness or illness, and FLOOR / UNDERBODY
+#                     DAMAGE OF UNSTATED ORIGIN — usually a kerb taken too
+#                     hard, so it defaults here unless the press says
+#                     otherwise. Was "solo accident".
+#   collision         imputable to NEITHER the car nor that driver: contact
+#                     with another car, debris from somebody else's crash, a
+#                     foreign object (Sainz's drain cover, Las Vegas 2023), a
+#                     puncture. Floor damage belongs here only when the press
+#                     says with confidence where it came from.
+#   disqualified      not a reliability event at all; kept apart so it never
+#                     pollutes the read.
 #
 # Calibrated against the 2019-2022 archive, the last era that recorded real
-# causes (~250 genuine non-finishes):
-#   mechanical     the long tail - Engine 18, Power Unit 15, Brakes 13,
-#                  Gearbox 12, Suspension 8, Hydraulics 6, ... ~130 rows
-#   collision      Collision 58 + Collision damage 22 + Puncture 3
-#   solo accident  Accident 25 + Spun off 4 - off or into the wall with
-#                  no counterparty. DESCRIPTIVE on purpose: "driver
-#                  error" would assign a fault nobody measured, and a
-#                  lap-1 snap on cold tyres may be the car, the driver or
-#                  the track. The pre-2023 archive was descriptive too.
-#   disqualified   14 across the whole archive, 6 in 2025 alone (the Chinese
-#                  GP triple, Bahrain, the Las Vegas McLaren double). NOT a
-#                  reliability event, and it pollutes the read if bucketed
-#                  with failures.
-# Deliberately NO "withdrawal" family: the same archive holds 3 Withdrew and 2
-# Illness rows in four seasons, and reliability.py already buckets those under
-# "Did not start". One row every eighteen months does not earn a family.
-FAMILIES = ("mechanical", "collision", "solo accident", "disqualified")
+# causes (~250 genuine non-finishes): car ~130 (Engine 18, Power Unit 15,
+# Brakes 13, Gearbox 12, ...), collision 83 (Collision 58, Collision damage 22,
+# Puncture 3), driver 29 (Accident 25, Spun off 4), disqualified 14.
+# Deliberately NO "withdrawal" family: the archive's Withdrew / Illness rows are
+# bucketed "Did not start" from the status alone; a curated withdrawal gets the
+# family of its REASON (illness -> driver, team choice -> car).
+CAR, COLLISION, DRIVER, DSQ = ("car imputable", "collision",
+                               "driver imputable", "disqualified")
+FAMILIES = (CAR, COLLISION, DRIVER, DSQ)
+
+# Old spellings, read as their successors so a stale row, a merge from an old
+# branch or a hand edit from memory cannot silently fall out of the chart.
+LEGACY_FAMILIES = {"mechanical": CAR, "solo accident": DRIVER}
+
+
+def normalise_family(value) -> str:
+    """A cause_family cell as one of FAMILIES, or "" when blank/unknown."""
+    fam = str(value or "").strip().lower()
+    fam = LEGACY_FAMILIES.get(fam, fam)
+    return fam if fam in FAMILIES else ""
+
+
+# The pre-2023 archive's own Status vocabulary, read through the same lens.
+# One map, used by the reliability card AND the DUEL tab, so the two can never
+# disagree about what "Accident" means. Undertray / wings stay with the car —
+# the archive files them as component failures and its word is kept. The list
+# is every cause-naming status actually present in race_results_all (2019-26);
+# the old reliability map missed seven of them (Overheating, Wheel,
+# Electronics, Exhaust, Transmission, Radiator, Out of fuel), which left those
+# retirements "unclassified".
+_CAR_STATUSES = {
+    "Engine", "Power Unit", "Brakes", "Gearbox", "Suspension", "Hydraulics",
+    "Power loss", "Water pressure", "Overheating", "Oil leak", "Wheel",
+    "Undertray", "Electronics", "Fuel pressure", "Water leak", "Exhaust",
+    "Turbo", "Transmission", "Mechanical", "Electrical", "Cooling system",
+    "Driveshaft", "Differential", "Fuel pump", "Out of fuel", "Front wing",
+    "Fuel leak", "Rear wing", "Radiator", "Vibrations", "Water pump",
+    "Wheel nut"}
+_COLLISION_STATUSES = {"Collision", "Collision damage", "Puncture", "Damage",
+                       "Debris"}
+_DRIVER_STATUSES = {"Accident", "Spun off"}
+STATUS_FAMILY = {**{s: CAR for s in _CAR_STATUSES},
+                 **{s: COLLISION for s in _COLLISION_STATUSES},
+                 **{s: DRIVER for s in _DRIVER_STATUSES},
+                 "Disqualified": DSQ}
+DNS_STATUSES = {"Did not start", "Withdrew", "Illness"}
+
+
+def family_of(season, event: str, driver: str, last_lap, status) -> str:
+    """The family of one non-finish: the archive's own status when it names a
+    cause (pre-2023), otherwise race control then curation (resolve_cause).
+    "" when nobody knows yet."""
+    fam = STATUS_FAMILY.get(str(status).strip())
+    if fam:
+        return fam
+    return resolve_cause(season, event, driver, last_lap)["cause_family"]
 
 # How much weight the row's cause carries.
 #   measured   a timing/FIA fact (reserved for race_control rows)
@@ -74,7 +131,29 @@ CONFIDENCE = ("measured", "reported", "claimed")
 
 COLS = ["season", "round", "event", "driver", "team", "status_archive",
         "laps", "cause_family", "cause_detail", "confidence",
-        "source", "source_date", "press_checked", "note"]
+        "source", "source_date", "press_checked", "note",
+        "overrides_register"]
+
+# THE ONE EXCEPTION TO "measured beats reported". The register's collision
+# call for a retirement is not itself a measurement: it is an INFERENCE that a
+# logged contact within CAUSAL_WINDOW laps of the stop caused it. When race
+# control logged only "INCIDENT (reason unstated) — no action" and the car then
+# stopped with a failure, that inference is wrong — Russell, Canada 2026: a
+# no-action brush with Antonelli on lap 26, then a battery failure on lap 30.
+# A curated row with overrides_register = "yes" wins over the register, and
+# MUST say in its note what the register inferred and why it does not hold.
+# Never set it to settle a disagreement about fault — only about cause —
+# EXCEPT on an explicit OWNER'S RULING, whose note must start "OWNER'S
+# RULING" (Hamilton, Qatar 2023: no stewards' action, but his own full
+# admission; Lawson and Bortoleto, Australia 2025: solo crashes the register
+# misread from an unsafe-release message).
+#
+# HIERARCHY (owner's rule, 2026-10-07): a STEWARDS' DECISION always supersedes
+# race control's message log. The register only knows that a contact was
+# logged near the stop; the stewards' published decision is the FIA's own
+# finding on what happened — Lawson, Miami 2026: contact with Gasly logged,
+# but the stewards found a gearbox failure caused it ("nothing that he could
+# do"), so the row is car imputable with confidence "measured".
 
 _CACHE: dict = {"mtime": None, "df": pd.DataFrame(columns=COLS)}
 
@@ -132,11 +211,13 @@ def curated_cause(season, event: str, driver: str) -> dict | None:
     if hit.empty:
         return None
     row = hit.iloc[0]
-    fam = str(row.get("cause_family", "") or "").strip().lower()
-    if fam not in FAMILIES:
+    fam = normalise_family(row.get("cause_family", ""))
+    if not fam:
         return None
     conf = str(row.get("confidence", "") or "").strip().lower()
+    override = str(row.get("overrides_register", "") or "").strip().lower()
     return {
+        "overrides_register": override in ("yes", "true", "1"),
         "cause_family": fam,
         "cause_detail": str(row.get("cause_detail", "") or "").strip(),
         "cause_source": "press",
@@ -162,12 +243,107 @@ def resolve_cause(season, event: str, driver: str, last_lap) -> dict:
     out = {"cause_family": "", "cause_source": "", "cause_detail": "",
            "counterparty": "", "confidence": "", "source": "", "note": ""}
     got = classify_retirement(season, event, driver, last_lap)
-    if got["cause"] == "collision":
-        out.update(cause_family="collision", cause_source="race_control",
-                   counterparty=str(got.get("counterparty", "") or ""),
-                   confidence="measured")
-        return out
     cur = curated_cause(season, event, driver)
+    if cur and cur.pop("overrides_register", False):
+        out.update(**cur)
+        out["note"] = (out["note"] + " " if out["note"] else "") + (
+            f"[Overrides the register, which inferred a collision with "
+            f"{got.get('counterparty') or 'another car'}.]"
+            if got["cause"] == "collision" else "")
+        out["note"] = out["note"].strip()
+        return out
+    if got["cause"] == "collision":
+        cp = str(got.get("counterparty", "") or "")
+        lap_n = int(got.get("incident_lap") or 0)
+        other = got.get("counterparty_penalty") or (
+            _grid_ruling(season, event, cp) if cp else "")
+        verdict = (f"the stewards penalised {cp} for it ({other})" if other
+                   else f"no penalty to {driver} for it")
+        out.update(cause_family=COLLISION, cause_source="race_control",
+                   counterparty=cp, confidence="measured",
+                   cause_detail=(f"COLLISION with {cp or 'another car'} on "
+                                 f"lap {lap_n}; {verdict}."))
+        ruling = got.get("penalty") or _grid_ruling(season, event, driver)
+        if ruling:
+            # AT FAULT -> driver imputable, on the stewards' ruling alone.
+            out.update(cause_family=DRIVER, cause_detail=(
+                f"COLLISION with {cp or 'another car'} on lap "
+                f"{int(got['incident_lap'] or 0)}; the stewards penalised "
+                f"{driver} for it ({ruling}), so it is imputed to the driver."))
+            out["note"] = AT_FAULT_NOTE
+        return out
     if cur:
+        cur.pop("overrides_register", None)
         out.update(**cur)
     return out
+
+
+# ── At-fault collisions ──────────────────────────────────────
+# A collision is imputable to "neither" only when the retiring driver was not
+# the one at fault. Fault is judged on ONE criterion, deliberately: the
+# STEWARDS' RULING on that contact (an in-race penalty in the register, or a
+# grid drop carried to the next event "for causing a collision" in the FIA
+# final starting grid). Not the press — whose verdict on who "owned" a corner
+# tends to follow the reporter's nationality — and not the curator's eye.
+# The stewards are not perfectly consistent either (the same move can draw a
+# penalty one weekend and "no further action" the next), which is why every
+# such row still says in its detail that a collision happened.
+def is_collision(cause: dict) -> bool:
+    """Did contact end this race — WHOEVER it is imputed to? True for the
+    collision family and for an at-fault collision imputed to the driver
+    (its detail always starts "COLLISION", curated rows included)."""
+    return (cause.get("cause_family") == COLLISION
+            or str(cause.get("cause_detail", "")).upper().startswith("COLLISION"))
+
+
+AT_FAULT_NOTE = ("A collision happened, whatever the ruling. Imputed to the "
+                 "driver because the stewards penalised him for this contact; "
+                 "their rulings on similar contact are not always consistent.")
+
+_GRID_PATH = Path("data/grid_penalties.csv")
+_GRID_CACHE: dict = {"mtime": None, "df": pd.DataFrame()}
+
+
+def _grid_ruling(season, event: str, driver: str) -> str:
+    """A grid penalty "for causing a collision" at `event`, served at a later
+    event (data/grid_penalties.csv) — "" when none."""
+    try:
+        mtime = _GRID_PATH.stat().st_mtime if _GRID_PATH.exists() else None
+    except OSError:
+        mtime = None
+    if mtime != _GRID_CACHE["mtime"]:
+        try:
+            _GRID_CACHE["df"] = pd.read_csv(_GRID_PATH) if mtime else pd.DataFrame()
+        except Exception:
+            _GRID_CACHE["df"] = pd.DataFrame()
+        _GRID_CACHE["mtime"] = mtime
+    g = _GRID_CACHE["df"]
+    if g.empty or driver is None:
+        return ""
+    hit = g[(g["driver"].astype(str) == str(driver))
+            & g["reason"].astype(str).str.contains("collision", case=False)
+            & g["stewards_doc"].astype(str).str.contains(
+                f"({season} {event})", regex=False)]
+    if hit.empty:
+        return ""
+    h = hit.iloc[0]
+    return f"{int(h['places'])}-place grid penalty at the {h['event']}"
+
+
+# Power-unit failures, read from the curated detail. Families stay coarse on
+# purpose (see FAMILIES), so "was it the PU?" is answered from the wording:
+# the PU's own elements (ICE, turbo, MGU-K, energy store / battery, control
+# electronics) plus the generic "engine" / "power unit". Deliberately NOT
+# matched: fuel system, cooling/water, hydraulics, clutch/anti-stall, a bare
+# "electrical problem" — all real failures, none of them attributable to the
+# power unit from the text alone.
+_PU_WORDS = ("power unit", "power-unit", "engine", "battery", "energy store",
+             "ers ", "ers issue", "mgu", "turbo", " ice ")
+
+
+def is_pu_failure(cause: dict) -> bool:
+    """True when a resolved cause names the power unit."""
+    if cause.get("cause_family") != CAR:
+        return False
+    text = f" {cause.get('cause_detail', '')} ".lower()
+    return any(w in text for w in _PU_WORDS)

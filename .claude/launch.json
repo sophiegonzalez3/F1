@@ -3,14 +3,14 @@
   "configurations": [
     {
       "name": "f1-dashboard",
-      "runtimeExecutable": "C:/Users/sophi/F1/.venv/Scripts/python.exe",
+      "runtimeExecutable": "C:/Users/sophi/DEV/F1/.venv/Scripts/python.exe",
       "runtimeArgs": ["app.py"],
       "port": 8050,
       "autoPort": true
     },
     {
       "name": "f1-dashboard-dev",
-      "runtimeExecutable": "C:/Users/sophi/F1/.venv/Scripts/python.exe",
+      "runtimeExecutable": "C:/Users/sophi/DEV/F1/.venv/Scripts/python.exe",
       "runtimeArgs": ["app.py"],
       "port": 8061,
       "env": { "PORT": "8061" }

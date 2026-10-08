@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R9 · British Grand Prix · dossier built 2026-08-08
+2026 R9 · British Grand Prix · dossier built 2026-10-06
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 
@@ -26,6 +26,9 @@ On an `onelap` row the admissible causes are only those inside the qualifying ho
 Practice_1   air 22.0C  track 40.7C (range 38-43)  all on slicks
 Practice_2   —
 Practice_3   —
+Sprint_Qualifying air 25.1C  track 40.9C (range 39-44)  all on slicks
+Sprint_Shootout —
+Sprint       air 22.6C  track 37.4C (range 32-41)  all on slicks
 Qualifying   air 25.2C  track 41.1C (range 38-44)  all on slicks
 Race         air 24.8C  track 40.0C (range 38-44)  all on slicks
 ```
@@ -62,7 +65,7 @@ Race-control, session-wide:
 
 predicted +3.827 → actual +3.106 · **miss -0.721%** (1.4 sd) · FASTER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 5 clean quali-sim laps (field median 3) · sessions run: Practice_1 26, Sprint 16, Sprint Qualifying 5
 - **SCREEN** · ATTEMPTS  3 flying laps against a field median of 5
 - **SCREEN** · FEW ATTEMPTS  the actual is a MINIMUM over those laps, worth 0.170% each — 3 vs 5 predicts a +0.34% penalty, moving the miss -0.721% → -1.061% — it does NOT shrink the miss, so the attempt deficit is not the cause here.
@@ -75,7 +78,7 @@ predicted +3.827 → actual +3.106 · **miss -0.721%** (1.4 sd) · FASTER than p
 
 predicted -1.376 → actual -1.830 · **miss -0.454%** (1.5 sd) · FASTER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 4 clean quali-sim laps (field median 3) · sessions run: Practice_1 29, Sprint 17, Sprint Qualifying 15
 - **SCREEN** · ATTEMPTS  7 flying laps against a field median of 5
 - **SCREEN** · BEST LAP from Q3 (88.111s)  [Q1 89.719  Q2 88.493  Q3 88.111]
@@ -122,7 +125,7 @@ predicted +0.118 → actual +0.535 · **miss +0.418%** (1.2 sd) · SLOWER than p
 
 predicted +0.224 → actual +1.383 · **miss +1.160%** (3.3 sd) · SLOWER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 2 clean quali-sim laps (field median 3) · sessions run: Practice_1 28, Sprint 17, Sprint Qualifying 9
 - **SCREEN** · ATTEMPTS  1 flying laps against a field median of 5
 - **SCREEN** · FEW ATTEMPTS  the actual is a MINIMUM over those laps, worth 0.170% each — 1 vs 5 predicts a +0.68% penalty, moving the miss +1.160% → +0.480%. Consider `measurement_artifact` before blaming the model.
@@ -146,7 +149,7 @@ predicted +2.235 → actual +1.692 · **miss -0.544%** (1.2 sd) · FASTER than p
 - **What the filter did**: kept 56% of his laps (field 52%). Model measured +1.760%; over EVERY racing lap he is +2.179%. Scoring him on all laps would move the miss -0.544% → **-0.125%** (shrinks by 77%).
 - **SCREEN** · FILTER ARTIFACT  using every racing lap cuts the miss to -0.125%. The measured pace describes a slice of his race, not his race — consider `measurement_artifact` before any other cause.
 - *(13 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
-- **Pit stops** (2): lap 29 (5.1s stationary); lap 46  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 29 (5.1s stationary); lap 46
 
   > category: ______   note: ______
 
@@ -160,7 +163,7 @@ predicted +1.790 → actual +1.306 · **miss -0.485%** (1.1 sd) · FASTER than p
 - **Dropped before the median**: 11 dirty-air, 17 perturbed, 5 invalid
 - **What the filter did**: kept 52% of his laps (field 52%). Model measured +1.374%; over EVERY racing lap he is +1.482%. Scoring him on all laps would move the miss -0.485% → **-0.377%** (shrinks by 22%).
 - *(13 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
-- **Pit stops** (2): lap 21 (2.9s stationary); lap 46  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 21 (2.9s stationary); lap 46
 
   > category: ______   note: ______
 
@@ -184,7 +187,7 @@ predicted -2.039 → actual -1.707 · **miss +0.332%** (1.0 sd) · SLOWER than p
     - `2026-07-05 15:16:26  FIA STEWARDS: INCIDENT INVOLVING CAR 12 (ANT) UNDER INVESTIGATION - TRACK LIMITS`
     - `2026-07-05 15:16:58  FIA STEWARDS: 5 SECOND TIME PENALTY FOR CAR 12 (ANT) - TRACK LIMITS`
 - **Incident** lap 46: off-track — TRACK LIMITS → penalty: 5 second time penalty
-- **Pit stops** (3): lap 35 (2.4s stationary); lap 41; lap 43  ·  *2 not in pitstops.parquet*
+- **Pit stops** (3): lap 35 (2.4s stationary); lap 41; lap 43
 - **Radio** 15:08:59: "Something's broken in the car."
 - **Radio** 15:10:31: "No Bono, the suspension is broken. Okay, copy, copy."
 - **Radio** 15:11:01: "We think it is just the wheel shield left hand side."
@@ -211,7 +214,7 @@ predicted -1.999 → actual -1.639 · **miss +0.359%** (1.2 sd) · SLOWER than p
     - `2026-07-05 14:59:46  TURN 15 INCIDENT INVOLVING CARS 63 (RUS) AND 3 (VER) NOTED (15:57:46)`
     - `2026-07-05 15:07:07  FIA STEWARDS: TURN 15 INCIDENT INVOLVING CARS 63 (RUS) AND 3 (VER) REVIEWED NO FURTHER INVESTIGATION (15:57:46)`
 - **Incident** lap 36: contact — INCIDENT (reason unstated) vs VER → no action
-- **Pit stops** (2): lap 23 (3.0s stationary); lap 34  ·  *1 not in pitstops.parquet*
+- **Pit stops** (2): lap 23 (3.0s stationary); lap 34
 - **Radio** 14:56:18: "Slow puncture right rear, move me or you do."
 - **Radio** 14:59:22: "oh my god"
 - **Radio** 15:33:22: "Yeah George, I think straight line was okay in the race."
@@ -221,3 +224,5 @@ predicted -1.999 → actual -1.639 · **miss +0.359%** (1.2 sd) · SLOWER than p
 ---
 
 **Press check** — only for what the archive cannot hold (visible damage, a team saying what it changed, a mechanical problem never announced on the timing feed). Rules: the article must be published AFTER the session it describes and BEFORE it could be coloured by later rounds; quote the claim, record the URL and its publication date in `source`; a team principal's explanation is a claim, not a measurement — mark it as such.
+
+**Whether you searched or not, put today's date in `press_checked` for every row you looked at — including the ones where you found nothing.** A blank `source` otherwise means both 'searched, nothing there' and 'never opened', and the next reader cannot tell them apart. Scope it to the drivers a search actually named, not to the whole event.

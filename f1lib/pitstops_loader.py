@@ -60,7 +60,17 @@ def _parquet_path(season, meeting) -> Path:
 
 
 def pitstops_cached(season, meeting) -> bool:
-    return _parquet_path(season, meeting).exists()
+    """True when a COMPLETE pit-stop file is cached. A file holding clearly
+    fewer stops than the race laps record counts as not cached, so the
+    post-race chain keeps retrying it instead of serving it forever."""
+    pq = _parquet_path(season, meeting)
+    if not pq.exists():
+        return False
+    try:
+        n = len(pd.read_parquet(pq, columns=["StopNo"]))
+    except Exception:
+        return False
+    return not _is_partial(n, _expected_stops(season, meeting))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -303,39 +313,46 @@ def load_pitstops(season, meeting, force: bool = False) -> pd.DataFrame:
     Empty DataFrame when neither source has data (race not run yet, or
     the meeting name resolves nowhere).
 
-    A result that covers clearly fewer stops than the cached race laps
-    record is returned but NOT cached (``df.attrs["partial"]`` is True), so
-    the next run fetches again instead of serving a truncated feed forever.
+    A result covering clearly fewer stops than the cached race laps record
+    is flagged ``df.attrs["partial"]``; a cached file in that state is
+    re-fetched on every call (see `pitstops_cached`), and the fuller of the
+    old and new results is what stays on disk.
     """
     pq = _parquet_path(season, meeting)
-    if pq.exists() and not force:
-        df = pd.read_parquet(pq)
-        logger.info("[pitstops cache HIT] %s %s (%d stops)", season, meeting, len(df))
-        return df
+    expected = _expected_stops(season, meeting)
+    cached = None
+    if pq.exists():
+        try:
+            cached = pd.read_parquet(pq)
+        except Exception:
+            cached = None
+    if cached is not None and not force and not _is_partial(len(cached), expected):
+        logger.info("[pitstops cache HIT] %s %s (%d stops)", season, meeting, len(cached))
+        return cached
 
     lt = _fetch_livetiming_stops(season, meeting)
     jd = _fetch_jolpica_stops(season, meeting)
     df = _merge_sources(lt, jd)
     if df.empty:
         logger.info("[pitstops] no data for %s %s", season, meeting)
-        return df
+        return cached if cached is not None else df
     rnd = _season_round(season, meeting)
     if rnd is not None:
         df["round"] = rnd
 
-    expected = _expected_stops(season, meeting)
+    if cached is not None and len(cached) > len(df):
+        df = cached                      # never replace a fuller file
+    else:
+        pq.parent.mkdir(parents=True, exist_ok=True)
+        df.to_parquet(pq, index=False)
+        logger.info("[pitstops] saved %s %s (%d stops, source=%s)",
+                    season, meeting, len(df), df["source"].iloc[0])
     df.attrs["expected"] = expected
     if _is_partial(len(df), expected):
         df.attrs["partial"] = True
         logger.warning("[pitstops] %s %s: only %d stops vs %d pit-ins in the "
-                       "race laps - NOT cached, re-run later", season, meeting,
+                       "race laps - will retry next run", season, meeting,
                        len(df), expected)
-        return df
-
-    pq.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(pq, index=False)
-    logger.info("[pitstops] saved %s %s (%d stops, source=%s)",
-                season, meeting, len(df), df["source"].iloc[0])
     return df
 
 

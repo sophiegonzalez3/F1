@@ -140,8 +140,9 @@ def pu_df(season: int) -> pd.DataFrame:
     return df[df["season"] == season].copy() if not df.empty else df
 
 
-def _pu_heatmap_fig(season: int) -> go.Figure:
-    d = pu_df(season)
+def _pu_heatmap_fig(season: int, drivers=None) -> go.Figure:
+    from tabs.pace_data import filter_drivers
+    d = filter_drivers(pu_df(season), drivers)
     fig = go.Figure()
     if d.empty:
         fig.update_layout(paper_bgcolor=CARD_BG, plot_bgcolor=CARD_BG,
@@ -196,7 +197,7 @@ def _pu_heatmap_fig(season: int) -> go.Figure:
     return fig
 
 
-def pu_pool_card(season: int):
+def pu_pool_card(season: int, drivers=None):
     """PU component-pool tracker for SEASON FORM, or None if no data for the
     season (only maintained for the 2026+ new-PU era)."""
     d = pu_df(season)
@@ -220,7 +221,7 @@ def pu_pool_card(season: int):
     return card(
         [*gloss("power unit", "Power-Unit"), " Pool & Penalty Risk"],
         html.Div([
-            dcc.Graph(figure=_pu_heatmap_fig(season), config=GFX),
+            dcc.Graph(figure=_pu_heatmap_fig(season, drivers), config=GFX),
             _pu_legend(),
             html.P(
                 ["Curated from ", html.Code("data/pu_penalties.csv"),

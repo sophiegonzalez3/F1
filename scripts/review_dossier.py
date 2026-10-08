@@ -281,6 +281,59 @@ def race_control_for(rcm: pd.DataFrame, driver: str, car_no) -> tuple[list[str],
 # per-driver screens
 # ─────────────────────────────────────────────────────────────
 
+def wet_lap_screen(drv: str, clean: pd.DataFrame, y: str,
+                   miss: float) -> str | None:
+    """Price the wet-tyre laps inside a driver's clean-lap median.
+
+    The model predicts DRY race pace (practice reads use dry compounds only,
+    wet sessions are skipped), but the actual is deliberately scored on every
+    clean lap - wet ones included - rather than re-cut to flatter the model.
+    So when a wet phase lands in the sample the miss is a WEATHER miss, and
+    this says how much of it: the same gap recomputed on dry laps only,
+    against a dry-only field. Bahrain 2026 (Sepang) is the case that asked
+    for it: 2 intermediate laps in BOR's 11-lap median were the whole +1.05%.
+    """
+    comp = clean["Compound"].astype(str).str.upper()
+    wet = comp.isin(["INTERMEDIATE", "WET"])
+    g = clean[clean["Driver_Short"] == drv]
+    n_wet = int(wet[g.index].sum())
+    # Fires for EVERY driver once the field has wet laps, not only those who
+    # ran them: the gap is measured against the field median, so wet laps in
+    # OTHER cars' samples move this driver's number too. At Bahrain 2026 that
+    # reference shift was ~0.1% for the whole grid and alone took VER (zero
+    # wet laps) from outside his band to inside it.
+    if int(wet.sum()) == 0:
+        return None
+    dry = clean[~wet]
+    med_all = clean.groupby("Driver_Short")[y].median().median()
+    med_dry = dry.groupby("Driver_Short")[y].median().median()
+    gd = dry[dry["Driver_Short"] == drv]
+    if gd.empty or not (med_all and med_dry):
+        return (f"WET LAPS  {n_wet} of his {len(g)} clean laps were on wet "
+                f"tyres and none were dry - the actual is a wet-race number "
+                f"against a dry prediction; consider `weather`.")
+    gap_all = 100 * (g[y].median() / med_all - 1)
+    gap_dry = 100 * (gd[y].median() / med_dry - 1)
+    corrected = miss + (gap_dry - gap_all)
+    red = (abs(miss) - abs(corrected)) / abs(miss) if miss else 0.0
+    verdict = (" Consider `weather`: the actual is scored on every lap BY "
+               "DESIGN, so wet laps are a weather miss, not a measurement "
+               "fault." if red >= 0.4 else
+               " Recorded; not enough to be the verdict." if red > 0.05 else
+               " It does NOT shrink the miss, so the wet laps are not the "
+               "cause.")
+    who = (f"{n_wet} of his {len(g)} clean laps were on INTERMEDIATE/WET "
+           f"tyres" if n_wet else
+           f"none of his {len(g)} clean laps were wet, but the FIELD "
+           f"reference he is measured against contains wet laps")
+    return (f"WET LAPS  {who} (the field: {int(wet.sum())} of "
+            f"{len(clean)}). Dry laps only, against a dry-only field, he is "
+            f"{gap_dry:+.3f}% instead of {gap_all:+.3f}% - the miss would move "
+            f"{miss:+.3f}% → {corrected:+.3f}% "
+            f"({'shrinks' if red > 0 else 'GROWS'} by {abs(100 * red):.0f}%)."
+            + verdict)
+
+
 def longrun_screens(drv: str, clean: pd.DataFrame, y: str, n_race_laps: float,
                     offs: pd.Series, field_med: float) -> list[str]:
     out = []
@@ -426,7 +479,21 @@ def onelap_screens(drv: str, qres: pd.DataFrame, qlaps: pd.DataFrame,
         if best_seg != max(seg, key=lambda k: int(k[1])):
             out.append(f"WENT SLOWER  its later segment was worse than "
                        f"{best_seg} — the counted lap is not its last attempt")
-        knocked = {"Q1": 1, "Q2": 2, "Q3": 3}[max(seg, key=lambda k: int(k[1]))]
+        last_timed = {"Q1": 1, "Q2": 2, "Q3": 3}[max(seg, key=lambda k: int(k[1]))]
+        # Where the car was knocked out comes from its classified POSITION, not
+        # from its last timed segment: a car can reach Q2 and set no time
+        # there (LIN Sepang 2026 spent Q2 towing his team mate, already
+        # carrying a 30-place grid penalty). The cut lines scale with the
+        # entry: 20 cars -> Q1 drops P16-20; 22 cars -> P17-22. Top 10 = Q3.
+        pos = pd.to_numeric(row.get("Position"), errors="coerce")
+        n = int(qres["Abbreviation"].nunique())
+        knocked = (last_timed if pd.isna(pos) else
+                   3 if pos <= 10 else 2 if pos <= 10 + (n - 10) // 2 else 1)
+        if knocked > last_timed:
+            out.append(f"NO TIME IN Q{knocked}  reached Q{knocked} (P{int(pos)}) "
+                       f"but set no lap there — the counted lap is a Q{last_timed} "
+                       f"lap, so it under-states what the car could do. Ask why "
+                       f"(a sacrificed run, a tow, a grid penalty, a problem)")
         if knocked < 3:
             out.append(f"ELIMINATED in Q{knocked} — the counted lap was set on "
                        f"a greener track than the Q3 runners'; quali_norm "
@@ -732,6 +799,9 @@ def build(season: int, event: str) -> str:
                           f"moves the miss. Fragile, not wrong.")
                 for s in longrun_screens(drv, clean, y, n_race_laps, offs, field_med):
                     a(f"- **SCREEN** · {s}")
+                w = wet_lap_screen(drv, clean, y, miss)
+                if w:
+                    a(f"- **SCREEN** · {w}")
 
             if kind == "onelap":
                 for s in onelap_screens(drv, qres, qlaps, qrcm, miss):
@@ -780,7 +850,8 @@ def build(season: int, event: str) -> str:
                         stat = {int(x["LapNo"]): x["StationaryTime_s"]
                                 for _, x in ps.iterrows()}
                     bits = [f"lap {l}"
-                            + (f" ({stat[l]:.1f}s stationary)" if l in stat else "")
+                            + (f" ({stat[l]:.1f}s stationary)"
+                               if l in stat and pd.notna(stat[l]) else "")
                             for l in lap_in]
                     a(f"- **Pit stops** ({len(lap_in)}): " + "; ".join(bits)
                       + (f"  ·  *{len(lap_in) - len(stat)} not in "

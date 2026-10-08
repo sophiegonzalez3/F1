@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R6 · Monaco Grand Prix · dossier built 2026-08-08
+2026 R6 · Monaco Grand Prix · dossier built 2026-10-06
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 
@@ -26,6 +26,9 @@ On an `onelap` row the admissible causes are only those inside the qualifying ho
 Practice_1   air 23.8C  track 32.5C (range 29-40)  all on slicks  rain on 4% of samples
 Practice_2   air 23.2C  track 30.3C (range 28-32)  all on slicks  rain on 9% of samples
 Practice_3   air 23.0C  track 29.9C (range 28-33)  all on slicks  rain flag: isolated sample
+Sprint_Qualifying —
+Sprint_Shootout —
+Sprint       —
 Qualifying   air 23.7C  track 38.5C (range 32-47)  all on slicks
 Race         air 23.7C  track 38.0C (range 28-46)  all on slicks
 ```
@@ -72,7 +75,7 @@ Race-control, session-wide:
 
 predicted +2.076 → actual +0.768 · **miss -1.308%** (2.3 sd) · FASTER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 2 clean quali-sim laps (field median 2) · sessions run: Practice_1 28, Practice_2 31, Practice_3 19
 - **SCREEN** · ATTEMPTS  6 flying laps against a field median of 14
 - **SCREEN** · FEW ATTEMPTS  the actual is a MINIMUM over those laps, worth 0.170% each — 6 vs 14 predicts a +1.36% penalty, moving the miss -1.308% → -2.668% — it does NOT shrink the miss, so the attempt deficit is not the cause here.
@@ -89,7 +92,7 @@ predicted +2.076 → actual +0.768 · **miss -1.308%** (2.3 sd) · FASTER than p
 
 predicted -0.875 → actual -1.291 · **miss -0.416%** (1.4 sd) · FASTER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 2 clean quali-sim laps (field median 2) · sessions run: Practice_1 28, Practice_2 36, Practice_3 30
 - **SCREEN** · ATTEMPTS  16 flying laps against a field median of 14
 - **SCREEN** · BEST LAP from Q3 (72.279s)  [Q1 73.777  Q2 72.934  Q3 72.279]
@@ -104,7 +107,7 @@ predicted -0.875 → actual -1.291 · **miss -0.416%** (1.4 sd) · FASTER than p
 
 predicted -1.492 → actual -1.065 · **miss +0.427%** (1.0 sd) · SLOWER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 0 clean quali-sim laps (field median 2) · sessions run: Practice_1 29, Practice_2 35, Practice_3 23
 - **SCREEN** · THIN READ  the model had 0 laps of this type against a field median of 2 — it was extrapolating for this car, so a large miss here is weak evidence about the model itself
 - **SCREEN** · ATTEMPTS  18 flying laps against a field median of 14
@@ -129,13 +132,14 @@ predicted -1.492 → actual -1.065 · **miss +0.427%** (1.0 sd) · SLOWER than p
 
 predicted -0.128 → actual +0.681 · **miss +0.809%** (1.7 sd) · SLOWER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 1 clean quali-sim laps (field median 2) · sessions run: Practice_1 31, Practice_2 35, Practice_3 27
 - **SCREEN** · THIN READ  the model had 1 laps of this type against a field median of 2 — it was extrapolating for this car, so a large miss here is weak evidence about the model itself
 - **SCREEN** · ATTEMPTS  6 flying laps against a field median of 14
 - **SCREEN** · FEW ATTEMPTS  the actual is a MINIMUM over those laps, worth 0.170% each — 6 vs 14 predicts a +1.36% penalty, moving the miss +0.809% → -0.551%, cutting it by 32% — worth recording, not enough to be the verdict.
 - **SCREEN** · BEST LAP from Q1 (74.683s)  [Q1 74.683]
-- **SCREEN** · ELIMINATED in Q1 — the counted lap was set on a greener track than the Q3 runners'; quali_norm corrects for this, so treat a residual as real
+- **SCREEN** · NO TIME IN Q2  reached Q2 (P16) but set no lap there — the counted lap is a Q1 lap, so it under-states what the car could do. Ask why (a sacrificed run, a tow, a grid penalty, a problem)
+- **SCREEN** · ELIMINATED in Q2 — the counted lap was set on a greener track than the Q3 runners'; quali_norm corrects for this, so treat a residual as real
 - **SCREEN** · deleted lap 95.069s, slower than its counted 74.683s — no effect on the number
 - **Race control** (qualifying):
     - `2026-06-06 14:14:59  CAR 5 (BOR) TIME 1:35.069 DELETED - TRACK LIMITS AT TURN 10 LAP 10 16:13:47`
@@ -146,7 +150,7 @@ predicted -0.128 → actual +0.681 · **miss +0.809%** (1.7 sd) · SLOWER than p
 
 predicted -0.157 → actual +0.684 · **miss +0.841%** (1.8 sd) · SLOWER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 2 clean quali-sim laps (field median 2) · sessions run: Practice_1 34, Practice_2 37, Practice_3 24
 - **SCREEN** · ATTEMPTS  14 flying laps against a field median of 14
 - **SCREEN** · BEST LAP from Q2 (74.248s)  [Q1 74.685  Q2 74.248]
@@ -165,7 +169,7 @@ predicted -0.157 → actual +0.684 · **miss +0.841%** (1.8 sd) · SLOWER than p
 
 predicted +0.174 → actual -0.934 · **miss -1.107%** (2.3 sd) · FASTER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 51 clean long-run laps (field median 49) · sessions run: Practice_1 27, Practice_2 34, Practice_3 22
 - **What made the actual**: 12 clean laps of 78 run (laps 10–32 of 78) · HARD 10, MEDIUM 2
 - **Dropped before the median**: 60 dirty-air, 17 perturbed, 14 invalid
@@ -182,7 +186,7 @@ predicted +0.174 → actual -0.934 · **miss -1.107%** (2.3 sd) · FASTER than p
 - *(7 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
 - **Incident** lap 78: contact — CAUSING A COLLISION → penalty: 10 second time penalty
 - **Incident** lap 78: contact — CAUSING A COLLISION vs SAI → investigated
-- **Pit stops** (6): lap 12 (2.6s stationary); lap 58; lap 59; lap 65; lap 67; lap 68  ·  *5 not in pitstops.parquet*
+- **Pit stops** (6): lap 12 (2.6s stationary); lap 58; lap 59; lap 65; lap 67; lap 68
 
   > category: ______   note: ______
 
@@ -190,7 +194,7 @@ predicted +0.174 → actual -0.934 · **miss -1.107%** (2.3 sd) · FASTER than p
 
 predicted +0.389 → actual -0.222 · **miss -0.611%** (1.3 sd) · FASTER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: NO actual for this kind — too few clean laps to measure (retirement or early exit). Scope is UNKNOWN, not driver-specific: check the other car's raw pace by hand before concluding anything about this driver.
 - **Practice evidence the model read**: 55 clean long-run laps (field median 49) · sessions run: Practice_1 31, Practice_2 35, Practice_3 24
 - **What made the actual**: 26 clean laps of 78 run (laps 11–78 of 78) · HARD 23, SOFT 3
 - **Dropped before the median**: 46 dirty-air, 18 perturbed, 12 invalid
@@ -198,7 +202,7 @@ predicted +0.389 → actual -0.222 · **miss -0.611%** (1.3 sd) · FASTER than p
 - **SCREEN** · FILTER ARTIFACT  using every racing lap cuts the miss to +0.290%. The measured pace describes a slice of his race, not his race — consider `measurement_artifact` before any other cause.
 - **SCREEN** · PACE STEP  +2.54% at lap 55 (slower afterwards; bigger than 94% of shuffled orderings) — check this lap against race control before calling it damage; an unexplained step is not yet a cause
 - *(13 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
-- **Pit stops** (5): lap 9 (3.4s stationary); lap 59; lap 65; lap 67; lap 68  ·  *4 not in pitstops.parquet*
+- **Pit stops** (5): lap 9 (3.4s stationary); lap 59; lap 65; lap 67; lap 68
 - **Radio** 15:35:57: "Nice job, we definitely deserve this one. Yeah good job guys, good job. Hats off to the strategies today. Yeah that was quite impressive, thank you. Shout out to Hazard and Edge. Yes. Okay, we're P9 actually, because Nic"
 
   > category: ______   note: ______
@@ -224,7 +228,7 @@ predicted -1.167 → actual -1.716 · **miss -0.549%** (1.3 sd) · FASTER than p
     - `2026-06-07 15:13:47  FIA STEWARDS: INCIDENT INVOLVING CAR 44 (HAM) NO FURTHER ACTION - SAFETY CAR INFRINGEMENT (16:34:03)`
 - **Incident** lap 33: procedural — SPEEDING IN THE PIT LANE → penalty: 5 second time penalty
 - **Incident** lap 68: procedural — SAFETY CAR INFRINGEMENT → no action
-- **Pit stops** (5): lap 28 (2.1s stationary); lap 60; lap 61; lap 66; lap 68  ·  *4 not in pitstops.parquet*
+- **Pit stops** (5): lap 28 (2.1s stationary); lap 60; lap 61; lap 66; lap 68
 - **Radio** 13:13:52: "Where is the faster? It's five pair and three three and then three four."
 - **Radio** 15:22:20: "And delay turn-in, five and six."
 - **Radio** 15:28:56: "And well done, Lewis. Great job, guys. Sorry I couldn't pull the win. Sorry I couldn't get the win in the end. They just had the upper hand on us this weekend. But mega result. Really grateful for all the hard work and l"
@@ -246,7 +250,7 @@ predicted -1.344 → actual -1.778 · **miss -0.433%** (1.0 sd) · FASTER than p
 - **SCREEN** · COMPOUND SKEW  ran MEDIUM 60%, HARD 40% vs field MEDIUM 52%, HARD 27%, SOFT 21% — worth +0.18% of a lap at this race's measured offsets
 - **Race control** (race):
     - `2026-06-07 13:33:23  CAR 16 (LEC) TIME 1:17.884 DELETED - TRACK LIMITS AT TURN 10 LAP 23 15:32:30`
-- **Pit stops** (3): lap 35; lap 60; lap 61  ·  *3 not in pitstops.parquet*
+- **Pit stops** (3): lap 35; lap 60; lap 61
 - **Radio** 14:32:36: "currency, I'm not going to take the f***ing plane, he's f***ing great"
 
   > category: ______   note: ______
@@ -255,7 +259,7 @@ predicted -1.344 → actual -1.778 · **miss -0.433%** (1.0 sd) · FASTER than p
 
 predicted +0.093 → actual +0.589 · **miss +0.496%** (1.0 sd) · SLOWER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 49 clean long-run laps (field median 49) · sessions run: Practice_1 32, Practice_2 31, Practice_3 21
 - **What made the actual**: 22 clean laps of 78 run (laps 12–74 of 78) · MEDIUM 14, HARD 6, SOFT 2
 - **Dropped before the median**: 43 dirty-air, 18 perturbed, 14 invalid
@@ -274,7 +278,7 @@ predicted +0.093 → actual +0.589 · **miss +0.496%** (1.0 sd) · SLOWER than p
 - *(10 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
 - **Incident** lap 41: procedural — SPEEDING IN THE PIT LANE → penalty: 5 second time penalty
 - **Incident** lap 74: contact — CAUSING A COLLISION vs SAI → no action
-- **Pit stops** (5): lap 35 (3.6s stationary); lap 59; lap 65; lap 67; lap 68  ·  *4 not in pitstops.parquet*
+- **Pit stops** (5): lap 35 (3.6s stationary); lap 59; lap 65; lap 67; lap 68
 
   > category: ______   note: ______
 
@@ -282,7 +286,7 @@ predicted +0.093 → actual +0.589 · **miss +0.496%** (1.0 sd) · SLOWER than p
 
 predicted +0.470 → actual +1.009 · **miss +0.540%** (1.2 sd) · SLOWER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 44 clean long-run laps (field median 49) · sessions run: Practice_1 34, Practice_2 37, Practice_3 24
 - **What made the actual**: 19 clean laps of 78 run (laps 18–78 of 78) · MEDIUM 14, SOFT 5
 - **Dropped before the median**: 46 dirty-air, 16 perturbed, 12 invalid
@@ -293,7 +297,7 @@ predicted +0.470 → actual +1.009 · **miss +0.540%** (1.2 sd) · SLOWER than p
     - `2026-06-07 13:48:43  CAR 41 (LIN) TIME 1:20.074 DELETED - TRACK LIMITS AT TURN 10 LAP 33 15:46:33`
     - `2026-06-07 15:23:57  CAR 41 (LIN) TIME 1:18.393 DELETED - TRACK LIMITS AT TURN 10 LAP 73 17:20:22`
 - *(7 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
-- **Pit stops** (4): lap 59; lap 65; lap 67; lap 68 (11.8s stationary)  ·  *3 not in pitstops.parquet*
+- **Pit stops** (4): lap 59; lap 65; lap 67; lap 68 (11.8s stationary)
 - **Radio** 15:33:31: "Well, congratulations everyone. Unbelievable result. Amazing work. Yeah, thank you to everyone. Thank you to everyone on the track and fans for thinking as well. Amazing results on the team. Congratulations. Well done ma"
 
   > category: ______   note: ______
@@ -302,7 +306,7 @@ predicted +0.470 → actual +1.009 · **miss +0.540%** (1.2 sd) · SLOWER than p
 
 predicted -1.126 → actual -0.393 · **miss +0.733%** (1.4 sd) · SLOWER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: NO actual for this kind — too few clean laps to measure (retirement or early exit). Scope is UNKNOWN, not driver-specific: check the other car's raw pace by hand before concluding anything about this driver.
 - **Practice evidence the model read**: 36 clean long-run laps (field median 49) · sessions run: Practice_1 14, Practice_2 24, Practice_3 25
 - **What made the actual**: 57 clean laps of 78 run (laps 3–78 of 78) · MEDIUM 26, HARD 25, SOFT 6
 - **Dropped before the median**: 8 dirty-air, 17 perturbed, 11 invalid
@@ -320,7 +324,7 @@ predicted -1.126 → actual -0.393 · **miss +0.733%** (1.4 sd) · SLOWER than p
 - **Incident** lap 68: procedural — SAFETY CAR INFRINGEMENT → no action
 - **Incident** lap 68: procedural — SAFETY CAR INFRINGEMENT → investigated
 - **Incident** lap 73: procedural — RED FLAG INFRINGEMENT → investigated after race
-- **Pit stops** (4): lap 32 (3.1s stationary); lap 60; lap 66; lap 68  ·  *3 not in pitstops.parquet*
+- **Pit stops** (4): lap 32 (3.1s stationary); lap 60; lap 66; lap 68
 - **Radio** 13:23:02: "Lap up, please, winging."
 - **Radio** 13:29:08: "Board six, board six, we're looking into it mate, I'm looking into it, also the power is gone, the power."
 - **Radio** 13:37:44: "Yeah, no power, alternate, alternate. Yeah, copy that mate, we can see the issue, we're trying to work on the fix, you're doing a great job. Engine 3, position 11. Engine 3, position 11."
@@ -333,7 +337,7 @@ predicted -1.126 → actual -0.393 · **miss +0.733%** (1.4 sd) · SLOWER than p
 
 predicted +0.706 → actual +1.479 · **miss +0.773%** (1.5 sd) · SLOWER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
 - **Practice evidence the model read**: 62 clean long-run laps (field median 49) · sessions run: Practice_1 33, Practice_2 39, Practice_3 24
 - **What made the actual**: 31 clean laps of 78 run (laps 22–78 of 78) · MEDIUM 19, SOFT 12
 - **Dropped before the median**: 35 dirty-air, 20 perturbed, 13 invalid
@@ -346,7 +350,7 @@ predicted +0.706 → actual +1.479 · **miss +0.773%** (1.5 sd) · SLOWER than p
     - `2026-06-07 14:16:19  FIA STEWARDS: TURN 10 INCIDENT INVOLVING CAR 23 (ALB) REVIEWED NO FURTHER INVESTIGATION - LEAVING THE TRACK AND GAINING AN ADVANTAGE (16:04:12)`
 - *(6 routine blue-flag / flag-order messages suppressed — those describe laps the median already discarded)*
 - **Incident** lap 50: off-track — LEAVING THE TRACK AND GAINING AN ADVANTAGE → no action
-- **Pit stops** (5): lap 43 (3.2s stationary); lap 59; lap 65; lap 67; lap 68  ·  *4 not in pitstops.parquet*
+- **Pit stops** (5): lap 43 (3.2s stationary); lap 59; lap 65; lap 67; lap 68
 - **Radio** 14:03:09: "Is there a reason for this? Because it might be a concern, what are you trying to do? I mean, I'm happy to do it, but I just, I was just risking something for nothing."
 - **Radio** 15:35:57: "Alex, it was a tough afternoon to walk away with, P8 is a good result, well done to you. I know it's tough out there with all the battery issues and the car, I'll look into that, but well done. P8, really good points for"
 
@@ -356,7 +360,7 @@ predicted +0.706 → actual +1.479 · **miss +0.773%** (1.5 sd) · SLOWER than p
 
 predicted -1.115 → actual +0.037 · **miss +1.152%** (2.4 sd) · SLOWER than predicted
 
-- **Teammate**: not flagged — the other car landed inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: NO actual for this kind — too few clean laps to measure (retirement or early exit). Scope is UNKNOWN, not driver-specific: check the other car's raw pace by hand before concluding anything about this driver.
 - **Practice evidence the model read**: 45 clean long-run laps (field median 49) · sessions run: Practice_1 29, Practice_2 31, Practice_3 20
 - **What made the actual**: 53 clean laps of 78 run (laps 3–58 of 78) · MEDIUM 45, HARD 8
 - **Dropped before the median**: 12 dirty-air, 19 perturbed, 11 invalid
@@ -371,7 +375,7 @@ predicted -1.115 → actual +0.037 · **miss +1.152%** (2.4 sd) · SLOWER than p
     - `2026-06-07 14:13:51  FIA STEWARDS: 5 SECOND TIME PENALTY FOR CAR 81 (PIA) - SPEEDING IN THE PIT LANE (16:06:07)`
     - `2026-06-07 14:26:44  FIA STEWARDS: PENALTY SERVED - 5 SECOND TIME PENALTY FOR CAR 81 (PIA) - SPEEDING IN THE PIT LANE (16:06:07)`
 - **Incident** lap 55: procedural — SPEEDING IN THE PIT LANE → penalty: 5 second time penalty
-- **Pit stops** (5): lap 48; lap 59; lap 60; lap 66; lap 68 (67.2s stationary)  ·  *4 not in pitstops.parquet*
+- **Pit stops** (5): lap 48; lap 59; lap 60; lap 66; lap 68 (67.2s stationary)
 - **Radio** 15:10:39: "Oscar, the FIA have said unlikely to do the standing restart, could be some laps behind the safety car. They've said they'll take a dim view of people leaving more than ten car lengths."
 - **Radio** 15:35:35: "good afternoon mate that was good good progress from a P7 start yeah yeah well done yeah definitely did make up those three spots on pace but uh we stuck in a little minute too and well done yeah i heard what you said we"
 
@@ -380,3 +384,5 @@ predicted -1.115 → actual +0.037 · **miss +1.152%** (2.4 sd) · SLOWER than p
 ---
 
 **Press check** — only for what the archive cannot hold (visible damage, a team saying what it changed, a mechanical problem never announced on the timing feed). Rules: the article must be published AFTER the session it describes and BEFORE it could be coloured by later rounds; quote the claim, record the URL and its publication date in `source`; a team principal's explanation is a claim, not a measurement — mark it as such.
+
+**Whether you searched or not, put today's date in `press_checked` for every row you looked at — including the ones where you found nothing.** A blank `source` otherwise means both 'searched, nothing there' and 'never opened', and the next reader cannot tell them apart. Scope it to the drivers a search actually named, not to the whole event.

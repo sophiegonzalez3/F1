@@ -36,14 +36,6 @@ RACE_STATS_CSV = Path("data/race_stats.csv")
 MISTAKES_ALL = Path("data/mistakes_all.parquet")
 MISTAKES_PRESSURE = Path("data/mistakes_pressure_all.parquet")
 
-_DNF_MECH_KEYWORDS = (
-    "Engine", "Gearbox", "Hydraulics", "Power", "Brakes", "Suspension",
-    "Transmission", "Electrical", "Overheating", "Mechanical", "Puncture",
-    "Wheel", "Fuel", "Water", "Oil", "Clutch", "Driveshaft", "Battery",
-    "Exhaust", "Radiator", "Vibrations", "Steering", "Retired", "Withdrew",
-)
-_DNF_INCIDENT_KEYWORDS = ("Accident", "Collision", "Spun", "Damage", "Debris")
-
 
 # ─────────────────────────────────────────────────────────────
 # 1. Pairwise Monte Carlo with channel decomposition
@@ -140,8 +132,13 @@ def team_dnf_rates(seasons: tuple[int, ...] | None = None,
                    shrink: float = 20.0) -> tuple[dict[str, float], pd.DataFrame]:
     """Per-team retirement probability per race from the results archive,
     shrunk toward the field mean (a team with 3 DNFs in 20 starts is not a
-    15% DNF team with certainty). Returns ({team: rate}, detail_df with
-    mechanical/incident split)."""
+    15% DNF team with certainty). Returns ({team: rate}, detail_df with the
+    car / driver / collision split).
+
+    The split uses the dashboard's one DNF taxonomy (f1lib.dnf_causes: who
+    the retirement is imputable to), not keywords. The old keyword split
+    listed the bare "Retired" of 2023+ as MECHANICAL, so every recent crash
+    counted against the car."""
     p = HIST / "race_results_all.parquet"
     if not p.exists():
         return {}, pd.DataFrame()
@@ -153,17 +150,23 @@ def team_dnf_rates(seasons: tuple[int, ...] | None = None,
     s = r["Status"].astype(str)
     finished = s.str.startswith("Finished") | s.str.match(r"^\+\d") \
         | s.str.contains("Lap", na=False)
-    mech = ~finished & s.str.contains("|".join(_DNF_MECH_KEYWORDS),
-                                      case=False, na=False)
-    incident = ~finished & ~mech
+    from f1lib.dnf_causes import family_of, CAR, DRIVER, COLLISION
+
+    fam = pd.Series("", index=r.index)
+    for idx, x in r[~finished].iterrows():
+        fam[idx] = family_of(x["season"], str(x.get("event_name", "")),
+                             x.get("Abbreviation"), x.get("Laps"), x["Status"])
     d = pd.DataFrame({"team": r["TeamName"], "dnf": ~finished,
-                      "mech": mech, "incident": incident})
+                      "car": fam.eq(CAR), "driver": fam.eq(DRIVER),
+                      "collision": fam.eq(COLLISION)})
     agg = d.groupby("team").agg(starts=("dnf", "size"), dnfs=("dnf", "sum"),
-                                mech=("mech", "sum"),
-                                incidents=("incident", "sum")).reset_index()
+                                car=("car", "sum"), driver=("driver", "sum"),
+                                collision=("collision", "sum")).reset_index()
+    # disqualified, unexplained and did-not-start: still DNFs for the rate
+    agg["other"] = agg["dnfs"] - agg[["car", "driver", "collision"]].sum(axis=1)
     field_rate = agg["dnfs"].sum() / max(agg["starts"].sum(), 1)
     agg["rate"] = (agg["dnfs"] + shrink * field_rate) / (agg["starts"] + shrink)
-    agg["mech_rate"] = agg["mech"] / agg["starts"]
+    agg["car_rate"] = agg["car"] / agg["starts"]
     return dict(zip(agg["team"], agg["rate"])), agg
 
 

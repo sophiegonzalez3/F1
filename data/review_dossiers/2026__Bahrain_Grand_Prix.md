@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R16 · Bahrain Grand Prix · dossier built 2026-10-04
+2026 R16 · Bahrain Grand Prix · dossier built 2026-10-06
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 
@@ -141,7 +141,8 @@ predicted -0.223 → actual +0.872 · **miss +1.095%** (2.8 sd) · SLOWER than p
 - **SCREEN** · ATTEMPTS  1 flying laps against a field median of 4
 - **SCREEN** · FEW ATTEMPTS  the actual is a MINIMUM over those laps, worth 0.170% each — 1 vs 4 predicts a +0.51% penalty, moving the miss +1.095% → +0.585%. Consider `measurement_artifact` before blaming the model.
 - **SCREEN** · BEST LAP from Q1 (97.883s)  [Q1 97.883]
-- **SCREEN** · ELIMINATED in Q1 — the counted lap was set on a greener track than the Q3 runners'; quali_norm corrects for this, so treat a residual as real
+- **SCREEN** · NO TIME IN Q2  reached Q2 (P16) but set no lap there — the counted lap is a Q1 lap, so it under-states what the car could do. Ask why (a sacrificed run, a tow, a grid penalty, a problem)
+- **SCREEN** · ELIMINATED in Q2 — the counted lap was set on a greener track than the Q3 runners'; quali_norm corrects for this, so treat a residual as real
 
   > category: ______   note: ______
 
@@ -157,7 +158,13 @@ predicted -0.997 → actual -1.562 · **miss -0.565%** (1.1 sd) · FASTER than p
 - **Dropped before the median**: 7 dirty-air, 22 perturbed, 17 invalid
 - **What the filter did**: kept 55% of his laps (field 33%). Model measured -1.890%; over EVERY racing lap he is -2.109%. Scoring him on all laps would move the miss -0.565% → **-0.784%** (GROWS by 39%).
 - **SCREEN** · PACE STEP  +0.92% at lap 38 (slower afterwards; bigger than 100% of shuffled orderings) — check this lap against race control before calling it damage; an unexplained step is not yet a cause
-- **Pit stops** (3): lap 9; lap 33; lap 43  ·  *3 not in pitstops.parquet*
+- **SCREEN** · WET LAPS  none of his 30 clean laps were wet, but the FIELD reference he is measured against contains wet laps (the field: 26 of 364). Dry laps only, against a dry-only field, he is -1.821% instead of -1.890% - the miss would move -0.565% → -0.496% (shrinks by 12%). Recorded; not enough to be the verdict.
+- **Pit stops** (3): lap 9 (2.2s stationary); lap 33; lap 43
+- **Radio** 06:55:41: "I actually have one problem, it's difficult, I can push it forward and backwards on the column, like there's three planes."
+- **Radio** 07:42:50: "Well, this park, I can't accelerate, it's not working guys. Standby Max, we're looking."
+- **Radio** 08:35:03: "He's still a bit of spread out, I think we have to stay out."
+- **Radio** 08:57:22: "ready to be restarted, yes it will be but for i will give you that we cannot select it yet there's plenty of time we don't even have the safety car coming in yet"
+- **Radio** 10:21:19: "Yes Max, well done mate, you never know, you're the man today. 72 mate, 72, amazing job guys, what a fantastic weekend, really good job everyone, really proud of each other."
 
   > category: ______   note: ______
 
@@ -170,12 +177,13 @@ predicted -1.052 → actual -0.413 · **miss +0.639%** (1.1 sd) · SLOWER than p
 - **What made the actual**: 19 clean laps of 55 run (laps 6–53 of 55) · SOFT 10, MISSING 7, INTERMEDIATE 2
 - **Dropped before the median**: 16 dirty-air, 24 perturbed, 16 invalid
 - **What the filter did**: kept 35% of his laps (field 33%). Model measured -0.742%; over EVERY racing lap he is -0.845%. Scoring him on all laps would move the miss +0.639% → **+0.536%** (shrinks by 16%).
+- **SCREEN** · WET LAPS  2 of his 19 clean laps were on INTERMEDIATE/WET tyres (the field: 26 of 364). Dry laps only, against a dry-only field, he is -0.695% instead of -0.742% - the miss would move +0.639% → +0.686% (GROWS by 7%). It does NOT shrink the miss, so the wet laps are not the cause.
 - **Race control** (race):
     - `2026-10-04 08:45:26  CAR 16 (LEC) LAP DELETED - TRACK LIMITS AT TURN 12 LAP 3 16:41:20 (PIT)`
     - `2026-10-04 08:47:44  TURN 9 INCIDENT INVOLVING CARS 16 (LEC) AND 27 (HUL) NOTED - CAUSING A COLLISION (16:40:50)`
     - `2026-10-04 08:50:09  FIA STEWARDS: TURN 9 INCIDENT INVOLVING CARS 16 (LEC) AND 27 (HUL) REVIEWED NO FURTHER INVESTIGATION - CAUSING A COLLISION (16:40:50)`
 - **Incident** lap 7: contact — CAUSING A COLLISION vs HUL → no action
-- **Pit stops** (4): lap 3; lap 9; lap 28; lap 43  ·  *4 not in pitstops.parquet*
+- **Pit stops** (4): lap 3 (12.1s stationary); lap 9; lap 28; lap 43
 
   > category: ______   note: ______
 
@@ -190,6 +198,7 @@ predicted +0.238 → actual +1.283 · **miss +1.046%** (2.2 sd) · SLOWER than p
 - **What the filter did**: kept 20% of his laps (field 33%). Model measured +0.953%; over EVERY racing lap he is +0.870%. Scoring him on all laps would move the miss +1.046% → **+0.963%** (shrinks by 8%).
 - **SCREEN** · THIN SLICE  only 20% of his laps survived against a field 33%, so this number rests on little — but correcting it barely moves the miss. Fragile, not wrong.
 - **SCREEN** · THIN SAMPLE  only 11 clean laps entered the median (field median 15+ is normal)
+- **SCREEN** · WET LAPS  2 of his 11 clean laps were on INTERMEDIATE/WET tyres (the field: 26 of 364). Dry laps only, against a dry-only field, he is -0.037% instead of +0.953% - the miss would move +1.046% → +0.056% (shrinks by 95%). Consider `weather`: the actual is scored on every lap BY DESIGN, so wet laps are a weather miss, not a measurement fault.
 - **Race control** (race):
     - `2026-10-04 09:03:09  TURN 2 INCIDENT INVOLVING CARS 5 (BOR) AND 55 (SAI) NOTED - CAUSING A COLLISION (17:01:01)`
     - `2026-10-04 09:09:13  FIA STEWARDS: TURN 2 INCIDENT INVOLVING CARS 5 (BOR) AND 55 (SAI) UNDER INVESTIGATION - CAUSING A COLLISION (17:01:01)`
@@ -197,7 +206,9 @@ predicted +0.238 → actual +1.283 · **miss +1.046%** (2.2 sd) · SLOWER than p
     - `2026-10-04 09:45:45  FIA STEWARDS: PENALTY SERVED - 10 SECOND TIME PENALTY FOR CAR 5 (BOR) - CAUSING A COLLISION (17:01:01)`
 - *(1 routine blue-flag / flag-order message suppressed — those describe laps the median already discarded)*
 - **Incident** lap 14: contact — CAUSING A COLLISION vs SAI → penalty: 10 second time penalty
-- **Pit stops** (5): lap 2; lap 9; lap 15; lap 34; lap 44  ·  *5 not in pitstops.parquet*
+- **Pit stops** (5): lap 2 (2.5s stationary); lap 9; lap 15; lap 34; lap 44
+- **Radio** 09:17:10: "Hey, what the f***? There's not gonna be space there."
+- **Radio** 10:25:57: "Sorry, I really apologize to Carlos and for you guys as well. Sorry for that. How are you, mate? You were racing there. I know you were racing, so these things happen."
 
   > category: ______   note: ______
 

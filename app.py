@@ -500,9 +500,16 @@ def _render_tab(tab, ss, sd, st):
     if tab=="tab-duel":       return tab_duel(sd, st)
     if tab=="tab-track":      return tab_track_info()
     if tab=="tab-season":
+        # The SEASON tab reads its own archives, not the loaded laps, so it
+        # takes the sidebar selections and scopes each card itself (an
+        # all-selected box is no filter at all).
+        from tabs.pace_data import active_selection
+        teams_sel = active_selection(st, TEAMS)
+        drivers_sel = active_selection(sd, DRIVERS)
         return tab_season(
-            standings=_season_standings_row(fl_d),
-            upgrades=upgrade_impact_section(),
+            standings=_season_standings_row(fl_d, teams_sel, drivers_sel),
+            upgrades=upgrade_impact_section(teams=teams_sel, drivers=drivers_sel),
+            teams=teams_sel, drivers=drivers_sel,
         )
     if tab=="tab-context":    return tab_context()
     return html.P("Select a tab.")

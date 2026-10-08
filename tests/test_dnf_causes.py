@@ -39,12 +39,12 @@ def _register(monkeypatch, cause):
 # ── layer ordering ───────────────────────────────────────────
 
 def test_race_control_outranks_curation(monkeypatch):
-    """The register says collision; the curated file says mechanical. The
+    """The register says collision; the curated file says car. The
     register wins and the curated row is ignored, not merged."""
     _register(monkeypatch, "collision")
     _curated(monkeypatch, [{
         "season": 2026, "event": "Dutch Grand Prix", "driver": "ALB",
-        "cause_family": "mechanical", "confidence": "reported"}])
+        "cause_family": dc.CAR, "confidence": "reported"}])
     got = dc.resolve_cause(2026, "Dutch Grand Prix", "ALB", 66)
     assert got["cause_family"] == "collision"
     assert got["cause_source"] == "race_control"
@@ -55,9 +55,9 @@ def test_curation_fills_only_what_race_control_missed(monkeypatch):
     _register(monkeypatch, "unclassified")
     _curated(monkeypatch, [{
         "season": 2026, "event": "Dutch Grand Prix", "driver": "OCO",
-        "cause_family": "mechanical", "confidence": "reported"}])
+        "cause_family": dc.CAR, "confidence": "reported"}])
     got = dc.resolve_cause(2026, "Dutch Grand Prix", "OCO", 52)
-    assert got["cause_family"] == "mechanical"
+    assert got["cause_family"] == dc.CAR
     assert got["cause_source"] == "press"
 
 
@@ -101,7 +101,7 @@ def test_an_unrecognised_family_is_rejected_not_passed_through(monkeypatch):
 def test_a_team_statement_can_be_marked_as_a_claim(monkeypatch):
     _curated(monkeypatch, [{
         "season": 2026, "event": "Dutch Grand Prix", "driver": "OCO",
-        "cause_family": "mechanical", "confidence": "claimed"}])
+        "cause_family": dc.CAR, "confidence": "claimed"}])
     got = dc.curated_cause(2026, "Dutch Grand Prix", "OCO")
     assert got["confidence"] == "claimed", (
         "a principal saying 'a PU issue' must stay filterable")
@@ -116,11 +116,39 @@ def test_no_withdrawal_family():
     assert "disqualified" in dc.FAMILIES
 
 
-def test_families_are_descriptive_not_attributive():
-    """'solo accident' describes what happened; 'driver error' would assign a
-    fault nobody measured."""
-    assert "solo accident" in dc.FAMILIES
-    assert "driver error" not in dc.FAMILIES
+def test_families_answer_who_the_dnf_is_imputable_to():
+    """Since 2026-10-07 the families are ATTRIBUTIVE by decision: car (and
+    team), driver, or neither (collision). The old descriptive names are read
+    as their successors, so a stale row cannot fall out of the chart."""
+    assert set(dc.FAMILIES) == {"car imputable", "driver imputable",
+                                "collision", "disqualified"}
+    assert dc.normalise_family("mechanical") == dc.CAR
+    assert dc.normalise_family(" Solo Accident ") == dc.DRIVER
+    assert dc.normalise_family("gearboxx") == ""
+
+
+def test_archive_status_vocabulary_follows_the_same_rule():
+    """One status map for every consumer (reliability card, DUEL): an off with
+    no other car is the driver's, a puncture or debris nobody's."""
+    assert dc.STATUS_FAMILY["Accident"] == dc.DRIVER
+    assert dc.STATUS_FAMILY["Spun off"] == dc.DRIVER
+    assert dc.STATUS_FAMILY["Puncture"] == dc.COLLISION
+    assert dc.STATUS_FAMILY["Engine"] == dc.CAR
+    assert "Retired" not in dc.STATUS_FAMILY
+
+
+def test_override_beats_an_inferred_collision(monkeypatch):
+    """The one exception to measured-beats-reported: a curated row flagged
+    overrides_register wins over the register's proximity inference."""
+    _register(monkeypatch, "collision")
+    _curated(monkeypatch, [{
+        "season": 2026, "event": "Canadian Grand Prix", "driver": "RUS",
+        "cause_family": dc.CAR, "cause_detail": "battery failure",
+        "confidence": "reported", "overrides_register": "yes"}])
+    got = dc.resolve_cause(2026, "Canadian Grand Prix", "RUS", 29)
+    assert got["cause_family"] == dc.CAR
+    assert got["cause_source"] == "press"
+    assert dc.is_pu_failure(got)
 
 
 # ── against the real file ────────────────────────────────────
@@ -130,6 +158,8 @@ def test_curated_file_uses_only_known_families_and_confidences():
     if d.empty:
         pytest.skip("data/dnf_causes.csv not seeded")
     fam = d["cause_family"].astype(str).str.strip().str.lower()
+    # the file itself must use the CURRENT names; legacy aliases are only a
+    # safety net for reading
     bad = set(fam[fam.ne("") & fam.ne("nan")]) - set(dc.FAMILIES)
     assert not bad, f"unknown cause_family values: {bad}"
     conf = d["confidence"].astype(str).str.strip().str.lower()
@@ -168,3 +198,30 @@ def test_curated_rows_never_duplicate_a_race_control_collision():
         if got["cause"] == "collision":
             clash.append(f"{row['season']} {row['event']} {row['driver']}")
     assert not clash, f"curated collisions the register already owns: {clash}"
+
+
+def test_an_at_fault_collision_is_imputed_to_the_driver(monkeypatch):
+    """Fault is judged on the stewards' ruling alone. A penalised driver's
+    collision becomes driver imputable — but the detail must still say a
+    collision happened, and it still counts as contact on the contact card."""
+    import f1lib.incidents as inc
+    monkeypatch.setattr(
+        inc, "classify_retirement",
+        lambda *a, **k: {"cause": "collision", "incident_lap": 8.0,
+                         "counterparty": "ALB", "earlier_contact": True,
+                         "penalty": "10 second time penalty"})
+    _curated(monkeypatch, [])
+    got = dc.resolve_cause(2024, "Qatar Grand Prix", "STR", 9)
+    assert got["cause_family"] == dc.DRIVER
+    assert got["cause_detail"].startswith("COLLISION with ALB")
+    assert "10 second time penalty" in got["cause_detail"]
+    assert "whatever the ruling" in got["note"]
+    assert dc.is_collision(got)
+
+
+def test_an_unpenalised_collision_stays_a_collision(monkeypatch):
+    _register(monkeypatch, "collision")
+    _curated(monkeypatch, [])
+    monkeypatch.setattr(dc, "_grid_ruling", lambda *a: "")
+    got = dc.resolve_cause(2026, "Dutch Grand Prix", "ALB", 66)
+    assert got["cause_family"] == dc.COLLISION

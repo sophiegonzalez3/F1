@@ -583,7 +583,8 @@ def _zone_geometry(tm, fracs, zlabels) -> dict | None:
     line = tm["line"]
     lx, ly = _rotate(line["X"].to_numpy(float), line["Y"].to_numpy(float),
                      float(tm.get("rotation", 0.0)) / 180.0 * np.pi)
-    cum = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(lx), np.diff(ly)))])
+    # FastF1 X/Y are decimetres; /10 → metres for the start_m/length_m labels
+    cum = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(lx), np.diff(ly)))]) / 10.0
     if cum[-1] <= 0:
         return None
     lap_len = float(cum[-1])

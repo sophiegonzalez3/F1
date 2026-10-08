@@ -95,8 +95,18 @@ TRACK_MAPS = Path("data/track_maps")
 
 # corners slower than this are traction/braking-limited rather than
 # downforce-limited — the season-fixed slow/medium boundary from
-# scripts/compute_corner_classes.py (data/corner_speed_classes.json)
-SLOW_MAX_KMH = 146.0
+# scripts/compute_corner_classes.py (data/corner_speed_classes.json), read
+# from that file so the two can't drift apart again
+def _slow_max_kmh(default: float = 128.0) -> float:
+    try:
+        import json
+        with open("data/corner_speed_classes.json", encoding="utf-8") as fh:
+            return float(json.load(fh)["slow_max_kmh"])
+    except Exception:
+        return default
+
+
+SLOW_MAX_KMH = _slow_max_kmh()
 APEX_BAND_M = 60.0          # ± window around a corner when hunting the apex
 MIN_STRAIGHT_M = 300.0      # shorter flat-out runs aren't straights
 # Max slope standard error (s/lap) for a degradation fit to be believed —

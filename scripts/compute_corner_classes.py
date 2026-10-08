@@ -59,7 +59,8 @@ def corner_apex_speeds(line: pd.DataFrame, corners: pd.DataFrame,
     lx = line["X"].to_numpy(float)
     ly = line["Y"].to_numpy(float)
     sp = pd.to_numeric(line["Speed"], errors="coerce").to_numpy(float)
-    cum = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(lx), np.diff(ly)))])
+    # FastF1 X/Y are decimetres; /10 → metres so win_m means metres
+    cum = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(lx), np.diff(ly)))]) / 10.0
     out = []
     for _, c in corners.iterrows():
         i = int(np.argmin((lx - c["X"]) ** 2 + (ly - c["Y"]) ** 2))

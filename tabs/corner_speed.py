@@ -41,7 +41,7 @@ APEX_WINDOW_M = 40.0
 _CLASSES_PATH = Path("data/corner_speed_classes.json")
 
 # Baked fallback = the 2025-season tertiles, used if the data file is absent.
-_FALLBACK = {"slow_max_kmh": 146.0, "fast_min_kmh": 238.0, "season": 2025}
+_FALLBACK = {"slow_max_kmh": 128.0, "fast_min_kmh": 230.0, "season": 2025}
 
 # class → (label, colour). Colours read as a slow→fast temperature ramp and are
 # distinct from any team colour.
@@ -138,7 +138,8 @@ def _corner_apex_speeds(line: pd.DataFrame, corners: pd.DataFrame,
     lx = line["X"].to_numpy(float)
     ly = line["Y"].to_numpy(float)
     sp = pd.to_numeric(line["Speed"], errors="coerce").to_numpy(float)
-    cum = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(lx), np.diff(ly)))])
+    # FastF1 X/Y are decimetres; /10 → metres so APEX_WINDOW_M means metres
+    cum = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(lx), np.diff(ly)))]) / 10.0
     total = cum[-1] if cum[-1] > 0 else 1.0
     out = []
     for f in fracs:

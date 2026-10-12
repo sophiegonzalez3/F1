@@ -186,17 +186,23 @@ def test_curated_rows_never_duplicate_a_race_control_collision():
     """'Do not curate what is measurable' — a hand-written collision would
     shadow the register and drift from it. The seeder skips these; this
     catches one added by hand."""
-    from f1lib.incidents import classify_retirement
+    from f1lib.incidents import classify_retirement, session_of
     d = dc.causes_df()
     if d.empty:
         pytest.skip("data/dnf_causes.csv not seeded")
     fam = d["cause_family"].astype(str).str.strip().str.lower()
+    d = d.assign(_sess=session_of(d))
     clash = []
-    for _, row in d[fam.eq("collision")].iterrows():
+    # each row against ITS session's register (Race / Sprint are the only
+    # sessions race control numbers laps in)
+    for _, row in d[fam.eq("collision") & d["_sess"].isin(dc.LAPPED_SESSIONS)
+                    ].iterrows():
         got = classify_retirement(row["season"], str(row["event"]),
-                                  row["driver"], row.get("laps"))
+                                  row["driver"], row.get("laps"),
+                                  session=row["_sess"])
         if got["cause"] == "collision":
-            clash.append(f"{row['season']} {row['event']} {row['driver']}")
+            clash.append(f"{row['season']} {row['event']} {row['_sess']} "
+                         f"{row['driver']}")
     assert not clash, f"curated collisions the register already owns: {clash}"
 
 
@@ -225,3 +231,22 @@ def test_an_unpenalised_collision_stays_a_collision(monkeypatch):
     monkeypatch.setattr(dc, "_grid_ruling", lambda *a: "")
     got = dc.resolve_cause(2026, "Dutch Grand Prix", "ALB", 66)
     assert got["cause_family"] == dc.COLLISION
+
+
+def test_every_row_names_a_known_session_and_status():
+    """Since 2026-10-12 the file holds every session. A typo in `session`
+    silently drops a row from every card (they all filter on it), and a
+    non-race row must carry one of the detector's statuses or the curator's
+    'False alarm' - anything else is a row nobody can interpret."""
+    from f1lib.incidents import session_of
+    from f1lib.session_stops import FALSE_ALARM, NON_RACE, STATUSES
+    d = dc.causes_df()
+    if d.empty:
+        pytest.skip("data/dnf_causes.csv not seeded")
+    sess = session_of(d)
+    bad = sorted(set(sess) - set(NON_RACE) - {"Race", "Sprint"})
+    assert not bad, f"unknown session values: {bad}"
+    nr = d[sess.isin(NON_RACE)]
+    odd = nr.loc[~nr["status_archive"].isin(set(STATUSES) | {FALSE_ALARM}),
+                 ["season", "event", "session", "driver", "status_archive"]]
+    assert odd.empty, f"non-race rows with an unknown status:\n{odd}"

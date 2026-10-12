@@ -369,23 +369,8 @@ def _schedule_tab_prewarm(ss, sd, st, skip=None, delay=0.75):
     threading.Thread(target=_worker, daemon=True, name="tab-prewarm").start()
 
 
-def _section_header(title, intro):
-    """A centered section title + intro paragraph, used to separate the two
-    stacked halves of a merged tab (TEAM & TEAMATE, WEEK END PRED)."""
-    return html.Div([
-        html.H3(title,
-                style={"color": TEXT_MAIN, "fontWeight": "900",
-                       "letterSpacing": "3px", "textAlign": "center",
-                       "marginBottom": "10px", "fontSize": "1.5rem",
-                       "borderBottom": f"2px solid {ACCENT}",
-                       "paddingBottom": "10px"}),
-        # Div, not P: the intro may splice in gloss() tooltips (which render a
-        # sibling block element) and a <div> inside a <p> is invalid HTML.
-        html.Div(intro,
-                 style={"color": TEXT_DIM, "fontSize": "0.82rem",
-                        "textAlign": "center", "maxWidth": "780px",
-                        "margin": "0 auto 22px", "lineHeight": "1.5"}),
-    ])
+# shared with tabs/team_window.py — the implementation lives in components
+from f1lib.components import section_header as _section_header
 
 
 def _render_tab(tab, ss, sd, st):
@@ -416,31 +401,11 @@ def _render_tab(tab, ss, sd, st):
         # merged view: the session overview cards first, telemetry below
         return html.Div([tab_overview(fl_d, fs_d, ft), tab_laps(fl_d, ft)])
     if tab=="tab-teams":
-        # Merged TEAM & TEAMATE tab: team-analysis content first, then the
-        # head-to-head teammate content stacked below, each under its own
-        # section header + intro.
-        return html.Div([
-            _section_header(
-                "TEAM COMPARISON AND MOMENTUM",
-                ["How the teams stack up against each other across the loaded "
-                 "sessions — ", *gloss("one-lap speed", "one-lap"), " and ",
-                 *gloss("race pace"), ", ", *gloss("sector"), " strengths, and "
-                 "which way each team's form is trending. Every metric takes the "
-                 "stronger of a team's two cars, so this is the ",
-                 *gloss("constructor"), "-vs-constructor view of the field's "
-                 "pecking order and who is gaining or losing ground."]),
-            tab_teams(fl_d, fs_d),
-            html.Hr(style={"borderColor": GRID_CLR, "margin": "40px 0 28px"}),
-            _section_header(
-                "TEAMMATES COMPARISON AND MOMENTUM",
-                ["Now zoom inside each garage: the head-to-head duel between the "
-                 "two ", *gloss("teammate", "drivers sharing identical machinery"),
-                 ". Because the car is a constant, these gaps isolate the "
-                 "driver — ", *gloss("one-lap speed"), ", ",
-                 *gloss("race pace"), ", and how momentum swings from one side "
-                 "of the garage to the other across the weekend."]),
-            tab_teammates(fl_d, fs_d),
-        ])
+        # Merged TEAM & TEAMATE tab, computed over a "last N events" window
+        # from data/driver_event_kpis.csv. The slider is in this layout; the
+        # body is built by tabs.team_window's own callback (it reads the
+        # sidebar team/driver filters as State).
+        return tab_team_window()
     # st as well as the filtered frames: the season-long CAR CONCEPT block at
     # the top of the tab reads data/car_profile.csv, not these laps
     if tab=="tab-stints":     return tab_stints(fl_d,fs_d,st)
@@ -555,11 +520,10 @@ def render(tab, ss, sd, st):
     return out
 
 from tabs.overview import tab_overview
-from tabs.teams import tab_teams
 from tabs.telemetry import tab_laps, _prewarm_track_maps
 from tabs.practice import tab_practice_construction, tab_sandbagging
 from tabs.stints import tab_stints
-from tabs.teammates import tab_teammates
+from tabs.team_window import tab_team_window
 
 from tabs.race import tab_race
 from tabs.brief import tab_brief

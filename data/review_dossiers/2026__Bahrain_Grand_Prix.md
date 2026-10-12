@@ -1,5 +1,5 @@
 # WHY THE MODEL MISSED — evidence dossier
-2026 R16 · Bahrain Grand Prix · dossier built 2026-10-06
+2026 R16 · Bahrain Grand Prix · dossier built 2026-10-09
 
 Facts only. Nothing here is a verdict; the category and the note are yours to write.
 
@@ -36,10 +36,10 @@ Race         air 26.8C  track 34.4C (range 0-46)  INTERMEDIATE 11% of laps  rain
 Within-driver compound offsets measured on this race's clean laps (negative = faster):
 
 ```
-  SOFT     -0.028 s/lap   (-0.03% of a lap)
-  MISSING  -0.007 s/lap   (-0.01% of a lap)
-  MEDIUM   +0.027 s/lap   (+0.03% of a lap)
-  HARD     +0.034 s/lap   (+0.03% of a lap)
+  MEDIUM   -0.071 s/lap   (-0.07% of a lap)
+  HARD     -0.042 s/lap   (-0.04% of a lap)
+  SOFT     +0.025 s/lap   (+0.02% of a lap)
+  MISSING  +0.120 s/lap   (+0.11% of a lap)
 ```
 
 Use these to price a compound story before believing it. A skew worth less than the miss is not the cause of the miss.
@@ -148,6 +148,29 @@ predicted -0.223 → actual +0.872 · **miss +1.095%** (2.8 sd) · SLOWER than p
 
 ### RACE PACE
 
+#### HAM · Ferrari
+
+predicted -0.883 → actual -1.783 · **miss -0.900%** (1.5 sd) · FASTER than predicted
+
+- **Teammate**: LEC missed +0.639% — OPPOSITE direction. Opposite directions point at something driver-specific.
+- **Practice evidence the model read**: 25 clean long-run laps (field median 24) · sessions run: Practice_1 21, Practice_2 28, Practice_3 15
+- **What made the actual**: 13 clean laps of 55 run (laps 5–55 of 55) · SOFT 13
+- **Dropped before the median**: 26 dirty-air, 19 perturbed, 16 invalid
+- **What the filter did**: kept 24% of his laps (field 33%). Model measured -2.039%; over EVERY racing lap he is -1.043%. Scoring him on all laps would move the miss -0.900% → **+0.095%** (shrinks by 89%).
+- **SCREEN** · FILTER ARTIFACT  using every racing lap cuts the miss to +0.095%. The measured pace describes a slice of his race, not his race — consider `measurement_artifact` before any other cause.
+- **SCREEN** · THIN SAMPLE  only 13 clean laps entered the median (field median 15+ is normal)
+- **SCREEN** · WET LAPS  none of his 13 clean laps were wet, but the FIELD reference he is measured against contains wet laps (the field: 26 of 364). Dry laps only, against a dry-only field, he is -2.039% instead of -2.039% - the miss would move -0.900% → -0.900% (GROWS by 0%). It does NOT shrink the miss, so the wet laps are not the cause.
+- **Pit stops** (2): lap 31 (2.3s stationary); lap 43
+- **Radio** 06:55:42: "It's kind of, and it's wet but it's, the grip is quite high."
+- **Radio** 07:43:20: "I'm expressing my thoughts so nothing's happening."
+- **Radio** 08:35:36: "The track's really wet still. It's so slippery, guys. It's dangerous. We need to survive the first couple of laps. We will die very soon."
+- **Radio** 08:44:43: "It's getting dry, the tires are starting to work a bit more. Do you think that's a smart thing to do? If you're happy to stay out, we can gamble. Stay out, you have to gamble, it's released. It has to stay out. Copy that"
+- **Radio** 08:59:55: "You can push a bit more to close the gap. No, I'm pushing as hard as I can be, I've got no grip. I missed it."
+- **Radio** 09:38:32: "This time feels terrible. How far we have to go with this time? Do the ending."
+- **Radio** 10:22:50: "Yeah, guys, great job with the pit stops and calling it the strategy. They're already well done during the race. Obviously, that was more on the table for us today. That's what I'll put next time."
+
+  > category: ______   note: ______
+
 #### VER · Red Bull Racing
 
 predicted -0.997 → actual -1.562 · **miss -0.565%** (1.1 sd) · FASTER than predicted
@@ -156,9 +179,10 @@ predicted -0.997 → actual -1.562 · **miss -0.565%** (1.1 sd) · FASTER than p
 - **Practice evidence the model read**: 28 clean long-run laps (field median 24) · sessions run: Practice_1 23, Practice_2 20, Practice_3 12
 - **What made the actual**: 30 clean laps of 55 run (laps 14–55 of 55) · SOFT 30
 - **Dropped before the median**: 7 dirty-air, 22 perturbed, 17 invalid
-- **What the filter did**: kept 55% of his laps (field 33%). Model measured -1.890%; over EVERY racing lap he is -2.109%. Scoring him on all laps would move the miss -0.565% → **-0.784%** (GROWS by 39%).
-- **SCREEN** · PACE STEP  +0.92% at lap 38 (slower afterwards; bigger than 100% of shuffled orderings) — check this lap against race control before calling it damage; an unexplained step is not yet a cause
-- **SCREEN** · WET LAPS  none of his 30 clean laps were wet, but the FIELD reference he is measured against contains wet laps (the field: 26 of 364). Dry laps only, against a dry-only field, he is -1.821% instead of -1.890% - the miss would move -0.565% → -0.496% (shrinks by 12%). Recorded; not enough to be the verdict.
+- **What the filter did**: kept 55% of his laps (field 33%). Model measured -1.753%; over EVERY racing lap he is -2.188%. Scoring him on all laps would move the miss -0.565% → **-1.000%** (GROWS by 77%).
+- **SCREEN** · FILTER MASKING  the filter is FLATTERING the model here: on all laps the miss grows to -1.000%. Whatever the cause, it is not the measurement — the measurement is hiding part of it.
+- **SCREEN** · PACE STEP  +0.84% at lap 36 (slower afterwards; bigger than 100% of shuffled orderings) — check this lap against race control before calling it damage; an unexplained step is not yet a cause
+- **SCREEN** · WET LAPS  none of his 30 clean laps were wet, but the FIELD reference he is measured against contains wet laps (the field: 26 of 364). Dry laps only, against a dry-only field, he is -1.753% instead of -1.753% - the miss would move -0.565% → -0.565% (GROWS by 0%). It does NOT shrink the miss, so the wet laps are not the cause.
 - **Pit stops** (3): lap 9 (2.2s stationary); lap 33; lap 43
 - **Radio** 06:55:41: "I actually have one problem, it's difficult, I can push it forward and backwards on the column, like there's three planes."
 - **Radio** 07:42:50: "Well, this park, I can't accelerate, it's not working guys. Standby Max, we're looking."
@@ -172,12 +196,13 @@ predicted -0.997 → actual -1.562 · **miss -0.565%** (1.1 sd) · FASTER than p
 
 predicted -1.052 → actual -0.413 · **miss +0.639%** (1.1 sd) · SLOWER than predicted
 
-- **Teammate**: measured and inside its band, so this is driver-specific, not a car-wide miss.
+- **Teammate**: HAM missed -0.900% — OPPOSITE direction. Opposite directions point at something driver-specific.
 - **Practice evidence the model read**: 31 clean long-run laps (field median 24) · sessions run: Practice_1 25, Practice_2 29, Practice_3 19
 - **What made the actual**: 19 clean laps of 55 run (laps 6–53 of 55) · SOFT 10, MISSING 7, INTERMEDIATE 2
 - **Dropped before the median**: 16 dirty-air, 24 perturbed, 16 invalid
-- **What the filter did**: kept 35% of his laps (field 33%). Model measured -0.742%; over EVERY racing lap he is -0.845%. Scoring him on all laps would move the miss +0.639% → **+0.536%** (shrinks by 16%).
-- **SCREEN** · WET LAPS  2 of his 19 clean laps were on INTERMEDIATE/WET tyres (the field: 26 of 364). Dry laps only, against a dry-only field, he is -0.695% instead of -0.742% - the miss would move +0.639% → +0.686% (GROWS by 7%). It does NOT shrink the miss, so the wet laps are not the cause.
+- **What the filter did**: kept 35% of his laps (field 33%). Model measured -0.630%; over EVERY racing lap he is -1.199%. Scoring him on all laps would move the miss +0.639% → **+0.070%** (shrinks by 89%).
+- **SCREEN** · FILTER ARTIFACT  using every racing lap cuts the miss to +0.070%. The measured pace describes a slice of his race, not his race — consider `measurement_artifact` before any other cause.
+- **SCREEN** · WET LAPS  2 of his 19 clean laps were on INTERMEDIATE/WET tyres (the field: 26 of 364). Dry laps only, against a dry-only field, he is -0.692% instead of -0.630% - the miss would move +0.639% → +0.578% (shrinks by 10%). Recorded; not enough to be the verdict.
 - **Race control** (race):
     - `2026-10-04 08:45:26  CAR 16 (LEC) LAP DELETED - TRACK LIMITS AT TURN 12 LAP 3 16:41:20 (PIT)`
     - `2026-10-04 08:47:44  TURN 9 INCIDENT INVOLVING CARS 16 (LEC) AND 27 (HUL) NOTED - CAUSING A COLLISION (16:40:50)`
@@ -195,10 +220,10 @@ predicted +0.238 → actual +1.283 · **miss +1.046%** (2.2 sd) · SLOWER than p
 - **Practice evidence the model read**: 22 clean long-run laps (field median 24) · sessions run: Practice_1 25, Practice_2 25, Practice_3 15
 - **What made the actual**: 11 clean laps of 55 run (laps 5–54 of 55) · SOFT 7, INTERMEDIATE 2, HARD 2
 - **Dropped before the median**: 27 dirty-air, 23 perturbed, 16 invalid
-- **What the filter did**: kept 20% of his laps (field 33%). Model measured +0.953%; over EVERY racing lap he is +0.870%. Scoring him on all laps would move the miss +1.046% → **+0.963%** (shrinks by 8%).
+- **What the filter did**: kept 20% of his laps (field 33%). Model measured +0.371%; over EVERY racing lap he is +0.636%. Scoring him on all laps would move the miss +1.046% → **+1.311%** (GROWS by 25%).
 - **SCREEN** · THIN SLICE  only 20% of his laps survived against a field 33%, so this number rests on little — but correcting it barely moves the miss. Fragile, not wrong.
 - **SCREEN** · THIN SAMPLE  only 11 clean laps entered the median (field median 15+ is normal)
-- **SCREEN** · WET LAPS  2 of his 11 clean laps were on INTERMEDIATE/WET tyres (the field: 26 of 364). Dry laps only, against a dry-only field, he is -0.037% instead of +0.953% - the miss would move +1.046% → +0.056% (shrinks by 95%). Consider `weather`: the actual is scored on every lap BY DESIGN, so wet laps are a weather miss, not a measurement fault.
+- **SCREEN** · WET LAPS  2 of his 11 clean laps were on INTERMEDIATE/WET tyres (the field: 26 of 364). Dry laps only, against a dry-only field, he is +0.092% instead of +0.371% - the miss would move +1.046% → +0.767% (shrinks by 27%). Recorded; not enough to be the verdict.
 - **Race control** (race):
     - `2026-10-04 09:03:09  TURN 2 INCIDENT INVOLVING CARS 5 (BOR) AND 55 (SAI) NOTED - CAUSING A COLLISION (17:01:01)`
     - `2026-10-04 09:09:13  FIA STEWARDS: TURN 2 INCIDENT INVOLVING CARS 5 (BOR) AND 55 (SAI) UNDER INVESTIGATION - CAUSING A COLLISION (17:01:01)`

@@ -74,9 +74,11 @@ import os as _os, sys as _sys
 _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
 
 import argparse
+import hashlib
 import itertools
 import logging
 import re
+import shutil
 import warnings
 from pathlib import Path
 
@@ -132,17 +134,70 @@ def _has_practice(season: int, event: str) -> bool:
 # search used to be pinned to a single training season.
 _MEAS_CACHE: dict[tuple[int, str], pd.DataFrame] = {}
 # ...and on disk too, under the gitignored cache/ tree, so a re-tune does not
-# pay the enrichment cost again. Measurements are a pure function of the cached
-# laps; delete the directory after re-fetching a session.
+# pay the enrichment cost again (a full rebuild is HOURS).
+#
+# Measurements are a function of the code that makes them AND of the cached
+# session files, so both are in the key. The entries used to be keyed on the
+# event alone and were never invalidated: an Oct 2026 check found the backtest
+# still scoring measurements written in April, blind to every processing /
+# pace_features change in between (an A/B of a track-evolution fix came out
+# bit-identical). Now: one sub-directory per code fingerprint, one file per
+# (event, input signature). Stale fingerprints are pruned on first write.
 _MEAS_DIR = Path("cache/pace_measurements")
+_MEAS_CODE = ("f1lib/processing.py", "f1lib/pace_features.py", "f1lib/config.py")
+_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _code_fingerprint() -> str:
+    h = hashlib.sha1()
+    for f in _MEAS_CODE:
+        h.update((_ROOT / f).read_bytes())
+    return h.hexdigest()[:12]
+
+
+def _inputs_signature(season: int, event: str) -> str:
+    """Name, size and mtime of every non-Race session file of the event, in
+    both stores — a re-fetched or backfilled session changes it."""
+    prefix = dl._session_key(str(season), event, "")
+    h = hashlib.sha1()
+    for base in (Path(SESSIONS_DIR), Path(SESSIONS_LITE_DIR)):
+        for p in sorted(base.glob(f"{prefix}*.parquet")):
+            if "__Race__" in p.name:
+                continue                 # practice measurements never read it
+            st = p.stat()
+            h.update(f"{base.name}/{p.name}:{st.st_size}:{st.st_mtime_ns};".encode())
+    return h.hexdigest()[:10]
+
+
+_MEAS_FP: str | None = None
+
+
+def _meas_path(season: int, event: str) -> Path:
+    global _MEAS_FP
+    if _MEAS_FP is None:
+        _MEAS_FP = _code_fingerprint()
+    slug = f"{int(season)}__{re.sub(r'[^A-Za-z0-9]+', '_', str(event))}"
+    return _MEAS_DIR / _MEAS_FP / f"{slug}__{_inputs_signature(season, event)}.pkl"
+
+
+def _prune_stale_measurements(live: Path) -> None:
+    """Drop other code fingerprints and the legacy flat *.pkl files."""
+    if not _MEAS_DIR.exists():
+        return
+    for p in _MEAS_DIR.iterdir():
+        if p == live:
+            continue
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+        elif p.suffix == ".pkl":
+            p.unlink(missing_ok=True)
 
 
 def _measurements(season: int, event: str) -> pd.DataFrame:
     key = (int(season), str(event))
     if key in _MEAS_CACHE:
         return _MEAS_CACHE[key]
-    slug = f"{key[0]}__{re.sub(r'[^A-Za-z0-9]+', '_', key[1])}.pkl"
-    path = _MEAS_DIR / slug
+    path = _meas_path(*key)
     if path.exists():
         try:
             _MEAS_CACHE[key] = pd.read_pickle(path)
@@ -151,7 +206,12 @@ def _measurements(season: int, event: str) -> pd.DataFrame:
             pass                      # unreadable cache entry: just rebuild it
     meas, _ = event_measurements(season, event)
     meas = meas if meas is not None else pd.DataFrame()
-    _MEAS_DIR.mkdir(parents=True, exist_ok=True)
+    if not path.parent.exists():
+        _prune_stale_measurements(path.parent)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # an older entry for the same event under this code = inputs changed
+    for old in path.parent.glob(path.name.rsplit("__", 1)[0] + "__*.pkl"):
+        old.unlink(missing_ok=True)
     try:
         meas.to_pickle(path)
     except Exception as exc:

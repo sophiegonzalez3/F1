@@ -122,6 +122,40 @@ def cache_sessions(season: int, meeting: str) -> list[dict]:
     return infos
 
 
+def sync_lap_clock(season: int, meeting: str) -> None:
+    """Re-audit this weekend's lap/telemetry clock offsets (f1lib/lap_sync) so
+    the app's telemetry views read the corrected clock for the new session."""
+    out = subprocess.run(
+        [_sys.executable, "scripts/audit_lap_sync.py", "--season", str(season),
+         "--meeting", meeting],
+        capture_output=True, text=True)
+    lines = (out.stdout or "").strip().splitlines()
+    if out.returncode:
+        tail = (out.stderr or "").strip().splitlines()[-1:] or ["?"]
+        print(f"  !! lap-sync audit failed ({out.returncode}) - {tail[0]}")
+    else:
+        for ln in lines:
+            if "shifted" in ln:
+                print(f"  lap clock      : {ln.strip()}")
+        print(f"  lap clock      : {lines[-1].strip() if lines else 'no output'}")
+
+
+def audit_feed_quality(season: int, meeting: str) -> None:
+    """Flag this weekend's missing / stair-stepped telemetry laps
+    (f1lib/telemetry_quality) so analyses skip them."""
+    out = subprocess.run(
+        [_sys.executable, "scripts/audit_telemetry_quality.py", "--season", str(season),
+         "--meeting", meeting],
+        capture_output=True, text=True)
+    if out.returncode:
+        tail = (out.stderr or "").strip().splitlines()[-1:] or ["?"]
+        print(f"  !! feed-quality audit failed ({out.returncode}) - {tail[0]}")
+        return
+    for ln in (out.stdout or "").strip().splitlines():
+        if "degraded" in ln and not ln.startswith("wrote"):
+            print(f"  feed quality   : {ln.strip()}")
+
+
 def warm_track_map(season: int, meeting: str, infos: list[dict]) -> None:
     """Build + cache the circuit's corner geometry from the cleanest session
     already cached. The app does this in a background thread on load; doing it
@@ -387,6 +421,8 @@ def main() -> int:
     if not args.check_only:
         print("\n[1/7] sessions")
         infos = cache_sessions(season, meeting)
+        sync_lap_clock(season, meeting)
+        audit_feed_quality(season, meeting)
 
         print("\n[2/7] track map")
         if args.no_track_map:

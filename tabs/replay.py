@@ -33,7 +33,8 @@ from f1lib.config import (
     TEAM_COLORS, SERIES_1,
     CARD_BG, ACCENT, TEXT_MAIN, TEXT_DIM, GRID_CLR,
 )
-from f1lib.data_loader import load_session
+from f1lib.data_loader import _session_key, load_session
+from f1lib.telemetry_quality import SESSION_CSV as QUALITY_SESSION_CSV, degraded_laps
 
 logger = logging.getLogger(__name__)
 
@@ -646,9 +647,30 @@ def _slider_marks(payload: dict) -> dict:
 
 
 def _status_line(payload: dict) -> str:
-    return (f"  {payload['event']} {payload['season']} · "
+    line = (f"  {payload['event']} {payload['season']} · "
             f"{payload['nLaps']} laps · {len(payload['drivers'])} cars · "
             f"{payload['n']:,} frames @ {1 / payload['dt']:.0f} Hz")
+    share = _pos_degraded_share(payload["season"], payload["event"])
+    if share >= 0.05:
+        line += (f" · ⚠ position feed missing or frozen on {share:.0%} of laps "
+                 "(F1 live timing) — those stretches are interpolated, not real")
+    return line
+
+
+def _pos_degraded_share(season, meeting: str) -> float:
+    """Share of the race's driver-laps whose X/Y feed is missing or
+    stair-stepped (f1lib/telemetry_quality) — 2026 Monaco: pos stops after
+    8 min; 2026 Hungary: frozen from lap ~7. 0.0 when clean / not audited."""
+    stem = _session_key(str(season), meeting, "Race")
+    bad = degraded_laps(stem, "pos")
+    if not bad:
+        return 0.0
+    try:
+        q = pd.read_csv(QUALITY_SESSION_CSV)
+        n = int(q.loc[q["stem"] == stem, "n_laps"].iloc[0])
+    except Exception:
+        return 0.0
+    return len(bad) / n if n else 0.0
 
 
 def _view_options(has_z: bool) -> list[dict]:

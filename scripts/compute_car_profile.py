@@ -83,6 +83,8 @@ import numpy as np
 import pandas as pd
 
 from f1lib.data_loader import event_name_from_stem
+from f1lib.lap_sync import read_telemetry
+from f1lib.telemetry_quality import degraded_mask, session_unusable
 
 from f1lib.processing import (
     clean_and_enrich_laps, field_deg_curves,
@@ -142,9 +144,10 @@ def _index_telemetry(tel: pd.DataFrame) -> dict[str, pd.DataFrame]:
 def _lap_telemetry(by_drv: dict, row) -> pd.DataFrame | None:
     """One lap's telemetry with Distance integrated from speed — the same
     quantity FastF1's add_distance() produces, and the same one tabs/telemetry
-    plots against."""
+    plots against. None for a lap whose car-telemetry feed is degraded
+    (`_tel_bad`, set in _load from f1lib/telemetry_quality)."""
     g = by_drv.get(str(row["DriverNo"]).strip())
-    if g is None:
+    if g is None or bool(row.get("_tel_bad", False)):
         return None
     start = pd.to_numeric(row.get("LapStartTime"), errors="coerce")
     dur = pd.to_numeric(row.get("LapTime_s"), errors="coerce")
@@ -350,13 +353,17 @@ def _load(season: int, event_file: str, kind: str):
         return None, None
     try:
         fl = clean_and_enrich_laps(pd.read_parquet(lp))
+        # degraded car-telemetry laps; a mostly-degraded session entirely (the
+        # few clean laps left are not representative: 2026 Hungarian race)
+        fl["_tel_bad"] = (session_unusable(f"{season}__{event_file}__{kind}", "car")
+                          or degraded_mask(fl, "car").to_numpy())
     except Exception as exc:
         print(f"    {kind}: lap pipeline failed ({exc})")
         return None, None
     tel = None
     if tp.exists():
         try:
-            tel = pd.read_parquet(tp)
+            tel = read_telemetry(tp)
         except Exception as exc:
             print(f"    {kind}: telemetry unreadable ({exc})")
     return fl, tel

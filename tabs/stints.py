@@ -24,7 +24,7 @@ from f1lib.config import (
     MIN_LAPS_MEDIUM,
 )
 from f1lib.processing import (
-    field_deg_curves, detect_stint_cliffs, compound_offsets, format_lap_time,
+    field_deg_curves, detect_stint_cliffs, format_lap_time,
 )
 from f1lib.figures import _add_flag_bands, _add_rain_bands, _lap_evolution_fig
 from f1lib.tyre_allocations import _allocation_chips, _laps_event
@@ -230,7 +230,7 @@ def _best_stint_laps(fl, stints_df):
 
 def tab_stints(fl, fs, sel_teams=None):
     # `fl`/`fs` arrive already filtered; `sel_teams` is passed through to the
-    # season-long car-concept block, which reads its own season table rather
+    # weekend-vs-season card, which reads its own season table rather
     # than the loaded event's laps and so cannot infer the filter from them.
     # 1. Lap Time Evolution layout (dynamic via callback)
     avail_sessions = sorted(fl["session_name"].unique())
@@ -614,7 +614,10 @@ def tab_stints(fl, fs, sel_teams=None):
     deg_rate_card = card(
         ["Tyre ", *gloss("degradation", "Degradation"), " Rate — by ",
          *gloss("compound", "Compound")],
-        _deg_columns(deg_bar_figs, "no stint of ≥5 clean laps on this compound"),
+        html.Div([
+            _allocation_chips(*_laps_event(fl)) or html.Div(),
+            _deg_columns(deg_bar_figs, "no stint of ≥5 clean laps on this compound"),
+        ]),
         info=("Data: degradation rate (s/lap of tyre age) from a linear fit on "
               "each driver's longest valid stint per compound, corrected for "
               "fuel burn AND field-wide track evolution; whiskers = 95% "
@@ -859,65 +862,10 @@ def tab_stints(fl, fs, sel_teams=None):
         measure="stint",
     )
 
-    # 3c. Compound pace offsets (race sessions only — comparable fuel)
-    co = compound_offsets(fl)
-    if not co.empty:
-        err_plus  = (co["Q75"] - co["Offset_s"]).clip(lower=0)
-        err_minus = (co["Offset_s"] - co["Q25"]).clip(lower=0)
-        fig_off = go.Figure(go.Bar(
-            x=co["Pair"], y=co["Offset_s"],
-            marker=dict(
-                color=[COMPOUND_COLORS.get(p.split(" → ")[1], "#808080")
-                       for p in co["Pair"]],
-                line=dict(color=GRID_CLR, width=0.5),
-            ),
-            error_y=dict(type="data", array=err_plus, arrayminus=err_minus,
-                         color="rgba(255,255,255,0.6)", thickness=1.2, width=5),
-            customdata=co[["N_Drivers", "Q25", "Q75"]].values,
-            hovertemplate=(
-                "<b>%{x}</b><br>"
-                "Median offset: %{y:>+.2f} s/lap (+ = second compound slower)"
-                "<br>Driver spread (IQR): %{customdata[1]:>+.2f} … "
-                "%{customdata[2]:>+.2f} s<br>"
-                "Drivers compared: %{customdata[0]}<extra></extra>"
-            ),
-            text=co["Offset_s"].apply(lambda v: f"{v:+.2f}s"),
-            textposition="outside",
-            textfont=dict(size=11, color=TEXT_MAIN),
-        ))
-        fig_off.add_hline(y=0, line=dict(color="white", width=1, dash="dash"))
-        theme(fig_off, 400)
-        fig_off.update_layout(
-            xaxis_title="Compound pair",
-            yaxis_title="s/lap  ·  positive = second compound slower",
-            showlegend=False, bargap=0.45,
-        )
-        _off_season, _off_meeting = _laps_event(fl)
-        offset_body = html.Div([
-            _allocation_chips(_off_season, _off_meeting) or html.Div(),
-            dcc.Graph(figure=fig_off, config=GFX),
-        ])
-    else:
-        offset_body = html.P(
-            "Compound offsets need race or sprint laps (practice fuel loads "
-            "are unknown, which would contaminate the comparison). Load a "
-            "race session in the Data tab.", style={"color": TEXT_DIM})
-    offset_card = card(
-        "Compound Pace Offsets",
-        offset_body,
-        info=("Data: race/sprint laps only, fuel- and track-corrected. For "
-              "every stint a line is fitted to corrected lap time vs tyre age "
-              "and read off at a common low reference age, so each compound is "
-              "compared on an equal fresh-tyre footing (clean laps preferred, "
-              "falling back to all laps when a stint has too few). Each driver "
-              "who ran both compounds contributes their personal pace "
-              "difference (which cancels out car and driver speed); the bar is "
-              "the field median, the whiskers the driver-to-driver spread. "
-              "Why: the compound offset sets the strategy crossover — how many "
-              "laps of tyre advantage a fresh soft buys over a hard determines "
-              "whether an extra stop pays for itself."),
-        measure="stint",
-    )
+    # (No compound pace-offset card: a per-race offset is not measurable
+    # from race running — the track changing between the two halves of the
+    # race swamps it. Tested Oct 2026 on every dry race 2023-26 with the real
+    # Pirelli C-numbers; see tabs/race.py _strategy_model.)
 
     # 4. Stint Lap Inspector
     avail_drivers = sorted(fl["Driver_Short"].dropna().unique())
@@ -972,13 +920,12 @@ def tab_stints(fl, fs, sel_teams=None):
         ),
     ])
 
-    # The season-long car-concept block sits at the TOP of the tab: it is the
-    # context for everything below it. The per-event stint cards tell you what
-    # the tyres did this weekend; this tells you what kind of car was doing it.
-    from tabs.car_profile import car_concept_section
+    # Season-long car character lives on the SEASON tab. What belongs here is
+    # the loaded event measured against it: where a car stopped behaving like
+    # itself this weekend.
+    from tabs.car_profile import weekend_vs_season_card
+    _wk_season, _wk_meeting = _laps_event(fl)
     return html.Div([
-        car_concept_section(teams=sel_teams),
-        html.Hr(style={"borderColor": GRID_CLR, "margin": "34px 0 24px"}),
         html.Div([
             html.H3("THIS WEEKEND'S STINTS", style={
                 "color": TEXT_MAIN, "fontWeight": "900", "letterSpacing": "3px",
@@ -986,10 +933,12 @@ def tab_stints(fl, fs, sel_teams=None):
                 "borderBottom": f"2px solid {ACCENT}", "paddingBottom": "8px",
                 "marginBottom": "4px"}),
             html.P("degradation, cliffs and compound offsets for the loaded "
-                   "event — the evidence the season view above is built from",
+                   "event — and where each car broke from its season character",
                    style={"color": TEXT_DIM, "fontSize": "0.78rem",
                           "textAlign": "center", "marginBottom": "18px"}),
         ]),
+        weekend_vs_season_card(_wk_season, _wk_meeting, teams=sel_teams)
+        or html.Div(),
         card("Lap Time Evolution – All Laps", evo_layout,
              info=("Data: every lap (valid or not) for the selected session, one line "
                    "per driver, markers tinted by compound, with track-flag periods "
@@ -999,7 +948,6 @@ def tab_stints(fl, fs, sel_teams=None):
         *violin_cards,
         *deg_cards,
         cliff_card,
-        offset_card,
         card([*gloss("stint", "Stint"), " Lap Inspector"], stint_inspector,
              info=("Data: the individual laps of any stint, picked from a "
                    "dropdown that pre-ranks each driver's stints by pace — "

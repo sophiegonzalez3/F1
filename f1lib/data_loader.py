@@ -66,6 +66,7 @@ except ImportError:
                     "Run: pip install fastf1")
 
 from f1lib.config import SESSIONS_DIR, FASTF1_CACHE_DIR
+from f1lib import lap_sync
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,70 @@ def _load_df_or_empty(path: Path) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     return _load_df(path)
+
+
+# Official-classification fields FastF1 leaves blank when a Race/Sprint is
+# fetched before Jolpica publishes the result (it falls back to the
+# live-timing order: Position only, no grid / status / points).
+_CLASSIFICATION_COLS = ("ClassifiedPosition", "GridPosition", "Status", "Points")
+
+
+def _results_incomplete(results: pd.DataFrame) -> bool:
+    if results.empty:
+        return False
+    for col in ("GridPosition", "Points", "Status"):
+        if col not in results.columns:
+            return True
+        s = results[col]
+        if s.isna().all() or (s.astype(str).str.strip().isin(["", "nan", "None"])).all():
+            return True
+    return False
+
+
+def _backfill_results(results: pd.DataFrame, season: str, meeting: str,
+                      session: str) -> pd.DataFrame | None:
+    """Fill a provisional Race/Sprint classification from the results
+    archive (refreshed by after_race). Returns the repaired frame, or None
+    when nothing needed / nothing could be repaired."""
+    if session not in ("Race", "Sprint") or not _results_incomplete(results):
+        return None
+    arch_path = Path(f"data/historical_results/{session.lower()}_results_all.parquet")
+    if not arch_path.exists():
+        return None
+    try:
+        arch = pd.read_parquet(arch_path)
+    except Exception as exc:
+        logger.warning("results backfill: cannot read %s: %s", arch_path, exc)
+        return None
+    arch = arch[(pd.to_numeric(arch["season"], errors="coerce") == int(season))
+                & arch["event_name"].map(lambda e: _event_names_match(meeting, e))]
+    if arch.empty:
+        return None
+
+    key = lambda s: s.astype(str).str.strip().str.lstrip("0")
+    src = (arch.assign(_k=key(arch["DriverNumber"]))
+               .drop_duplicates("_k").set_index("_k"))
+    out = results.copy()
+    k = key(out["DriverNumber"])
+    filled = 0
+    for col in (*_CLASSIFICATION_COLS, "Position", "Time", "Laps"):
+        if col not in src.columns:
+            continue
+        # The archive is the official result, so it wins over the provisional
+        # live order too (post-race penalties reshuffle Position).
+        new = k.map(src[col])
+        if col not in out.columns:
+            out[col] = new
+        else:
+            if out[col].dtype == object or new.dtype == object:
+                out[col] = out[col].astype(object)
+            out[col] = new.where(new.notna(), out[col])
+        filled += int(new.notna().sum())
+    if _results_incomplete(out) or not filled:
+        return None
+    print(f"  [results]    {season} {meeting} {session}: provisional classification "
+          f"backfilled from the results archive", flush=True)
+    return out
 
 
 # ─────────────────────────────────────────────────────────────
@@ -478,6 +543,7 @@ def load_session(
             )
         else:
             print(f"  [cache HIT]  {key}", flush=True)
+            telemetry = lap_sync.apply_offsets(telemetry, key)
             for df in (laps, telemetry):
                 _tag(df, session, season, meeting, sess_name)
 
@@ -485,6 +551,10 @@ def load_session(
             track_status = _load_df_or_empty(paths["track_status"])
             race_control = _load_df_or_empty(paths["race_control"])
             results      = _load_df_or_empty(paths["results"])
+            _fixed = _backfill_results(results, season, meeting, session)
+            if _fixed is not None:
+                results = _fixed
+                _save_df(results, paths["results"])
 
             for df in (weather, track_status, race_control, results):
                 if not df.empty and "session_name" not in df.columns:
@@ -550,6 +620,10 @@ def load_session(
         for col in df.select_dtypes(include=["timedelta64[ns]"]).columns:
             df[col] = df[col].dt.total_seconds()
 
+    _fixed = _backfill_results(results, season, meeting, session)
+    if _fixed is not None:
+        results = _fixed
+
     # ── 3. Persist to Parquet ─────────────────────────────────
     print(f"  [saving]     laps ({len(laps):,} rows)…", flush=True)
     _save_df(laps, paths["laps"])
@@ -582,6 +656,10 @@ def load_session(
         "res_rows":  len(results),
     }])
     _save_df(meta_df, paths["meta"])
+
+    # The cache keeps FastF1's raw clock; the lap-sync correction is applied
+    # on every read (no-op until audit_lap_sync.py has covered this session).
+    telemetry = lap_sync.apply_offsets(telemetry, key)
 
     return {
         "laps":         laps,
@@ -864,6 +942,42 @@ def cache_summary() -> str:
 # ─────────────────────────────────────────────────────────────
 # Quick CLI test
 # ─────────────────────────────────────────────────────────────
+def heal_provisional_results() -> tuple[int, list[str]]:
+    """Repair every cached Race/Sprint `__results.parquet` that still holds a
+    provisional classification, in place, from the results archive.
+
+    load_session heals on read, but several after_race consumers
+    (compute_race_stats, seed_model_review, …) read the results parquet
+    directly — so the chain runs this right after the archive refresh.
+    Returns (n_healed, keys still provisional)."""
+    healed, stuck = 0, []
+    for p in sorted(Path(SESSIONS_DIR).glob("*__results.parquet")):
+        key = p.name[: -len("__results.parquet")]
+        parts = key.split("__")
+        if len(parts) != 3 or parts[2] not in ("Race", "Sprint"):
+            continue
+        res = _load_df(p)
+        if not _results_incomplete(res):
+            continue
+        season = str(res["season"].iloc[0]) if "season" in res.columns else parts[0]
+        meeting = (str(res["meeting"].iloc[0]) if "meeting" in res.columns
+                   else event_name_from_stem(parts[0], parts[1]))
+        fixed = _backfill_results(res, season, meeting, parts[2])
+        if fixed is None:
+            stuck.append(key)
+            continue
+        _save_df(fixed, p)
+        healed += 1
+    return healed, stuck
+
+
 if __name__ == "__main__":
+    import sys
+    if "--heal-results" in sys.argv:
+        n, stuck = heal_provisional_results()
+        print(f"Healed {n} provisional results file(s).")
+        for k in stuck:
+            print(f"  STILL PROVISIONAL (not in the archive yet): {k}")
+        sys.exit(1 if stuck else 0)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
     print(cache_summary())

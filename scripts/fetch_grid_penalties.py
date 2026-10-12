@@ -24,8 +24,12 @@ each yet drew 30 and 20 places. Pit-lane starts carry places = 0 and
 pit_lane = True: a pit-lane start is not a number of places, and inventing
 one would make the panel's arithmetic look more precise than it is.
 
-Some grids carry pit-lane footnotes only as an image (2026 R2, R5, R7, R12);
-those starts are invisible here and the run says so.
+Some grids print a footnote OUTSIDE the PDF's text layer: it renders on the
+page but pypdf and pdfplumber both return nothing for it, or only its trailing
+"document no." (2026 R2, R5, R7, R12, R14 — every one a pit-lane start). The
+run flags those events; read the rendered page and copy the line, verbatim,
+into TRANSCRIBED. Until then the start is missing from the ledger — R5, R7
+and R14 were PU pit-lane starts the Engine Championship never saw.
 
 Usage
 -----
@@ -65,8 +69,27 @@ COLS = ["season", "round", "event", "car", "driver", "team", "places",
 _NOTE = re.compile(
     r"Cars?\s+(?P<cars>\d+(?:\s*(?:,|&|and)\s*\d+)*)\s+-\s+"
     r"(?P<what>\d+\s+place\s+grid\s+penalt(?:y|ies)|Required to start from the pit lane)"
-    r"\s+-\s+(?P<why>.+?)\s+-\s+Stewards'?\s*(?P<doc>document\s+nos?\.\s*[\d ,&]+(?:\s*\([^)]*\))?)?",
+    r"\s+-\s+(?P<why>.+?)\s+-\s+Stewards'?\s*(?P<doc>(?:document|decision)\s+nos?\.\s*[\d ,&]+(?:\s*\([^)]*\))?)?",
     re.IGNORECASE)
+
+# Footnotes missing from the PDF text layer, copied by hand from the rendered
+# page in the FIA's own words, so they go through the same parser. Merged only
+# for cars the parse did not already find.
+TRANSCRIBED = {
+    (2026, 2): "Car 23 - Required to start from the pit lane - Car modified "
+               "whilst under Parc Fermé conditions - Stewards' document no. 68",
+    (2026, 5): "Car 18 - Required to start from the pit lane - Car modified "
+               "whilst under Parc Fermé conditions and additional power unit "
+               "elements have been used - Stewards' document no. 89",
+    (2026, 7): "Car 14 - Required to start from the pit lane - Car modified "
+               "whilst under Parc Fermé conditions and additional power unit "
+               "elements have been used - Stewards' document no. 52",
+    (2026, 12): "Car 11 - Required to start from the pit lane - Car modified "
+                "whilst under Parc Fermé conditions - Stewards' decision no. 59",
+    (2026, 14): "Car 87 - Required to start from the pit lane - Car modified "
+                "whilst under Parc Fermé conditions and additional power unit "
+                "elements have been used - Stewards' document no. 63",
+}
 
 
 def _pdf_text(url: str) -> str | None:
@@ -134,6 +157,10 @@ def build(season: int) -> pd.DataFrame:
             print(f"  R{int(rnd):02d} {event}: no final starting grid at {url}")
             continue
         notes = parse(text)
+        if (season, int(rnd)) in TRANSCRIBED:
+            have = {n["car"] for n in notes}
+            notes += [n for n in parse("PENALTIES " + TRANSCRIBED[(season, int(rnd))])
+                      if n["car"] not in have]
         driver_of = dict(zip(g["DriverNumber"].astype(int), g["Abbreviation"]))
         team_of = dict(zip(g["Abbreviation"], g["TeamName"]))
         for n in notes:
@@ -143,8 +170,8 @@ def build(season: int) -> pd.DataFrame:
                         "source": url, **n})
         starters = text.count("REQUIRED TO START FROM THE PIT LANE")
         noted = sum(n["pit_lane"] for n in notes)
-        flag = ("  (pit-lane footnote not in the PDF text)"
-                if starters and not noted else "")
+        flag = ("  (pit-lane footnote not in the PDF text - transcribe it "
+                "into TRANSCRIBED)" if starters and not noted else "")
         print(f"  R{int(rnd):02d} {event}: {len(notes)} footnote row(s){flag}")
     return pd.DataFrame(out, columns=COLS)
 

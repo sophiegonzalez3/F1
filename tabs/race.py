@@ -38,7 +38,7 @@ from f1lib.processing import (
     flag_dirty_air, enrich_track_evolution, enrich_session_results,
     flag_position_changes,
     analyze_stints, enrich_telemetry,
-    field_deg_curves, compound_offsets, format_lap_time,
+    field_deg_curves, format_lap_time,
     detect_wet_crossover, dirty_air_penalty, traffic_exposure_curve,
     clipped_range,
 )
@@ -508,10 +508,13 @@ def _undercut_fig(pairs: pd.DataFrame, title: str) -> go.Figure:
 # ══════════════════════════════════════════════════════════════
 #  STRATEGY WHAT-IF SIMULATOR
 #  Built entirely from quantities the pipeline already estimates:
-#  field deg curves + compound offsets + pit loss measured in-race.
+#  field deg curves + pit loss measured in-race (compound offset = prior).
 # ══════════════════════════════════════════════════════════════
 
 _SIM_MIN_STINT = 5      # laps — shortest stint the optimizer may schedule
+# s/lap per compound step at equal fresh age, harder minus softer (see
+# _strategy_model). Pooled 2023-26 evidence: ~0 ± 0.2.
+COMPOUND_OFFSET_PRIOR_S = 0.0
 
 
 from f1lib.tyre_allocations import _allocation_chips, _allocation_for, _laps_event
@@ -552,9 +555,9 @@ def _estimate_pit_loss(rl: pd.DataFrame) -> float | None:
 def _strategy_model(rl: pd.DataFrame, total_laps: int) -> dict | None:
     """Per-compound per-lap cost arrays for the simulator.
 
-    cost[a] (a = tyre age 1..total_laps) = compound offset + field deg curve
-    value at that age. The offset chain is anchored on the softest compound
-    present; the deg curve is linearly extrapolated beyond the longest
+    cost[a] (a = tyre age 1..total_laps) = compound offset (a fixed prior,
+    not measured per race — see below) + field deg curve value at that
+    age. The deg curve is linearly extrapolated beyond the longest
     observed stint (slope of its last 4 observed points, floored at
     +0.02 s/lap so an extrapolated tyre never becomes immortal).
 
@@ -566,23 +569,16 @@ def _strategy_model(rl: pd.DataFrame, total_laps: int) -> dict | None:
     if len(comps) < 2:
         return None
 
-    # ── Offsets chained to the softest compound present ──────
-    off_df = compound_offsets(rl)
-    offsets = {comps[0]: 0.0}
-    if not off_df.empty:
-        pair_map = {r.Pair: r.Offset_s for r in off_df.itertuples()}
-        for c in comps[1:]:
-            direct = pair_map.get(f"{comps[0]} → {c}")
-            if direct is not None:
-                offsets[c] = float(direct)
-                continue
-            # chain through an intermediate compound if needed
-            for mid in comps:
-                if mid in offsets and f"{mid} → {c}" in pair_map:
-                    offsets[c] = offsets[mid] + float(pair_map[f"{mid} → {c}"])
-                    break
-    for c in comps:                     # unreachable pairs → assume 0 offset
-        offsets.setdefault(c, 0.0)
+    # ── Fresh-tyre pace offset between compounds: a fixed prior ──
+    # NOT measured from this race. A per-race offset turned out to be
+    # unmeasurable from race running (Oct 2026, 68 dry races 2023-26 with the
+    # real Pirelli C-numbers): almost everyone pits in the same window, so
+    # "second compound" is "second half of the race", and the race-wide drift
+    # between halves (sd ~0.3-1.2 s) swamps the tyre. Drivers who ran the two
+    # orders never agreed (r -0.37...+0.21), and the pooled crossover estimate
+    # is ~-0.1 s per C-step with no step-size dependence — i.e. below
+    # resolution. Zero is the honest centre; the deg curves carry the rest.
+    offsets = {c: COMPOUND_OFFSET_PRIOR_S * i for i, c in enumerate(comps)}
 
     # ── Deg curves → per-lap cost arrays ─────────────────────
     model = {}
@@ -1968,8 +1964,11 @@ def tab_race(sel_drivers=None, sel_teams=None):
         ]),
         info=("Data: a race model assembled from this race's own measurements "
               "— per-compound field degradation curves (extrapolated beyond "
-              "the longest observed stint, marked ⚠), compound pace offsets, "
-              "and the pit loss measured from actual stops (editable above). "
+              "the longest observed stint, marked ⚠) and the pit loss measured from actual stops (editable above). "
+              "Fresh-tyre pace is treated as equal across compounds: a "
+              "per-race compound offset cannot be separated from the track "
+              "changing between stints (tested on every dry race 2023-26), "
+              "so the compounds differ here only by how they degrade. "
               "The optimizer grid-searches every legal 1- and 2-stop compound "
               "plan and its stop laps. Top chart: every plan ranked by time "
               "lost vs the optimum. Bottom chart: how much mistiming the "

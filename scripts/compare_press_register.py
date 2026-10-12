@@ -47,9 +47,12 @@ def compare(season: int | None = None) -> pd.DataFrame:
             "dashboard_source": got["cause_source"] or "—",
             "press": fam_p or "—",
             "family_agrees": got["cause_family"] == fam_p,
+            # the register's counterparty lists every other car of a
+            # multi-car message ("OCO/HUL"); the press names one of them
             "other_car_agrees": (not r.press_counterparty
                                  or not got.get("counterparty")
-                                 or got["counterparty"] == r.press_counterparty),
+                                 or r.press_counterparty
+                                 in str(got["counterparty"]).split("/")),
             "press_ruling": r.press_ruling,
         })
     return pd.DataFrame(out)

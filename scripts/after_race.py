@@ -11,13 +11,19 @@ STEPS below say why each one is there and why it sits where it does. In short:
                      expire upstream; polymarket only works with the VPN on)
   radio              fetch + whisper-transcribe the team radio (mp3s are
                      purged upstream after a few weeks)
+  lapsync            per-driver lap/telemetry clock offsets for the weekend
+                     (data/lap_sync_offsets.csv, applied on every telemetry read)
+  telquality         flag missing / stair-stepped telemetry laps
+                     (data/telemetry_degraded_laps.csv)
   qualiscene         bake the QUALI 3D replay for the weekend
   pitstops           real pit stops (race stats reads them)
   archive            official results + standings (Jolpica)
   archivecheck       stops the chain if the newest cached race has no
                      classification yet — everything below would silently
                      work on the previous round
-  incidents          race-control incident register
+  healresults        overwrite provisional Race/Sprint results caches from
+                     the archive (racestats/review read them directly)
+  incidents         race-control incident register
   teampace, driverpace   per-event pace tables (the model's inputs)
   racestats, atr, topspeed, carprofile   measured cards (TRACK/SEASON/STINTS)
   backtest           re-SCORES the pace model on every past weekend (no
@@ -84,6 +90,17 @@ STEPS: list[tuple[str, str, list[str]]] = [
     # minutes. Only the REVIEW of the transcripts stays manual (/radio-review).
     ("radio",     "team radio transcription",
      [sys.executable, "scripts/fetch_radio.py", "{season}", "{event}"]),
+    # FastF1 sometimes cuts laps on a clock several seconds off the telemetry
+    # (2026 Sepang race: 19.6 s). Re-audit the weekend's sessions so every
+    # telemetry read below is shifted back onto the lap clock (f1lib/lap_sync).
+    ("lapsync",   "lap/telemetry clock sync",
+     [sys.executable, "scripts/audit_lap_sync.py", "--season", "{season}",
+      "--meeting", "{event}"]),
+    # Then flag laps whose feed is missing or stair-stepped (2026 Monaco /
+    # Hungary races): mistakes, sections and car traits skip them.
+    ("telquality", "telemetry feed quality",
+     [sys.executable, "scripts/audit_telemetry_quality.py", "--season", "{season}",
+      "--meeting", "{event}"]),
     # The QUALI 3D replay for the weekend (Overpass + terrain, cached). Before
     # archivecheck because it needs only the session cache, not the results.
     ("qualiscene", "quali 3D replay scene",
@@ -99,6 +116,13 @@ STEPS: list[tuple[str, str, list[str]]] = [
     # steps above (the time-critical ones) have already run.
     ("archivecheck", "latest race is in the archive",
      [sys.executable, "-m", "f1lib.latest_race"]),
+    # A Race/Sprint cached before Jolpica published carries FastF1's
+    # live-timing fallback: Position only, no grid / status / points. The app
+    # heals that on load, but racestats, review and others read the results
+    # parquet DIRECTLY — so overwrite it from the archive here, before them.
+    # Fails if a race is still provisional, for the same reason as above.
+    ("healresults", "provisional classifications",
+     [sys.executable, "-m", "f1lib.data_loader", "--heal-results"]),
     ("incidents", "incident register",
      [sys.executable, "scripts/compute_incidents.py"]),
     # Every grid drop / pit-lane start from the FIA final starting grids —
@@ -115,6 +139,10 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "scripts/compute_race_stats.py"]),
     ("atr",       "ATR sliding scale",
      [sys.executable, "scripts/compute_atr.py"]),
+    # CONTEXT "Did the Cap Level the Field?" — reads the results archive,
+    # so it sits after archivecheck like the other standings-derived steps.
+    ("capconv",   "cost-cap convergence",
+     [sys.executable, "scripts/compute_cap_convergence.py"]),
     ("topspeed",  "PU top-speed index",
      [sys.executable, "scripts/compute_pu_topspeed.py"]),
     # SEASON "Car Profile by Section Type": every round's best qualifying
@@ -137,6 +165,11 @@ STEPS: list[tuple[str, str, list[str]]] = [
      [sys.executable, "scripts/compute_lap_retention.py"]),
     ("sessionwx", "per-session weather",
      [sys.executable, "scripts/compute_session_weather.py"]),
+    # TEAM & TEAMATE window table. Reads driverpace, racestats (pit_league)
+    # and retention, so it sits after all three. --season replaces only this
+    # season's rows; earlier seasons are kept from the file.
+    ("driverkpis", "per-event driver KPIs",
+     [sys.executable, "scripts/compute_driver_event_kpis.py", "--season", "{season}"]),
     # LAST, because it needs the rebuilt pace + driver tables above to work
     # out who fell outside their error bar. Writes only the skeleton rows;
     # the cause and the note are written by hand afterwards (see FOLLOW_UPS).

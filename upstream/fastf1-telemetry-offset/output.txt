@@ -1,0 +1,83 @@
+req         WARNING 	DEFAULT CACHE ENABLED! (17.76 GB) C:/Users/sophi/DEV/F1/cache/fastf1
+core           INFO 	Loading data for Bahrain Grand Prix - Qualifying [v3.8.3]
+req            INFO 	Using cached data for session_info
+req            INFO 	Using cached data for driver_info
+req            INFO 	Using cached data for session_status_data
+req            INFO 	Using cached data for track_status_data
+req            INFO 	Using cached data for _extended_timing_data
+req            INFO 	Using cached data for timing_app_data
+core           INFO 	Processing timing data...
+req            INFO 	Using cached data for car_data
+req            INFO 	Using cached data for position_data
+core           INFO 	Finished loading data for 22 drivers: ['3', '44', '6', '12', '16', '1', '81', '63', '10', '5', '30', '14', '55', '18', '43', '41', '27', '87', '31', '23', '77', '11']
+core           INFO 	Loading data for Bahrain Grand Prix - Race [v3.8.3]
+req            INFO 	Using cached data for session_info
+req            INFO 	Using cached data for driver_info
+req            INFO 	Using cached data for session_status_data
+req            INFO 	Using cached data for lap_count
+req            INFO 	Using cached data for track_status_data
+req            INFO 	Using cached data for _extended_timing_data
+req            INFO 	Using cached data for timing_app_data
+core           INFO 	Processing timing data...
+core        WARNING 	Fixed incorrect tyre stint information for driver '3'
+core        WARNING 	Fixed incorrect tyre stint information for driver '44'
+core        WARNING 	Fixed incorrect tyre stint information for driver '16'
+core        WARNING 	Fixed incorrect tyre stint information for driver '6'
+core        WARNING 	Fixed incorrect tyre stint information for driver '81'
+core        WARNING 	Fixed incorrect tyre stint information for driver '30'
+core        WARNING 	Fixed incorrect tyre stint information for driver '14'
+core        WARNING 	Fixed incorrect tyre stint information for driver '1'
+core        WARNING 	Fixed incorrect tyre stint information for driver '41'
+core        WARNING 	Fixed incorrect tyre stint information for driver '27'
+core        WARNING 	Fixed incorrect tyre stint information for driver '18'
+core        WARNING 	Fixed incorrect tyre stint information for driver '43'
+core        WARNING 	Fixed incorrect tyre stint information for driver '87'
+core        WARNING 	Fixed incorrect tyre stint information for driver '31'
+core        WARNING 	Fixed incorrect tyre stint information for driver '10'
+core        WARNING 	Fixed incorrect tyre stint information for driver '55'
+core        WARNING 	Fixed incorrect tyre stint information for driver '5'
+core        WARNING 	Fixed incorrect tyre stint information for driver '11'
+core        WARNING 	Fixed incorrect tyre stint information for driver '63'
+core        WARNING 	Fixed incorrect tyre stint information for driver '23'
+core        WARNING 	Fixed incorrect tyre stint information for driver '77'
+core        WARNING 	Driver 3 completed the race distance 00:19.478000 before the recorded end of the session.
+core        WARNING 	Driver 12 completed the race distance 00:17.248000 before the recorded end of the session.
+core        WARNING 	Driver 44 completed the race distance 00:14.648000 before the recorded end of the session.
+core        WARNING 	Driver 6 completed the race distance 00:10.832000 before the recorded end of the session.
+core        WARNING 	Driver 81 completed the race distance 00:10.034000 before the recorded end of the session.
+core        WARNING 	Driver 30 completed the race distance 00:06.817000 before the recorded end of the session.
+core        WARNING 	Driver 14 completed the race distance 00:06.131000 before the recorded end of the session.
+core        WARNING 	Driver 1 completed the race distance 00:05.438000 before the recorded end of the session.
+core        WARNING 	Driver 41 completed the race distance 00:03.509000 before the recorded end of the session.
+core        WARNING 	Driver 27 completed the race distance 00:02.032000 before the recorded end of the session.
+core        WARNING 	Driver 18 completed the race distance 00:01.422000 before the recorded end of the session.
+core        WARNING 	Driver 43 completed the race distance 00:00.485000 before the recorded end of the session.
+req            INFO 	Using cached data for car_data
+req            INFO 	Using cached data for position_data
+core           INFO 	Finished loading data for 22 drivers: ['3', '12', '44', '16', '6', '81', '30', '14', '1', '41', '27', '18', '43', '87', '31', '10', '55', '5', '11', '63', '23', '77']
+Qualifying: median lap-start distance from S/F = 5.9 m
+
+Race, per driver (median over laps):
+     laps  lap_start_dist_m  offset_s
+LEC    50              7.18      0.01
+NOR    51            374.54     19.52
+GAS    50            370.07     19.52
+SAI    51            374.05     19.52
+ALB    38            365.18     19.54
+BOR    49            354.41     19.55
+HAD    51            369.62     19.55
+COL    51            369.35     19.56
+PIA    50            376.98     19.56
+BEA    51            362.30     19.57
+LIN    51            366.94     19.57
+VER    51            385.79     19.57
+HUL    50            367.10     19.59
+PER    47            366.94     19.59
+OCO    51            367.61     19.60
+ANT    51            383.15     19.62
+STR    50            364.04     19.62
+ALO    51            373.60     19.65
+RUS    46            377.32     19.66
+LAW    51            371.19     19.68
+HAM    52            382.72     19.68
+BOT     7            151.97     19.77

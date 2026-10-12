@@ -361,7 +361,9 @@ def _provenance(season: int) -> tuple[int, int, int, int]:
     d = causes_df()
     looked = never = 0
     if not d.empty:
-        s = d[pd.to_numeric(d["season"], errors="coerce") == season]
+        from f1lib.incidents import session_of
+        s = d[(pd.to_numeric(d["season"], errors="coerce") == season)
+              & session_of(d).eq("Race")]
         chk = s["press_checked"].astype(str).str.strip()
         blank = s["cause_family"].map(normalise_family).eq("")
         looked = int((blank & chk.ne("") & chk.ne("nan")).sum())

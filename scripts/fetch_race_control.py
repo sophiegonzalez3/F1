@@ -47,6 +47,14 @@ no telemetry. That is the whole reason the affected races were never simply
 re-fetched into the full cache: the full path pulls telemetry, which is
 gigabytes per season and is why the lite store exists at all.
 
+SIDE FILES FOR THE STOPPAGE DETECTOR (added 2026-10-12). f1lib/session_stops
+needs, per session, the TRACK STATUS (red flag / VSC / SC onsets in session
+seconds) and the RESULTS entry list (who was entered, so a car that never ran
+is told apart from an FP1 rookie swap). The lite store held neither. Both
+come with `laps=True`, which FastF1 serves from cache/ for every session the
+lite store was built from, so the load stays offline apart from the messages.
+A session is pending while ANY of the three side files is missing.
+
 Usage
 -----
     python scripts/fetch_race_control.py                  # every lite race missing RCM
@@ -70,6 +78,7 @@ from f1lib.config import SESSIONS_DIR, SESSIONS_LITE_DIR
 
 LITE = Path(SESSIONS_LITE_DIR)
 FULL = Path(SESSIONS_DIR)
+SIDE_FILES = ("race_control", "track_status", "results")
 
 
 def pending(season: int | None) -> list[tuple[int, str, str]]:
@@ -86,10 +95,10 @@ def pending(season: int | None) -> list[tuple[int, str, str]]:
             continue
         if season is not None and int(season_s) != season:
             continue
-        if (FULL / f"{key}__race_control.parquet").exists():
-            continue          # the full cache already has it
-        if (LITE / f"{key}__race_control.parquet").exists():
-            continue          # already backfilled
+        if all((FULL / f"{key}__{part}.parquet").exists()
+               or (LITE / f"{key}__{part}.parquet").exists()
+               for part in SIDE_FILES):
+            continue          # full cache or an earlier backfill has them all
         out.append((int(season_s), meeting_s.replace("_", " "),
                     session_s.replace("_", " ")))
     return out
@@ -99,16 +108,27 @@ def fetch_one(season: int, meeting: str, session: str) -> bool:
     key = dl._session_key(str(season), meeting, session)
     sess_name = dl._session_name(str(season), meeting, session)
     ff1_sess = dl.get_ff1_session_strict(season, meeting, dl._ff1_session_id(session))
-    # messages ONLY — no laps, no telemetry, no weather
-    ff1_sess.load(laps=False, telemetry=False, weather=False, messages=True)
-    rcm = dl._safe_attr(ff1_sess, "race_control_messages")
-    if rcm.empty:
-        print(f"  [empty]  {key} — no race-control messages returned",
-              flush=True)
+    # laps=True only to get track status + the results entry list (served from
+    # cache/); still no telemetry and no weather
+    ff1_sess.load(laps=True, telemetry=False, weather=False, messages=True)
+    saved = []
+    for part, attr in (("race_control", "race_control_messages"),
+                       ("track_status", "track_status"),
+                       ("results", "results")):
+        if ((FULL / f"{key}__{part}.parquet").exists()
+                or (LITE / f"{key}__{part}.parquet").exists()):
+            continue
+        df = dl._safe_attr(ff1_sess, attr)
+        if df.empty:
+            continue
+        df = df.copy()
+        dl._tag(df, session, str(season), meeting, sess_name)
+        dl._save_df(df, LITE / f"{key}__{part}.parquet")
+        saved.append(f"{part} {len(df):,}")
+    if not saved:
+        print(f"  [empty]  {key} — nothing returned", flush=True)
         return False
-    dl._tag(rcm, session, str(season), meeting, sess_name)
-    dl._save_df(rcm, LITE / f"{key}__race_control.parquet")
-    print(f"  [saved]  {key} — {len(rcm):,} messages", flush=True)
+    print(f"  [saved]  {key} — {', '.join(saved)}", flush=True)
     return True
 
 
@@ -120,9 +140,9 @@ def main() -> int:
 
     todo = pending(args.season)
     if not todo:
-        print("Nothing to fetch — every lite session already has race control.")
+        print("Nothing to fetch — every lite session already has its side files.")
         return 0
-    print(f"{len(todo)} session(s) missing race control:")
+    print(f"{len(todo)} session(s) missing race control / track status / results:")
     for s, m, sess in todo:
         print(f"  {s}  {m}  {sess}")
     if args.dry_run:

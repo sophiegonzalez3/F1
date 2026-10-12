@@ -1,4 +1,10 @@
-"""Race-incident register (data/incidents.csv, built by compute_incidents.py).
+"""Incident register (data/incidents.csv, built by compute_incidents.py).
+
+EVERY SESSION since 2026-10-12: each row carries `session` ("Race", "Sprint",
+"Qualifying", "Practice 1", ...). Every function here takes `session` and
+DEFAULTS TO "Race", so callers written for the race-only register keep their
+meaning; pass session=None for all sessions. A file written before the column
+existed reads as all-Race.
 
 The results archive has recorded a bare "Retired" for every non-finish since
 2023, so the dashboard's mechanical-vs-incident DNF split has been dead code
@@ -61,8 +67,9 @@ CAUSAL_WINDOW = 6
 # retirement, which is exactly what CAUSAL_WINDOW exists to prevent.
 PUBLICATION_LAG = 6
 
-_COLS = ["season", "round", "event", "lap", "driver", "car_no", "kind",
-         "reason", "counterparty", "outcome", "incident_time", "n_messages"]
+_COLS = ["season", "round", "event", "session", "lap", "driver", "car_no",
+         "kind", "reason", "counterparty", "outcome", "incident_time",
+         "n_messages"]
 
 _CACHE: dict = {"mtime": None, "df": pd.DataFrame(columns=_COLS)}
 
@@ -78,6 +85,9 @@ def incidents_df() -> pd.DataFrame:
         if mtime is not None:
             try:
                 df = pd.read_csv(INCIDENTS_PATH)
+                if "session" not in df.columns:
+                    df["session"] = "Race"
+                df["session"] = df["session"].fillna("Race").astype(str)
             except Exception as exc:
                 print(f"Incident register       : failed to read ({exc})")
         _CACHE["df"] = df
@@ -85,18 +95,32 @@ def incidents_df() -> pd.DataFrame:
     return _CACHE["df"]
 
 
-def has_incidents(season) -> bool:
+def session_of(d: pd.DataFrame) -> pd.Series:
+    """Each row's session; a frame or row without one is a Race row (the
+    register was race-only until 2026-10-12)."""
+    if "session" not in d.columns:
+        return pd.Series("Race", index=d.index)
+    s = d["session"].astype(str).str.strip()
+    return s.mask(s.isin(["", "nan", "None"]), "Race")
+
+
+def has_incidents(season, session: str | None = "Race") -> bool:
     d = incidents_df()
     if d.empty:
         return False
     try:
-        return bool((d["season"] == int(season)).any())
+        m = d["season"] == int(season)
     except (TypeError, ValueError):
         return False
+    if session is not None:
+        m &= session_of(d) == session
+    return bool(m.any())
 
 
-def contact_for(season, event: str | None = None) -> pd.DataFrame:
-    """Contact incidents for a season, optionally one event."""
+def contact_for(season, event: str | None = None,
+                session: str | None = "Race") -> pd.DataFrame:
+    """Contact incidents for a season, optionally one event. Race only unless
+    `session` says otherwise (None = every session)."""
     d = incidents_df()
     if d.empty:
         return d
@@ -106,10 +130,13 @@ def contact_for(season, event: str | None = None) -> pd.DataFrame:
         return d.iloc[0:0]
     if event:
         m &= d["event"].astype(str).str.strip() == str(event).strip()
+    if session is not None:
+        m &= session_of(d) == session
     return d[m].copy()
 
 
-def classify_retirement(season, event: str, driver: str, last_lap) -> dict:
+def classify_retirement(season, event: str, driver: str, last_lap,
+                        session: str = "Race") -> dict:
     """Was this retirement caused by contact?
 
     Returns {"cause": "collision" | "unclassified",
@@ -126,7 +153,7 @@ def classify_retirement(season, event: str, driver: str, last_lap) -> dict:
     """
     out = {"cause": "unclassified", "incident_lap": None,
            "counterparty": "", "earlier_contact": False}
-    c = contact_for(season, event)
+    c = contact_for(season, event, session)
     if c.empty or driver is None:
         return out
     c = c[c["driver"].astype(str).str.upper() == str(driver).strip().upper()]
@@ -173,12 +200,14 @@ def classify_retirement(season, event: str, driver: str, last_lap) -> dict:
     out.update(cause="collision", incident_lap=lap, counterparty=cp,
                penalty=_collision_penalty(c, incident_lap),
                counterparty_penalty=_collision_penalty(
-                   _driver_rows(season, event, cp), incident_lap) if cp else "")
+                   _driver_rows(season, event, cp, session), incident_lap)
+               if cp else "")
     return out
 
 
-def _driver_rows(season, event: str, driver: str) -> pd.DataFrame:
-    c = contact_for(season, event)
+def _driver_rows(season, event: str, driver: str,
+                 session: str = "Race") -> pd.DataFrame:
+    c = contact_for(season, event, session)
     if c.empty:
         return c
     c = c[c["driver"].astype(str).str.upper() == str(driver).strip().upper()]

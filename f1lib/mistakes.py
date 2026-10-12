@@ -39,6 +39,7 @@ import numpy as np
 import pandas as pd
 
 from f1lib.circuits import circuit_id
+from f1lib.telemetry_quality import degraded_mask
 
 logger = logging.getLogger(__name__)
 
@@ -338,7 +339,8 @@ def corner_features_for_session(laps: pd.DataFrame, telemetry: pd.DataFrame,
 
 def _analysis_lap_mask(laps: pd.DataFrame) -> pd.Series:
     """Laps whose corner times are meaningful: green flag, no pit in/out,
-    plausible lap time (excludes SC crawls and in/out laps)."""
+    plausible lap time (excludes SC crawls and in/out laps), and a healthy
+    car-telemetry feed (f1lib/telemetry_quality)."""
     lt = pd.to_numeric(laps["LapTime_s"], errors="coerce")
     ok = lt.notna() & (lt > 0)
     med = lt[ok].median()
@@ -353,6 +355,10 @@ def _analysis_lap_mask(laps: pd.DataFrame) -> pd.Series:
         ok &= ~laps["PitOut"].fillna(False).astype(bool)
     if "PitIn" in laps.columns:
         ok &= ~laps["PitIn"].fillna(False).astype(bool)
+    # stair-stepped Speed/Throttle/Brake feed (2026 Hungarian race): corner
+    # times there measure the feed, not the driver
+    if {"season", "meeting", "session", "DriverNo"}.issubset(laps.columns):
+        ok &= ~degraded_mask(laps, "car")
     return ok
 
 

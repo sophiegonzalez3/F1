@@ -380,6 +380,7 @@ def enrich_track_evolution(
     laps: pd.DataFrame,
     n_bins: int = TRACK_EVO_BINS,
     min_laps: int = TRACK_EVO_MIN_LAPS,
+    compound_intercepts: bool = True,
 ) -> pd.DataFrame:
     """
     Estimate field-wide track evolution (grip gain as rubber goes down) per
@@ -508,7 +509,11 @@ def enrich_track_evolution(
         age_df   = pd.DataFrame(age_cols, index=pool.index)
         bin_dum  = pd.get_dummies(bins, prefix="_bin", drop_first=True)
 
-        X = pd.concat([drivers, age_df, bin_dum], axis=1).astype(float)
+        parts = [drivers, age_df, bin_dum]
+        if compound_intercepts:
+            parts.insert(2, pd.get_dummies(compounds, prefix="_cmp",
+                                           drop_first=True))
+        X = pd.concat(parts, axis=1).astype(float)
         X_cols = list(X.columns)
 
         # Mild ridge penalty on the bin coefficients only: shrinks bins whose
@@ -1043,6 +1048,13 @@ def compound_offsets(
 ) -> pd.DataFrame:
     """
     Estimate the pace offset between tyre compounds from RACE/Sprint laps.
+
+    ⚠ No longer displayed or fed to the strategy sim (Oct 2026). On every dry
+    race 2023-26 the per-race result was dominated by race-wide drift between
+    the first and second halves of the race (everyone pits in the same window),
+    and the driver-IQR it returns understates that uncertainty badly. Kept for
+    research; do not wire it back into a card without a crossover design
+    (drivers in BOTH compound orders) — see tabs/race.py _strategy_model.
 
     Race laps only: the race fuel model is anchored to the real race lap
     number, so corrected times are comparable across compounds. (Practice is

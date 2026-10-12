@@ -180,7 +180,7 @@ def decompose_event(season: int, event: str, *, model=None, forecaster=None,
     """One row per team for one Grand Prix. Empty frame when the event can't
     be decomposed (no cached race, no pace-table entry, ratings missing)."""
     import f1lib.data_loader as dl
-    from f1lib.incidents import classify_retirement
+    from f1lib.dnf_causes import family_of
 
     season = int(season)
 
@@ -252,9 +252,11 @@ def decompose_event(season: int, event: str, *, model=None, forecaster=None,
     for r in retired.itertuples(index=False):
         lost = _exp_points_no_own_dnf(sim_lap1, r.Abbreviation)
         d_inc[r.team] = d_inc.get(r.team, 0.0) - lost
-        info = classify_retirement(season, event, r.Abbreviation,
-                                   r.Laps if pd.notna(r.Laps) else None)
-        cause = (info or {}).get("cause") or "unclassified"
+        # same resolver as the reliability card: the archive's own status when
+        # it names a cause, else race control, else data/dnf_causes.csv
+        cause = family_of(season, event, r.Abbreviation,
+                          r.Laps if pd.notna(r.Laps) else None,
+                          r.Status) or "unclassified"
         causes.setdefault(r.team, []).append(f"{r.Abbreviation} ({cause})")
 
     # pit crew + SC luck, in seconds first

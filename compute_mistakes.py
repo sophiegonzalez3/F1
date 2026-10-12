@@ -32,6 +32,8 @@ import numpy as np
 import pandas as pd
 
 from f1lib.circuits import circuit_id
+from f1lib.lap_sync import read_telemetry
+from f1lib.telemetry_quality import session_unusable
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -85,6 +87,12 @@ def _process_one(item: dict, ck_map: dict
     raw = pd.read_parquet(item["laps"])
     if raw.empty:
         return pd.DataFrame(), pd.DataFrame()
+    if session_unusable(item["base"], "car"):
+        # marked done (empty): the live-timing feed itself is degraded, a
+        # re-run cannot change that (2026 Hungarian race)
+        print(f"  !! {item['base']}: car-telemetry feed degraded on most laps "
+              "(data/telemetry_quality.csv) - no mistakes computed", flush=True)
+        return pd.DataFrame(), pd.DataFrame()
     meeting = str(raw["meeting"].iloc[0])
     season = item["season"]
     laps = clean_and_enrich_laps(raw)
@@ -101,7 +109,7 @@ def _process_one(item: dict, ck_map: dict
               "will retry next run", flush=True)
         return None
 
-    tel = pd.read_parquet(
+    tel = read_telemetry(
         item["tel"],
         columns=["timestamp", "Speed", "Throttle", "Brake", "DriverNo"])
     feats = corner_features_for_session(laps, tel, fracs)

@@ -198,8 +198,10 @@ def observed_flags(season: int, event: str) -> dict[str, set[str]]:
     p = Path("data/incidents.csv")
     if p.exists():
         try:
+            from f1lib.incidents import session_of
             ic = pd.read_csv(p)
-            ic = ic[(ic["season"] == season) & (ic["event"] == event)]
+            ic = ic[(ic["season"] == season) & (ic["event"] == event)
+                    & session_of(ic).eq("Race")]
             for _, r in ic.iterrows():
                 if str(r.get("kind", "")) == "contact":
                     add(r["driver"], "collision")

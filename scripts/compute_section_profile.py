@@ -66,6 +66,9 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import pandas as pd
 
+from f1lib.lap_sync import read_telemetry
+from f1lib.telemetry_quality import degraded_mask, session_unusable
+
 SESSIONS = Path("data/sessions")
 OUT = Path("data/section_profile.csv")
 
@@ -186,8 +189,10 @@ def _phases(ref: dict) -> np.ndarray:
 
 
 def _clean_laps(laps: pd.DataFrame) -> pd.DataFrame:
+    """Timed laps with a healthy car-telemetry feed (f1lib/telemetry_quality)."""
     l = laps[laps["LapTime"].notna() & ~laps["IsDeleted"].astype(bool)
-             & laps["PitOut"].isna() & laps["PitIn"].isna()]
+             & laps["PitOut"].isna() & laps["PitIn"].isna()
+             & ~degraded_mask(laps, "car")]
     return l.sort_values("LapTime")
 
 
@@ -196,6 +201,7 @@ def _race_laps(laps: pd.DataFrame) -> pd.DataFrame:
     each driver's fastest RACE_QUARTILE."""
     l = laps[laps["LapTime"].notna() & ~laps["IsDeleted"].astype(bool)
              & laps["PitOut"].isna() & laps["PitIn"].isna()
+             & ~degraded_mask(laps, "car")
              & laps["IsAccurate"].astype(bool) & (laps["LapNo"] > 1)
              & (laps["TrackStatus"].astype(str) == "1")]
     keep = []
@@ -212,7 +218,7 @@ def _load(season: int, event: str, session: str):
     if not (lp.exists() and tp.exists()):
         return None
     laps = pd.read_parquet(lp)
-    tel = pd.read_parquet(tp, columns=["timestamp", "Speed", "Source", "DriverNo",
+    tel = read_telemetry(tp, columns=["timestamp", "Speed", "Source", "DriverNo",
                                        "Throttle", "Brake", "X", "Y"])
     tel["DriverNo"] = tel["DriverNo"].astype(str).str.strip()
     return laps, {k: g for k, g in tel.groupby("DriverNo")}
@@ -230,8 +236,12 @@ def _reference(laps, pools, n: int = 30):
     picked a Sepang 2026 race lap that integrated to 5,268 m against ~5,450 m
     for everyone else — a dropout the plateau check missed — and then every
     good lap failed the distance gate against it."""
+    # the reference also supplies the X/Y curvature: its position feed must be
+    # real too (2026 Monaco race: pos stops after 8 min, X/Y extrapolated)
+    cand = _clean_laps(laps)
+    cand = cand[~degraded_mask(cand, "pos")]
     curves = [c for c in (_curve(pools, b) for b in
-                          _clean_laps(laps).head(n).itertuples()) if c is not None]
+                          cand.head(n).itertuples()) if c is not None]
     if not curves:
         return None
     med = float(np.median([c["dist"] for c in curves]))
@@ -258,6 +268,11 @@ def build(season: int) -> pd.DataFrame:
         for session in ("Qualifying", "Race"):
             src = q if session == "Qualifying" else _load(season, r.event, "Race")
             if src is None:
+                continue
+            stem = f"{season}__{r.event.replace(' ', '_')}__{session}"
+            if session_unusable(stem, "car"):
+                print(f"  R{int(r.round):02d} {r.event} {session}: car-telemetry "
+                      "feed degraded on most laps - skipped")
                 continue
             laps, pools = src
             ref = qref if session == "Qualifying" else _reference(laps, pools)

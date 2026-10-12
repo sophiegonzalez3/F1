@@ -160,37 +160,12 @@ def _safety_stats(ts: pd.DataFrame, leader_laps: pd.DataFrame) -> dict:
 # ─────────────────────────────────────────────────────────────
 
 def _overtakes(laps: pd.DataFrame) -> int | None:
+    # one implementation shared with the per-driver KPI table
+    from f1lib.driver_kpis import overtake_pairs
     need = {"Driver", "LapNo", "Position", "PitIn", "PitOut", "TrackStatus"}
     if not need.issubset(laps.columns):
         return None
-    d = laps.dropna(subset=["LapNo", "Position"]).copy()
-    d["LapNo"] = d["LapNo"].astype(int)
-    d["green"] = d["TrackStatus"].astype(str) == "1"
-    d["pit"] = d["PitIn"].notna() | d["PitOut"].notna()
-
-    by_lap: dict[int, dict[str, tuple[float, bool, bool]]] = {}
-    for r in d.itertuples():
-        by_lap.setdefault(r.LapNo, {})[r.Driver] = (r.Position, r.pit, r.green)
-
-    total = 0
-    for n in sorted(by_lap):
-        if n <= 1 or (n - 1) not in by_lap:
-            continue
-        prev, cur = by_lap[n - 1], by_lap[n]
-        # drivers present on both laps, green both laps, no pit activity either lap
-        drs = [a for a in cur
-               if a in prev and cur[a][2] and prev[a][2]
-               and not cur[a][1] and not prev[a][1]]
-        if len(drs) < 2:
-            continue
-        order_prev = sorted(drs, key=lambda a: prev[a][0])
-        pos_cur = {a: cur[a][0] for a in drs}
-        # pairwise inversions between the two orderings = passes
-        for i in range(len(order_prev)):
-            for j in range(i + 1, len(order_prev)):
-                if pos_cur[order_prev[j]] < pos_cur[order_prev[i]]:
-                    total += 1
-    return total
+    return len(overtake_pairs(laps))
 
 
 # ─────────────────────────────────────────────────────────────

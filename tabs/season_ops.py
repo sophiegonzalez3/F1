@@ -637,7 +637,7 @@ def engine_championship_card(season: int) -> html.Div | None:
 
     # ── Panel C · computed straight-line-speed index ──────────────
     ts = topspeed_df()
-    fig_spd, spd_note = None, ""
+    fig_spd, spd_note, fig_chassis = None, "", None
     if not ts.empty and "quali_idx" in ts.columns:
         t = ts[ts["season"] == season].copy()
         if not t.empty:
@@ -670,6 +670,39 @@ def engine_championship_card(season: int) -> html.Div | None:
                         "centred on the field so circuit differences cancel — a "
                         "tentative proxy for deployed power that also reflects a "
                         "car's drag level, not the engine alone.")
+            # ── Panel D · the team's own share (drag / wing level) ──
+            # Panel C is the engine half: every customer of a PU averaged. This
+            # is the other half — each team's gap to its own engine-mates, the
+            # drag and wing level it chose. Same speed-trap source, so engine +
+            # chassis add up to the team's own index. Sole customers have no
+            # engine-mate to compare with: shown as n/a, not as zero.
+            t["n_mates"] = t.groupby("maker")["team"].transform("size")
+            t["chassis"] = t["quali_idx"] - t.groupby("maker")["quali_idx"].transform("mean")
+            t = t.assign(_o=t["maker"].map({m: i for i, m in enumerate(order)}))                  .sort_values(["_o", "chassis"], ascending=[True, False])
+            multi = t[t["n_mates"] > 1]
+            if not multi.empty:
+                fig_chassis = _eng_hbar(
+                    [abbr(x) for x in multi["team"]], multi["chassis"].tolist(),
+                    [_PU_COLORS.get(m, ACCENT) for m in multi["maker"]],
+                    [f"{v:+.1f}" for v in multi["chassis"]],
+                    "…and the team's own share (drag / wing level)",
+                    "km/h vs its engine-mates' average  ·  right of zero = less drag",
+                    ("<b>%{y}</b> · %{customdata[0]}<br>%{x:>+.1f} km/h vs the "
+                     "other %{customdata[0]} cars<extra></extra>"),
+                    customdata=np.stack([multi["maker"]], axis=-1),
+                    diverging=True, xpad=1.3,
+                )
+                solo = t.loc[t["n_mates"] == 1, "team"].tolist()
+                spd_note += (" The team-share panel splits each car's index "
+                             "into the engine (its supplier's average, panel "
+                             "above) and its own deviation from its engine-"
+                             "mates — the drag and wing level it runs. A slow "
+                             "speed trap can be a down-on-power engine or a "
+                             "team choosing more wing; this separates them."
+                             + (f" {', '.join(abbr(x) for x in solo)} "
+                                f"{'is the sole customer' if len(solo) == 1 else 'are sole customers'} "
+                                "of their PU, so no split is possible there."
+                                if solo else ""))
 
     # ── Assemble ──────────────────────────────────────────────────
     # A 2x2 grid, not four in a row: at a quarter of the card each panel's
@@ -678,6 +711,10 @@ def engine_championship_card(season: int) -> html.Div | None:
     figs = [f for f in (fig_pts, fig_spd, fig_rel, fig_fail) if f is not None]
     cols = [dbc.Col(dcc.Graph(figure=f, config=GFX), lg=6, md=12)
             for f in figs]
+    if fig_chassis is not None:
+        # full width under the grid: per TEAM, not per maker, so it would
+        # break the 2x2's shared maker axis
+        cols.append(dbc.Col(dcc.Graph(figure=fig_chassis, config=GFX), lg=12))
 
     leader = order[0]
     intro = html.P(
@@ -1055,6 +1092,12 @@ def section_profile_card(season: int, teams=None) -> html.Div | None:
     if not order:
         return None
 
+    try:
+        from tabs.car_profile import payoff_note
+        payoff = payoff_note(season) or ""
+    except Exception:
+        payoff = ""
+
     def block(sess):
         st = stats[sess]
         note = html.P(
@@ -1070,7 +1113,8 @@ def section_profile_card(season: int, teams=None) -> html.Div | None:
             html.P(_character_plain(st, order),
                    style={"color": TEXT_MAIN, "fontSize": "0.82rem",
                           "marginBottom": "6px"}),
-            dcc.Graph(figure=_character_fig(st, order), config=GFX), note])
+            dcc.Graph(figure=_character_fig(st, order), config=GFX), note,
+            payoff])
 
     sessions = [s for s in ("Qualifying", "Race") if s in stats]
     body = html.Div([

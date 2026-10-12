@@ -49,6 +49,7 @@ import pandas as pd
 from pypdf import PdfReader
 
 CSV = Path("data/pu_penalties.csv")
+GRID_LEDGER = Path("data/grid_penalties.csv")
 URL = ("https://www.fia.com/system/files/decision-document/"
        "{season}_{slug}_-_pu_elements_used_per_driver_up_to_now.pdf")
 _UA = {"User-Agent": "Mozilla/5.0"}
@@ -209,16 +210,33 @@ def main() -> int:
     # implies a penalty the file doesn't record, which is how Sainz's missing
     # 10 places at R10 stayed hidden. Being over may still be legitimate: the
     # penalty may have been served at an earlier event, where 0 here is right.
+    # data/grid_penalties.csv is the season ledger of PU drops and PU pit-lane
+    # starts, so "served at an earlier event" can be answered rather than asked.
     from tabs.pu_pool import _LIMITS_2026
+    ledger = pd.DataFrame()
+    if GRID_LEDGER.exists():
+        ledger = pd.read_csv(GRID_LEDGER)
+        ledger = ledger[(ledger["season"] == args.season)
+                        & ledger["pu"].astype(str).str.lower().eq("true")]
     for _, row in season.iterrows():
         if row["driver"] not in fia:
             continue              # absent from the entry list; see ABSENT
         counts = fia[row["driver"]]
         over = [c for c in CSV_ORDER if counts[FIA_OF_CSV[c]] > _LIMITS_2026[c]]
         if over and not int(row["penalties_places"]):
-            print(f"  note: {row['driver']} is over on {', '.join(over)} with "
-                  "penalties_places 0 - check the final starting grid, or it "
-                  "was served at an earlier event")
+            served = ledger[ledger["driver"] == row["driver"]] if len(ledger) else ledger
+            if len(served):
+                where = ", ".join(
+                    f"R{int(s['round'])} " + ("pit-lane start" if str(s["pit_lane"]).lower() == "true"
+                                              else f"{int(s['places'])} places")
+                    for _, s in served.iterrows())
+                print(f"  ok: {row['driver']} is over on {', '.join(over)}; PU "
+                      f"penalty served per grid_penalties.csv ({where})")
+            else:
+                print(f"  note: {row['driver']} is over on {', '.join(over)} with "
+                      "penalties_places 0 and no PU row in grid_penalties.csv - "
+                      "check the final starting grid (a footnote outside the "
+                      "PDF text layer is the usual cause)")
 
     if diffs and args.write:
         for drv, col, _, want, i in diffs:

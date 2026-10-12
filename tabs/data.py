@@ -503,7 +503,6 @@ def tab_data_quality(fl, fs):
 
 from tabs.overview import tab_overview
 
-from tabs.teams import tab_teams
 
 
 def tab_data_selection() -> html.Div:

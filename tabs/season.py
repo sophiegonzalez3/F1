@@ -29,11 +29,14 @@ from tabs.pace_data import (
 )
 from tabs.regulations import regulations_block
 from tabs.finance import finance_block, compliance_card
+from tabs.cap_convergence import cap_convergence_card
 from tabs.hr import hr_section
 from tabs.org_chart import org_section
 from tabs.infrastructure import infrastructure_section
 from tabs.reliability import reliability_card, contact_card
+from tabs.session_incidents import session_incidents_card
 from tabs.pu_pool import pu_pool_card
+from tabs.car_profile import car_traits_card, deg_rounds_card
 from tabs.gearbox_pool import gearbox_pool_card
 from tabs.driver_market import driver_market_card
 from tabs.season_ops import (
@@ -944,6 +947,10 @@ def _season_content(season: int, teams=None, drivers=None) -> html.Div:
                   "gap to the front is opening or closing."),
         ),
     ] + [c for c in (section_profile_card(season, teams=teams),
+                      # the car-profile axes Car Character does not cover, then
+                      # the shakiest of them (tyre wear) round by round
+                      car_traits_card(season, teams=teams),
+                      deg_rounds_card(season, teams=teams),
                       chaos_timeline_card(season),
                       # next to the section profile and chaos on purpose: those ask
                       # what a circuit does to the racing, and the weather is
@@ -954,6 +961,8 @@ def _season_content(season: int, teams=None, drivers=None) -> html.Div:
                       testing_card(season, teams=teams),
                       reliability_card(season, teams=teams),
                       contact_card(season, teams=teams),
+                      session_incidents_card(season, teams=teams,
+                                             drivers=drivers),
                       penalties_card(season, teams=teams),
                       pu_pool_card(season, drivers=drivers),
                       gearbox_pool_card(season, drivers=drivers),
@@ -999,6 +1008,9 @@ def tab_context() -> html.Div:
     cap_card = compliance_card()
     if cap_card is not None:
         parts.append(cap_card)
+    conv_card = cap_convergence_card()
+    if conv_card is not None:
+        parts.append(conv_card)
     parts += [
         _section_header("HR & PERSONNEL",
                         "the technical & management transfer market — who moved "

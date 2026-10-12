@@ -207,6 +207,27 @@ def pace_badge(kind: str):
         "verticalAlign": "middle", "userSelect": "none"})
 
 
+def reliability_badge(r, what: str = "the value"):
+    """Split-half reliability chip for a derived metric (the validation bar:
+    >= 0.6 passes). Green >= 0.6, amber 0.4-0.6, red below. `what` names the
+    quantity whose repeatability was measured, for the hover text."""
+    if r is None:
+        return []
+    colour = "#2ECC71" if r >= 0.6 else "#F39C12" if r >= 0.4 else "#E74C3C"
+    verdict = ("repeatable — a real trait" if r >= 0.6 else
+               "partly repeatable — read with care" if r >= 0.4 else
+               "barely repeatable — mostly what happened, not who they are")
+    text = (f"Split-half reliability {r:.2f}: {what} in odd rounds vs even "
+            "rounds of the same season (Spearman, Spearman-Brown corrected to "
+            f"a full season, 2023 onwards) — {verdict}. Short windows are "
+            "noisier than this full-season figure.")
+    return tip(f"r {r:.2f}", text, placement="bottom", style={
+        "cursor": "help", "fontSize": "0.6rem", "fontWeight": "800",
+        "color": colour, "border": f"1px dashed {colour}", "borderRadius": "3px",
+        "padding": "1px 5px", "marginLeft": "8px", "whiteSpace": "nowrap",
+        "verticalAlign": "middle", "userSelect": "none"})
+
+
 def card(title, children, info=None, plain=None, measure=None):
     """A titled card. Pass `info` to show a small ⓘ tooltip in the header
     explaining what data the graph uses and why it is relevant (hover to read).
@@ -245,6 +266,25 @@ def card(title, children, info=None, plain=None, measure=None):
         dbc.CardBody(body),
     ], className="mb-3",
        style={"background": CARD_BG, "border": f"1px solid {GRID_CLR}", "borderRadius": "8px"})
+
+
+def section_header(title, intro):
+    """A centered section title + intro paragraph, used to separate the
+    stacked halves of a merged tab (TEAM & TEAMATE, WEEK END PRED)."""
+    return html.Div([
+        html.H3(title,
+                style={"color": TEXT_MAIN, "fontWeight": "900",
+                       "letterSpacing": "3px", "textAlign": "center",
+                       "marginBottom": "10px", "fontSize": "1.5rem",
+                       "borderBottom": f"2px solid {ACCENT}",
+                       "paddingBottom": "10px"}),
+        # Div, not P: the intro may splice in gloss() tooltips (which render a
+        # sibling block element) and a <div> inside a <p> is invalid HTML.
+        html.Div(intro,
+                 style={"color": TEXT_DIM, "fontSize": "0.82rem",
+                        "textAlign": "center", "maxWidth": "780px",
+                        "margin": "0 auto 22px", "lineHeight": "1.5"}),
+    ])
 
 
 def kpi(label, value, color=ACCENT, tooltip=None):

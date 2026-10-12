@@ -38,6 +38,7 @@ import pandas as pd
 
 import f1lib.data_loader as dl
 from f1lib.circuits import french_key
+from f1lib.lap_sync import read_telemetry
 from f1lib.config import HIST_CIRCUIT_KEY_MAP, THROTTLE_THRESHOLD
 from f1lib.processing import (
     clean_and_enrich_laps, flag_dirty_air, flag_perturbed_laps,
@@ -163,7 +164,7 @@ def _fast_lap_metrics(key: str) -> dict | None:
     if cands.empty:
         return None
     avail = pq_cols(paths["telemetry"])
-    tel = pd.read_parquet(
+    tel = read_telemetry(
         paths["telemetry"],
         columns=[c for c in ("timestamp", "DriverNo", "Speed", "Throttle",
                              "Brake", "X", "Y") if c in avail],

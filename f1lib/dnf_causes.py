@@ -30,6 +30,17 @@ a coverage artifact wearing the costume of data. `press_checked` is therefore
 stamped with the date EVEN WHEN THE SEARCH FOUND NOTHING, so "looked, found
 nothing" is distinguishable from "never looked" and the gradient is countable.
 
+EVERY SESSION, NOT ONLY THE RACE (2026-10-12). Rows carry `session`. Race
+and Sprint rows are seeded from the results archives like before; practice,
+qualifying and sprint-qualifying rows come from f1lib.session_stops (a car
+that stopped on track and brought out a red flag / VSC, a qualifying session
+with no time set, a practice session the car never ran) and their
+`status_archive` says which. Every lookup here takes `session` and DEFAULTS TO
+"Race", so the race cards keep their meaning; a row without a session is a
+Race row. Race control's lap-matched collision call only exists for Race and
+Sprint (it leaves `Lap` empty in practice and qualifying), so everywhere else
+the cause is curated or nothing.
+
 A TEAM'S EXPLANATION IS A CLAIM, NOT A MEASUREMENT. "We had a PU issue" from a
 team principal is evidence about what the team chose to say. Record it, cite
 it, and set `confidence` to "claimed" so it can be filtered out.
@@ -114,14 +125,16 @@ STATUS_FAMILY = {**{s: CAR for s in _CAR_STATUSES},
 DNS_STATUSES = {"Did not start", "Withdrew", "Illness"}
 
 
-def family_of(season, event: str, driver: str, last_lap, status) -> str:
+def family_of(season, event: str, driver: str, last_lap, status,
+              session: str = "Race") -> str:
     """The family of one non-finish: the archive's own status when it names a
     cause (pre-2023), otherwise race control then curation (resolve_cause).
     "" when nobody knows yet."""
     fam = STATUS_FAMILY.get(str(status).strip())
     if fam:
         return fam
-    return resolve_cause(season, event, driver, last_lap)["cause_family"]
+    return resolve_cause(season, event, driver, last_lap,
+                         session=session)["cause_family"]
 
 # How much weight the row's cause carries.
 #   measured   a timing/FIA fact (reserved for race_control rows)
@@ -129,7 +142,11 @@ def family_of(season, event: str, driver: str, last_lap, status) -> str:
 #   claimed    the team said it - a claim about what they chose to say
 CONFIDENCE = ("measured", "reported", "claimed")
 
-COLS = ["season", "round", "event", "driver", "team", "status_archive",
+# Sessions where race control numbers its laps, so a retirement can be
+# matched to a logged contact (f1lib.incidents.classify_retirement).
+LAPPED_SESSIONS = ("Race", "Sprint")
+
+COLS = ["season", "round", "event", "session", "driver", "team", "status_archive",
         "laps", "cause_family", "cause_detail", "confidence",
         "source", "source_date", "press_checked", "note",
         "overrides_register"]
@@ -172,6 +189,8 @@ def causes_df() -> pd.DataFrame:
                 for c in COLS:
                     if c not in df.columns:
                         df[c] = ""
+                df["session"] = (df["session"].astype(str).str.strip()
+                                 .replace({"": "Race", "nan": "Race"}))
             except Exception as exc:
                 print(f"DNF causes              : failed to read ({exc})")
         _CACHE["df"] = df
@@ -190,7 +209,8 @@ def has_causes(season) -> bool:
         return False
 
 
-def curated_cause(season, event: str, driver: str) -> dict | None:
+def curated_cause(season, event: str, driver: str,
+                  session: str = "Race") -> dict | None:
     """The curated cause for one retirement, or None if nobody has filled it.
 
     A seeded-but-unfilled row (blank `cause_family`) returns None: the seeding
@@ -207,6 +227,8 @@ def curated_cause(season, event: str, driver: str) -> dict | None:
     m &= d["event"].astype(str).str.strip() == str(event).strip()
     m &= (d["driver"].astype(str).str.upper().str.strip()
           == str(driver).upper().strip())
+    from f1lib.incidents import session_of
+    m &= session_of(d) == session
     hit = d[m]
     if hit.empty:
         return None
@@ -227,7 +249,8 @@ def curated_cause(season, event: str, driver: str) -> dict | None:
     }
 
 
-def resolve_cause(season, event: str, driver: str, last_lap) -> dict:
+def resolve_cause(season, event: str, driver: str, last_lap,
+                  session: str = "Race") -> dict:
     """One retirement's cause, race control first and curation only to fill.
 
     Returns `cause_family` ("" when still unknown) and `cause_source`
@@ -242,8 +265,9 @@ def resolve_cause(season, event: str, driver: str, last_lap) -> dict:
 
     out = {"cause_family": "", "cause_source": "", "cause_detail": "",
            "counterparty": "", "confidence": "", "source": "", "note": ""}
-    got = classify_retirement(season, event, driver, last_lap)
-    cur = curated_cause(season, event, driver)
+    got = (classify_retirement(season, event, driver, last_lap, session=session)
+           if session in LAPPED_SESSIONS else {"cause": "unclassified"})
+    cur = curated_cause(season, event, driver, session)
     if cur and cur.pop("overrides_register", False):
         out.update(**cur)
         out["note"] = (out["note"] + " " if out["note"] else "") + (
@@ -256,14 +280,17 @@ def resolve_cause(season, event: str, driver: str, last_lap) -> dict:
         cp = str(got.get("counterparty", "") or "")
         lap_n = int(got.get("incident_lap") or 0)
         other = got.get("counterparty_penalty") or (
-            _grid_ruling(season, event, cp) if cp else "")
+            _grid_ruling(season, event, cp) if cp and session == "Race" else "")
         verdict = (f"the stewards penalised {cp} for it ({other})" if other
                    else f"no penalty to {driver} for it")
         out.update(cause_family=COLLISION, cause_source="race_control",
                    counterparty=cp, confidence="measured",
                    cause_detail=(f"COLLISION with {cp or 'another car'} on "
                                  f"lap {lap_n}; {verdict}."))
-        ruling = got.get("penalty") or _grid_ruling(season, event, driver)
+        # the carried grid drop is RACE-only: the ledger cannot tell a sprint
+        # collision's conversion from the race's
+        ruling = got.get("penalty") or (
+            _grid_ruling(season, event, driver) if session == "Race" else "")
         if ruling:
             # AT FAULT -> driver imputable, on the stewards' ruling alone.
             out.update(cause_family=DRIVER, cause_detail=(

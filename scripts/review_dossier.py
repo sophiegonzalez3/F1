@@ -639,8 +639,10 @@ def build(season: int, event: str) -> str:
     if rrcm is not None and "Message" in rrcm.columns:
         # \b matters: "CHEQUERED FLAG" contains the substring "RED FLAG", so an
         # unanchored search reports a red flag at the end of every clean race.
+        # 2026 race control writes "VSC DEPLOYED" where 2018-25 wrote "VIRTUAL
+        # SAFETY CAR DEPLOYED" — without \bVSC\b a VSC-only race read as clean.
         sc = rrcm[rrcm["Message"].astype(str).str.contains(
-            r"SAFETY CAR|VIRTUAL SAFETY|\bRED FLAG\b", case=False, na=False,
+            r"SAFETY CAR|VIRTUAL SAFETY|\bVSC\b|\bRED FLAG\b", case=False, na=False,
             regex=True)]
         a("Race-control, session-wide:")
         a("")
@@ -658,8 +660,10 @@ def build(season: int, event: str) -> str:
 
     inc = pd.DataFrame()
     if Path("data/incidents.csv").exists():
+        from f1lib.incidents import session_of
         ic = pd.read_csv("data/incidents.csv")
-        inc = ic[(ic["season"] == season) & (ic["event"] == event)]
+        inc = ic[(ic["season"] == season) & (ic["event"] == event)
+                 & session_of(ic).eq("Race")]
     pit = pd.DataFrame()
     pp = Path(f"data/pitstops/{_key(season, event)}__Race__pitstops.parquet")
     if pp.exists():

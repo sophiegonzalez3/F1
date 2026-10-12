@@ -83,7 +83,6 @@ GEAR_COLORS = {
     1: "#3B82F6", 2: "#22D3EE", 3: "#10B981", 4: "#A3E635",
     5: "#FACC15", 6: "#FB923C", 7: "#EF4444", 8: "#E879F9",
 }
-from tabs.teammates import tab_teammates
 
 
 # ── Score → colour mapping ────────────────────────────────────
@@ -602,6 +601,86 @@ def _track_map_paths(season, event_name, session_id):
 _TRACK_LINE_COLS = {"X", "Y", "gear", "Speed", "sector", "drs", "z"}
 
 
+_CURATED_CORNERS_DIR = Path("data/curated_corners")
+
+
+def _curated_corners(season, event_name, line: pd.DataFrame) -> pd.DataFrame:
+    """Hand-curated corner table for a circuit MultiViewer (FastF1's
+    get_circuit_info) does not cover — data/curated_corners/<circuit_id>.csv,
+    X/Y in FastF1's decimetre frame. Distance (metres) is measured along THIS
+    map's line, as FastF1 does per session. Empty when no table exists.
+
+    sepang.csv: apexes found as curvature peaks of the 2026 Q fastest lap,
+    numbered T1-T15 against published turn-by-turn guides (driver61.com,
+    motogp.com) — direction, type and order all match; the 9 leftover peaks
+    were exit kinks / second apexes of the same corners."""
+    p = _CURATED_CORNERS_DIR / f"{circuit_id(event_name, season)}.csv"
+    if not p.exists() or line is None or line.empty:
+        return pd.DataFrame()
+    c = pd.read_csv(p, keep_default_na=False)
+    lx = line["X"].to_numpy(float); ly = line["Y"].to_numpy(float)
+    cum = np.concatenate([[0.0], np.cumsum(np.hypot(np.diff(lx), np.diff(ly)))]) / 10.0
+    c["Distance"] = [float(cum[np.argmin((lx - x) ** 2 + (ly - y) ** 2)])
+                     for x, y in zip(c["X"], c["Y"])]
+    # A line that does not start on the start/finish line (2026 Sepang's race
+    # fastest lap begins ~T13) wraps the distances; corners on it would put
+    # T15 at the start of the lap, so leave that map without them.
+    if not c.sort_values("Number")["Distance"].is_monotonic_increasing:
+        logging.warning("curated corners: %s %s line does not start at the "
+                        "start/finish line — not attached", season, event_name)
+        return pd.DataFrame()
+    return c[["Number", "Letter", "X", "Y", "Angle", "Distance"]]
+
+
+_SF_TOLERANCE_DM = 500.0      # 50 m: further than this from the S/F line = shifted
+_SF_REFERENCE_SESSIONS = ("Q", "FP3", "FP2", "FP1")
+
+
+def _align_to_start_finish(line: pd.DataFrame, season, event_name,
+                           session_id) -> pd.DataFrame:
+    """Make a lap line start on the start/finish line.
+
+    FastF1's lap boundaries and its telemetry clock are sometimes out of sync
+    for a whole session — audit Oct 2026 over 86 cached races: 95% of race laps
+    at Sepang 2026 begin ~340 m early (around T15), likewise Zandvoort 2023 /
+    2026 and Austria 2026, while the other 80 sit within a few metres. Speed and
+    position stay consistent with each other; only WHERE the lap is cut is
+    wrong. The fastest lap is a closed loop, so rotate it to start at the point
+    nearest the start/finish of another map of the same weekend (its first
+    point), and take the timing sectors from that map too — they come from the
+    same mis-synced clock. No reference map, or already aligned: unchanged."""
+    if line.empty or len(line) < 10:
+        return line
+    ref = None
+    for sid in _SF_REFERENCE_SESSIONS:
+        if sid == session_id:
+            continue
+        p = _track_map_paths(season, event_name, sid)["line"]
+        if p.exists():
+            try:
+                ref = pd.read_parquet(p, columns=["X", "Y", "sector"])
+                break
+            except Exception:
+                continue
+    if ref is None or ref.empty:
+        return line
+    lx = line["X"].to_numpy(float); ly = line["Y"].to_numpy(float)
+    sx, sy = float(ref["X"].iloc[0]), float(ref["Y"].iloc[0])
+    i = int(np.argmin((lx - sx) ** 2 + (ly - sy) ** 2))
+    if np.hypot(lx[0] - sx, ly[0] - sy) <= _SF_TOLERANCE_DM or i == 0:
+        return line
+    logging.warning("track map %s %s %s: lap line starts %.0f m from the "
+                    "start/finish line (mis-synced timing) — rotated",
+                    season, event_name, session_id,
+                    np.hypot(lx[0] - sx, ly[0] - sy) / 10)
+    out = pd.concat([line.iloc[i:], line.iloc[:i]], ignore_index=True)
+    rx = ref["X"].to_numpy(float); ry = ref["Y"].to_numpy(float)
+    nearest = [int(np.argmin((rx - x) ** 2 + (ry - y) ** 2))
+               for x, y in zip(out["X"].to_numpy(float), out["Y"].to_numpy(float))]
+    out["sector"] = ref["sector"].to_numpy()[nearest].astype(int)
+    return out
+
+
 def _read_track_map_cache(paths) -> dict | None:
     """Load a cached track map from disk without any network access. Returns
     None when the cache is absent (callers check columns for completeness)."""
@@ -631,6 +710,13 @@ def get_track_map(season, event_name, session_id="Q", force=False) -> dict | Non
         if (cached is not None
                 and _TRACK_LINE_COLS.issubset(cached["line"].columns)
                 and paths["marshal"].exists()):
+            if cached["corners"].empty:
+                # cached before a curated table existed: backfill it on disk too,
+                # since mistakes / car profile / corner classes glob the files
+                cur = _curated_corners(season, event_name, cached["line"])
+                if not cur.empty:
+                    cur.to_parquet(paths["corners"], index=False)
+                    cached["corners"] = cur
             return cached
         # else: cache missing or pre-dates sectors/DRS/marshal sectors → (re)fetch
         # to upgrade. The marshal parquet is written even when empty, so its mere
@@ -681,6 +767,7 @@ def get_track_map(season, event_name, session_id="Q", force=False) -> dict | Non
                                   np.where(idx < 2 * n / 3, 2, 3)).astype(int)
     if "SessionTime" in line.columns:
         line = line.drop(columns=["SessionTime"])
+    line = _align_to_start_finish(line, season, event_name, session_id)
 
     rotation = 0.0
     corners = pd.DataFrame()
@@ -698,6 +785,8 @@ def get_track_map(season, event_name, session_id="Q", force=False) -> dict | Non
             marshal = _ms[[c for c in _MARKER_COLS if c in _ms.columns]].copy()
     except Exception as exc:
         logging.warning("circuit_info unavailable for %s %s: %s", season, event_name, exc)
+    if corners.empty:
+        corners = _curated_corners(season, event_name, line)
 
     laptime = lap["LapTime"]
     laptime_s = laptime.total_seconds() if pd.notna(laptime) else float("nan")

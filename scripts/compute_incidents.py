@@ -1,4 +1,4 @@
-"""Build the race-incident register -> data/incidents.csv.
+"""Build the incident register -> data/incidents.csv, for EVERY session.
 
 Why this exists
 ---------------
@@ -35,6 +35,22 @@ About a third of messages carry no timestamp; those fall back to a
 (event, cars, reason) key, which merges two separate incidents by the same
 driver for the same reason in one race. Rare, and flagged by n_messages.
 
+Every session, not just the race (2026-10-12)
+--------------------------------------------
+Race control is cached for practice, qualifying, sprint qualifying and the
+sprint as well (data/sessions/ for the full store; data/sessions_lite/ holds
+it for 2022 and, via scripts/fetch_race_control.py, 2023-25 practice and
+sprint sessions). Each row carries its `session`. Outside races and sprints
+race control leaves `Lap` empty, so `lap` is blank there and the clock stamp
+(`incident_time`) is the only timing. Consumers that mean "the race" must
+filter `session == "Race"` - f1lib.incidents does that by default.
+
+A message can name more than two cars ("CARS 6 (HAD), 77 (BOT), 18 (STR),
+44 (HAM), 81 (PIA) AND 5 (BOR)" - a qualifying max-delta sweep; Qatar 2024's
+three-car Turn 1). Every car named gets its row; with two or more OTHER cars
+the counterparty is them joined by "/". Until 2026-10-12 only the first two
+cars of such a message were read.
+
 Usage
 -----
     python scripts/compute_incidents.py                 # every cached season
@@ -60,6 +76,10 @@ from f1lib.data_loader import event_name_from_stem
 
 OUT_PATH = Path("data/incidents.csv")
 SESSIONS_DIR = Path("data/sessions")
+LITE_DIR = Path("data/sessions_lite")
+# chronological within a weekend; used for sorting only
+SESSION_ORDER = ["Practice 1", "Practice 2", "Practice 3", "Sprint Shootout",
+                 "Sprint Qualifying", "Sprint", "Qualifying", "Race"]
 
 # ── Reason → kind ────────────────────────────────────────────
 # CONTACT is the one that matters for lap-time damage: these are the reasons
@@ -93,8 +113,8 @@ def classify(reason: str) -> str:
 
 
 # ── Message parsing ──────────────────────────────────────────
-_CARS_RE = re.compile(r"CARS?\s+([\d]+)\s*\(([A-Z]{3})\)"
-                      r"(?:\s+AND\s+([\d]+)\s*\(([A-Z]{3})\))?", re.I)
+_CARS_RE = re.compile(r"CARS?\s+([\d]+)\s*\(([A-Z]{3})\)", re.I)
+_CAR_RE = re.compile(r"\b(\d+)\s*\(([A-Z]{3})\)")
 _TS_RE = re.compile(r"\((\d{2}:\d{2}:\d{2})\)\s*$")
 _PENALTY_RE = re.compile(
     r"(\d+\s*SECOND\s*TIME\s*PENALTY|STOP-AND-GO\s*PENALTY|DRIVE\s*THROUGH"
@@ -120,13 +140,16 @@ def _outcome_of(msg: str) -> str:
         return "investigated"
     if "WILL BE INVESTIGATED AFTER THE RACE" in u:
         return "investigated after race"
+    if "WILL BE INVESTIGATED AFTER THE" in u:      # ...SESSION / ...SPRINT
+        return "investigated after session"
     if "NOTED" in u:
         return "noted"
     return "seen"
 
 
 _OUTCOME_RANK = {"seen": 0, "noted": 1, "investigated": 2,
-                 "investigated after race": 3, "no action": 4}
+                 "investigated after race": 3,
+                 "investigated after session": 3, "no action": 4}
 
 
 def _best_outcome(values: list[str]) -> str:
@@ -150,6 +173,9 @@ def parse_race_control(rc: pd.DataFrame) -> pd.DataFrame:
         m = _CARS_RE.search(msg)
         if not m:
             continue
+        # every "N (XXX)" from the first CAR(S) up to the reason
+        head = re.split(r"\s+-\s+", msg[m.start():], maxsplit=1)[0]
+        pair = list(dict.fromkeys((n, c.upper()) for n, c in _CAR_RE.findall(head)))
         reason = _reason_of(msg)
         if not reason:
             # The FIA often logs a two-car incident with NO stated reason —
@@ -159,14 +185,11 @@ def parse_race_control(rc: pd.DataFrame) -> pd.DataFrame:
             # is recorded as contact with the reason marked unstated. A
             # single-car one stays unclassified: it is as likely a spin or an
             # off as a touch, and guessing would poison the damage detector.
-            if not m.group(3):
+            if len(pair) < 2:
                 continue
             reason = "INCIDENT (reason unstated)"
         ts = _TS_RE.search(msg)
         lap = pd.to_numeric(getattr(r, "Lap", np.nan), errors="coerce")
-        pair = [(m.group(1), m.group(2).upper())]
-        if m.group(3):
-            pair.append((m.group(3), m.group(4).upper()))
         for car_no, code in pair:
             other = [c for n, c in pair if c != code]
             rows.append({
@@ -174,7 +197,7 @@ def parse_race_control(rc: pd.DataFrame) -> pd.DataFrame:
                 "driver": code,
                 "car_no": car_no,
                 "reason": reason,
-                "counterparty": other[0] if other else "",
+                "counterparty": "/".join(other),
                 "outcome": _outcome_of(msg),
                 "ts": ts.group(1) if ts else "",
                 "message": msg,
@@ -212,26 +235,48 @@ def collapse(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── Per-event assembly ───────────────────────────────────────
 
-def build_event(season: int, stem: str) -> pd.DataFrame:
-    p = SESSIONS_DIR / f"{season}__{stem}__Race__race_control.parquet"
-    if not p.exists():
+def build_event(season: int, stem: str, session: str = "Race") -> pd.DataFrame:
+    p = _rc_path(season, stem, session)
+    if p is None:
         return pd.DataFrame()
     try:
         rc = pd.read_parquet(p)
     except Exception as exc:
-        print(f"  {stem}: race control unreadable ({exc})")
+        print(f"  {stem} {session}: race control unreadable ({exc})")
         return pd.DataFrame()
     inc = collapse(parse_race_control(rc))
     if inc.empty:
         return inc
+    inc.insert(0, "session", session)
     inc.insert(0, "event", event_name_from_stem(season, stem))
     inc.insert(0, "season", season)
     return inc
 
 
+def _rc_path(season: int, stem: str, session: str) -> Path | None:
+    """The full store wins; the lite store fills what it lacks."""
+    name = f"{season}__{stem}__{session.replace(' ', '_')}__race_control.parquet"
+    for base in (SESSIONS_DIR, LITE_DIR):
+        if (base / name).exists():
+            return base / name
+    return None
+
+
+def cached_sessions(season: int) -> list[tuple[str, str]]:
+    """(meeting stem, session) for every session with race control cached."""
+    out = set()
+    for base in (SESSIONS_DIR, LITE_DIR):
+        for p in base.glob(f"{season}__*__race_control.parquet"):
+            parts = p.name.split("__")
+            if len(parts) == 4:
+                out.add((parts[1], parts[2].replace("_", " ")))
+    order = {s: i for i, s in enumerate(SESSION_ORDER)}
+    return sorted(out, key=lambda x: (x[0], order.get(x[1], 99)))
+
+
 def cached_races(season: int) -> list[str]:
-    return sorted({p.name.split("__")[1] for p in
-                   SESSIONS_DIR.glob(f"{season}__*__Race__race_control.parquet")})
+    return sorted({stem for stem, sess in cached_sessions(season)
+                   if sess == "Race"})
 
 
 def _round_map(season: int) -> dict[str, int]:
@@ -254,7 +299,8 @@ def main() -> int:
 
     seasons = args.season or sorted(
         {int(p.name.split("__")[0])
-         for p in SESSIONS_DIR.glob("*__*__Race__race_control.parquet")})
+         for base in (SESSIONS_DIR, LITE_DIR)
+         for p in base.glob("*__*__*__race_control.parquet")})
     if not seasons:
         print("No cached race-control data under data/sessions/.")
         return 1
@@ -262,30 +308,40 @@ def main() -> int:
     frames = []
     for season in seasons:
         rounds = _round_map(season)
-        races = cached_races(season)
-        print(f"[{season}] {len(races)} cached race(s)")
-        for stem in races:
-            df = build_event(season, stem)
+        sessions = cached_sessions(season)
+        print(f"[{season}] {len(sessions)} cached session(s), "
+              f"{sum(s == 'Race' for _, s in sessions)} race(s)")
+        got = []
+        for stem, session in sessions:
+            df = build_event(season, stem, session)
             if df.empty:
-                print(f"  {stem}: no incidents parsed")
                 continue
             df["round"] = df["event"].map(
                 lambda e: rounds.get(e, rounds.get(e + " Grand Prix", np.nan)))
-            n_contact = int((df["kind"] == "contact").sum())
-            print(f"  {stem}: {len(df)} incident(s) · {n_contact} contact")
-            frames.append(df)
+            got.append(df)
+        if got:
+            g = pd.concat(got)
+            print("  " + ", ".join(f"{k}: {v}" for k, v in
+                                   g.groupby("session").size().items()))
+            frames.extend(got)
 
     if not frames:
         print("Nothing built.")
         return 1
     out = pd.concat(frames, ignore_index=True)
-    cols = ["season", "round", "event", "lap", "driver", "car_no", "kind",
-            "reason", "counterparty", "outcome", "incident_time", "n_messages"]
-    out = out[cols].sort_values(["season", "round", "lap", "driver"])
+    cols = ["season", "round", "event", "session", "lap", "driver", "car_no",
+            "kind", "reason", "counterparty", "outcome", "incident_time",
+            "n_messages"]
+    order = {s: i for i, s in enumerate(SESSION_ORDER)}
+    out = (out[cols].assign(_o=out["session"].map(order))
+           .sort_values(["season", "round", "_o", "lap", "incident_time",
+                         "driver"])
+           .drop(columns="_o"))
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(OUT_PATH, index=False)
     print(f"\nWrote {len(out)} rows -> {OUT_PATH}")
-    print(out["kind"].value_counts().to_string())
+    print(out.groupby(["session", "kind"]).size().unstack(fill_value=0)
+          .to_string())
     return 0
 
 

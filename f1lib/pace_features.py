@@ -130,6 +130,7 @@ Data access
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
@@ -592,10 +593,45 @@ def session_measurements(laps: pd.DataFrame, session_name: str
     return team, driver
 
 
+_EVENT_MEMO: "OrderedDict[tuple, tuple[pd.DataFrame, pd.DataFrame]]" = OrderedDict()
+_EVENT_MEMO_MAX = 16
+
+
+def _event_stamp(season, event) -> tuple:
+    """(path, mtime) of every input session file — a new or re-fetched
+    session changes it, so the memo can never serve stale measurements."""
+    out = []
+    for session in INPUT_SESSIONS:
+        p = _laps_path(season, event, session)
+        if p is not None:
+            try:
+                out.append((str(p), Path(p).stat().st_mtime))
+            except OSError:
+                out.append((str(p), None))
+    return tuple(out)
+
+
 def event_measurements(season: int | str, event: str
                        ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """All practice-session measurements for one event: one enrichment pass,
-    then per-session extraction, in session order."""
+    then per-session extraction, in session order.
+
+    Memoised on the input files' stamps: the enrichment chain is ~1 s and
+    WEEK END PRED / DUEL ran it on every render. Callers get copies."""
+    key = (str(season), str(event), _event_stamp(season, event))
+    hit = _EVENT_MEMO.get(key)
+    if hit is None:
+        hit = _event_measurements(season, event)
+        _EVENT_MEMO[key] = hit
+        while len(_EVENT_MEMO) > _EVENT_MEMO_MAX:
+            _EVENT_MEMO.popitem(last=False)
+    else:
+        _EVENT_MEMO.move_to_end(key)
+    return hit[0].copy(), hit[1].copy()
+
+
+def _event_measurements(season: int | str, event: str
+                        ) -> tuple[pd.DataFrame, pd.DataFrame]:
     raw = load_event_practice(season, event)
     if raw.empty:
         return pd.DataFrame(), pd.DataFrame()

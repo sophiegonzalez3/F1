@@ -209,6 +209,34 @@ def has_causes(season) -> bool:
         return False
 
 
+_CAUSES_INDEX: tuple = (None, {})   # (frame, its index) — swapped as one
+
+
+def _causes_index(d: pd.DataFrame) -> dict:
+    """{(season, event, DRIVER, session): first matching row} for the curated
+    table *d* — the same normalisation curated_cause used to apply to every
+    row on every call (540 calls per SEASON render). Rebuilt whenever
+    causes_df() hands out a new frame (i.e. the CSV changed)."""
+    global _CAUSES_INDEX
+    built_for, index = _CAUSES_INDEX
+    if built_for is d:
+        return index
+    from f1lib.incidents import session_of
+    seasons = pd.to_numeric(d["season"], errors="coerce")
+    events = d["event"].astype(str).str.strip()
+    drivers = d["driver"].astype(str).str.upper().str.strip()
+    sessions = session_of(d)
+    index: dict = {}
+    for i in range(len(d)):
+        if pd.isna(seasons.iat[i]):
+            continue
+        k = (seasons.iat[i], events.iat[i], drivers.iat[i], sessions.iat[i])
+        if k not in index:                       # first row wins (hit.iloc[0])
+            index[k] = d.iloc[i]
+    _CAUSES_INDEX = (d, index)
+    return index
+
+
 def curated_cause(season, event: str, driver: str,
                   session: str = "Race") -> dict | None:
     """The curated cause for one retirement, or None if nobody has filled it.
@@ -221,18 +249,13 @@ def curated_cause(season, event: str, driver: str,
     if d.empty or driver is None:
         return None
     try:
-        m = (pd.to_numeric(d["season"], errors="coerce") == int(season))
+        season_i = int(season)
     except (TypeError, ValueError):
         return None
-    m &= d["event"].astype(str).str.strip() == str(event).strip()
-    m &= (d["driver"].astype(str).str.upper().str.strip()
-          == str(driver).upper().strip())
-    from f1lib.incidents import session_of
-    m &= session_of(d) == session
-    hit = d[m]
-    if hit.empty:
+    row = _causes_index(d).get(
+        (season_i, str(event).strip(), str(driver).upper().strip(), session))
+    if row is None:
         return None
-    row = hit.iloc[0]
     fam = normalise_family(row.get("cause_family", ""))
     if not fam:
         return None
@@ -261,6 +284,44 @@ def resolve_cause(season, event: str, driver: str, last_lap,
     register wins and the curated row is ignored rather than merged, so a
     curation mistake can never overwrite a measurement.
     """
+    key = (str(season), str(event), str(driver), _lap_key(last_lap),
+           str(session), _input_stamp())
+    hit = _RESOLVE_MEMO.get(key)
+    if hit is None:
+        if len(_RESOLVE_MEMO) > 5000:
+            _RESOLVE_MEMO.clear()
+        hit = _RESOLVE_MEMO[key] = _resolve_cause(season, event, driver,
+                                                  last_lap, session)
+    return dict(hit)
+
+
+# resolve_cause runs once per retirement on every SEASON render (540 calls,
+# ~5 s). Its answer depends only on its arguments and three CSVs, so it is
+# memoised on their mtimes — editing any of them is picked up at once.
+_RESOLVE_MEMO: dict = {}
+
+
+def _input_stamp() -> tuple:
+    from f1lib.incidents import INCIDENTS_PATH
+    out = []
+    for p in (INCIDENTS_PATH, CAUSES_PATH, _GRID_PATH):
+        try:
+            out.append(p.stat().st_mtime)
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+def _lap_key(last_lap):
+    try:
+        v = float(last_lap)
+    except (TypeError, ValueError):
+        return repr(last_lap)
+    return "nan" if v != v else v
+
+
+def _resolve_cause(season, event: str, driver: str, last_lap,
+                   session: str = "Race") -> dict:
     from f1lib.incidents import classify_retirement
 
     out = {"cause_family": "", "cause_source": "", "cause_detail": "",

@@ -390,7 +390,10 @@ class RaceForecaster:
         # cars). Independent draws halve the odds of a double retirement.
         corr = float(np.clip(self.p.get("dnf_corr", 0.0), 0.0, 0.99))
         if corr > 0:
-            shared = {t: rng.standard_normal(n) for t in set(d["team"])}
+            # unique(), not set(): set order follows str hashing, which is
+            # randomised per process — the seeded forecast changed on every
+            # app restart
+            shared = {t: rng.standard_normal(n) for t in d["team"].unique()}
             z = np.empty((n, k))
             a, b = np.sqrt(corr), np.sqrt(1.0 - corr)
             for i, t in enumerate(d["team"]):

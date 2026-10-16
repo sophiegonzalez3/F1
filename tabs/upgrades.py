@@ -261,7 +261,22 @@ def _gap_series(season: int) -> pd.DataFrame:
     return s.set_index(["team", "round"])[col]
 
 
+_EFFECT_MEMO: dict = {}
+
+
 def _effect_rows(season: int) -> pd.DataFrame:
+    """_effect_rows_uncached, memoised per season on the identity of the two
+    input tables (upgrades_df / team_pace_df hand out the same frame until
+    their CSV changes). ~1,200 per-team window lookups per SEASON render
+    otherwise. Callers get a copy."""
+    up, pace = upgrades_df(), team_pace_df()
+    hit = _EFFECT_MEMO.get(season)
+    if hit is None or hit[0] is not up or hit[1] is not pace:
+        hit = _EFFECT_MEMO[season] = (up, pace, _effect_rows_uncached(season))
+    return hit[2].copy()
+
+
+def _effect_rows_uncached(season: int) -> pd.DataFrame:
     """Control-adjusted pace effect of every performance-upgrade round.
 
     raw effect   = mean gap over rounds [r, r+W-1] minus mean gap over

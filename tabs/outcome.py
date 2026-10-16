@@ -73,6 +73,37 @@ def _read(path: Path, **kw) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+_USABLE_MEMO: dict = {}
+
+
+def _usable_all() -> pd.DataFrame:
+    """Every pre-race, sane-book, priced driver row of the odds file — the
+    event-independent part of the filter, memoised on the file's mtime+size.
+    data/odds_snapshots.csv is ~90 MB and was re-parsed twice per WEEK END
+    PRED render (~1 s each); the odds snapshot task appends to it, which
+    changes the stamp and invalidates the memo."""
+    try:
+        st = ODDS.stat()
+        stamp = (st.st_mtime, st.st_size)
+    except OSError:
+        stamp = None
+    if _USABLE_MEMO.get("stamp") == stamp and "frame" in _USABLE_MEMO:
+        return _USABLE_MEMO["frame"]
+    o = _read(ODDS, low_memory=False)
+    need = {"season", "event", "market", "pre_lock", "overround",
+            "p_devig_power", "driver", "hours_to_lock"}
+    if o.empty or not need.issubset(o.columns):
+        out = pd.DataFrame()
+    else:
+        out = o[(o["pre_lock"] == True)
+                & o["overround"].between(0.9, 1.25)
+                & o["p_devig_power"].notna()
+                & o["driver"].notna() & (o["driver"] != "FIELD")]
+    _USABLE_MEMO.clear()
+    _USABLE_MEMO.update(stamp=stamp, frame=out)
+    return out
+
+
 def _usable_odds(season: int, event: str, market: str) -> pd.DataFrame:
     """Every pre-race, sane-book price for one event and market.
 
@@ -80,18 +111,11 @@ def _usable_odds(season: int, event: str, market: str) -> pd.DataFrame:
     empty frame is the correct answer for most events; the cards render a
     stated "no usable prices" rather than a misleading sparse chart.
     """
-    o = _read(ODDS, low_memory=False)
+    o = _usable_all()
     if o.empty:
         return o
-    need = {"season", "event", "market", "pre_lock", "overround",
-            "p_devig_power", "driver", "hours_to_lock"}
-    if not need.issubset(o.columns):
-        return pd.DataFrame()
     return o[(o["season"] == season) & (o["event"] == event)
-             & (o["market"] == market) & (o["pre_lock"] == True)
-             & o["overround"].between(0.9, 1.25)
-             & o["p_devig_power"].notna()
-             & o["driver"].notna() & (o["driver"] != "FIELD")]
+             & (o["market"] == market)].copy()
 
 
 def _empty(msg: str):

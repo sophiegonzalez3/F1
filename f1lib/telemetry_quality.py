@@ -13,7 +13,19 @@ measured per (driver, lap) on the lap-synced clock (f1lib/lap_sync):
     start. The merged 'car' rows still carry X/Y, but those are
     extrapolated, i.e. fictional.
 
-Shifting the clock cannot fix either; measuring corners, phases or racing
+A third, found 2026-10-13: the car packet FREEZES — Speed, RPM and Throttle
+all repeat the exact same values for seconds while the car is running (Stroll,
+Singapore 2026 Q: 133 km/h / 12502 rpm held for 3.5 s while changing up from
+2nd to 4th). The moving-share test misses it because the other samples of the
+lap move. Measured as `car_frozen_s`, the longest such run above
+MIN_SPEED_KMH. Healthy seasons never reach MAX_FROZEN_S: 2024 and 2025 put 6
+and 23 laps over 2.0 s out of 71,000; 2026 put 2,720 (5.5%), concentrated on
+the China / Japan / Hungary weekends. A Speed-ONLY plateau is NOT a freeze —
+at the top of a straight (and under 2026 energy clipping) the speed really is
+constant while RPM still moves; compute_section_profile's old Speed-only gate
+threw those laps away and with them most of Aston Martin's.
+
+Shifting the clock cannot fix any of them; measuring corners, phases or racing
 lines on those laps measures the feed, not the car. The two sources fail
 independently, so they are flagged separately: `pos_bad` matters to anything
 using X/Y (replays, racing lines, lap-start positions), `car_bad` to anything
@@ -46,6 +58,7 @@ NOMINAL_DT = 0.3
 MIN_SAMPLES = 20          # moving share needs this many judged samples
 MIN_SPEED_KMH = 30.0      # only samples of a moving car are judged on movement
 MAX_SESSION_BAD = 0.5     # above: the whole session is unusable for that channel
+MAX_FROZEN_S = 2.0        # car packet (Speed+RPM+Throttle) frozen this long: car_bad
 
 
 def _moving(t: np.ndarray, vals: list[np.ndarray]) -> np.ndarray:
@@ -59,9 +72,34 @@ def _moving(t: np.ndarray, vals: list[np.ndarray]) -> np.ndarray:
     return out
 
 
+def _frozen_run_s(t: np.ndarray, key: np.ndarray, judged: np.ndarray,
+                  starts: np.ndarray, ends: np.ndarray) -> np.ndarray:
+    """Per lap window: longest duration (s) of consecutive samples whose
+    `key` (the whole car packet) repeats, every sample judged (moving car)."""
+    out = np.zeros(starts.size)
+    if t.size < 2:
+        return out
+    same = np.zeros(t.size, bool)
+    same[1:] = (key[1:] == key[:-1]) & judged[1:] & judged[:-1]
+    # run id: a new run starts wherever `same` is False
+    rid = np.cumsum(~same)
+    lo, hi = np.searchsorted(t, starts), np.searchsorted(t, ends)
+    for i, (a, b) in enumerate(zip(lo, hi)):
+        if b - a < 2:
+            continue
+        r = rid[a:b]
+        tt = t[a:b]
+        # duration of each run inside the window = last - first timestamp
+        first = np.r_[True, r[1:] != r[:-1]]
+        last = np.r_[r[1:] != r[:-1], True]
+        d = tt[last] - tt[first]
+        out[i] = float(d.max()) if d.size else 0.0
+    return out
+
+
 def lap_quality(laps: pd.DataFrame, tel: pd.DataFrame) -> pd.DataFrame:
-    """Per (DriverNo, LapNo): coverage and moving share per source, pos_bad,
-    car_bad, degraded (= either).
+    """Per (DriverNo, LapNo): coverage and moving share per source, the
+    longest frozen car packet (car_frozen_s), pos_bad, car_bad, degraded.
 
     `tel` must be on the lap clock (read it through lap_sync.read_telemetry /
     load_session). Garage (0,0) pos samples count as missing."""
@@ -97,14 +135,26 @@ def lap_quality(laps: pd.DataFrame, tel: pd.DataFrame) -> pd.DataFrame:
                              else np.nan)
             out[f"{src}_cov"] = np.round(np.minimum((hi - lo) * NOMINAL_DT / dur, 1.0), 3)
             out[f"{src}_moving"] = np.round(np.asarray(share, float), 3)
+            if src == "car":
+                pk = [c for c in ("Speed", "RPM", "Throttle") if c in s.columns]
+                if pk and "Speed" in s.columns:
+                    key = np.rec.fromarrays([s[c].to_numpy(float) for c in pk])
+                    judged = s["Speed"].to_numpy(float) >= MIN_SPEED_KMH
+                    out["car_frozen_s"] = np.round(
+                        _frozen_run_s(t, key, judged, starts, ends), 2)
+                else:
+                    out["car_frozen_s"] = np.zeros(len(starts))
         rows.append(pd.DataFrame(out))
     cols = ["DriverNo", "LapNo", "pos_cov", "pos_moving", "car_cov", "car_moving",
-            "pos_bad", "car_bad", "degraded"]
+            "car_frozen_s", "pos_bad", "car_bad", "degraded"]
     if not rows:
         return pd.DataFrame(columns=cols)
     q = pd.concat(rows, ignore_index=True)
     for src in ("pos", "car"):
         q[f"{src}_bad"] = (q[f"{src}_cov"] < MIN_COVERAGE) | (q[f"{src}_moving"] < MIN_MOVING)
+    if "car_frozen_s" not in q.columns:
+        q["car_frozen_s"] = 0.0
+    q["car_bad"] |= q["car_frozen_s"] >= MAX_FROZEN_S
     q["degraded"] = q["pos_bad"] | q["car_bad"]
     return q[cols]
 

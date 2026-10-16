@@ -74,12 +74,13 @@ def theme_axes(fig, **kw):
 
     Date axes keep their own formatting; everything else gets HOVER_FMT.
     """
-    fig.update_xaxes(gridcolor=GRID_CLR, zeroline=False, **kw)
-    fig.update_yaxes(gridcolor=GRID_CLR, zeroline=False, **kw)
-    if not _is_temporal(fig, "x"):
-        fig.update_xaxes(hoverformat=HOVER_FMT)
-    if not _is_temporal(fig, "y"):
-        fig.update_yaxes(hoverformat=HOVER_FMT)
+    # One update per axis letter (hoverformat folded in, applied last as
+    # before): every update_*axes walks all axes, ~25 figures per tab.
+    for letter, update in (("x", fig.update_xaxes), ("y", fig.update_yaxes)):
+        args = dict(gridcolor=GRID_CLR, zeroline=False, **kw)
+        if not _is_temporal(fig, letter):
+            args["hoverformat"] = HOVER_FMT
+        update(**args)
     return fig
 
 

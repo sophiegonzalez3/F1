@@ -125,14 +125,39 @@ def contact_for(season, event: str | None = None,
     if d.empty:
         return d
     try:
-        m = (d["season"] == int(season)) & (d["kind"] == "contact")
+        season_i = int(season)
     except (TypeError, ValueError):
         return d.iloc[0:0]
+    if event and session is not None:
+        # the hot path (one call per retirement): served from a per-register
+        # index instead of re-normalising every row's event/session each call
+        idx = _contact_index(d)
+        hit = idx.get((season_i, str(event).strip(), session))
+        return hit.copy() if hit is not None else d.iloc[0:0].copy()
+    m = (d["season"] == season_i) & (d["kind"] == "contact")
     if event:
         m &= d["event"].astype(str).str.strip() == str(event).strip()
     if session is not None:
         m &= session_of(d) == session
     return d[m].copy()
+
+
+_CONTACT_INDEX: tuple = (None, {})   # (frame, its index) — swapped as one
+
+
+def _contact_index(d: pd.DataFrame) -> dict:
+    """{(season, event stripped, session): contact rows} for the register
+    frame *d* — same rows, order and index as contact_for's mask. Rebuilt
+    whenever incidents_df() hands out a new frame (i.e. the CSV changed)."""
+    global _CONTACT_INDEX
+    built_for, index = _CONTACT_INDEX
+    if built_for is d:
+        return index
+    c = d[d["kind"] == "contact"]
+    keys = [c["season"], c["event"].astype(str).str.strip(), session_of(c)]
+    index = {k: g for k, g in c.groupby(keys, sort=False, dropna=True)}
+    _CONTACT_INDEX = (d, index)
+    return index
 
 
 def classify_retirement(season, event: str, driver: str, last_lap,

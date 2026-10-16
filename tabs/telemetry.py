@@ -20,6 +20,7 @@ from dash import (
 import dash_bootstrap_components as dbc
 
 import f1lib.state as state
+import f1lib.telemetry_index as tel_index
 from f1lib.components import (
     theme, card, kpi, GFX, TABLE_STYLE, styled_table,
     badge as _badge, abbr as _abbr, hex_to_rgba as _hex_to_rgba,
@@ -59,21 +60,17 @@ def _rotate(x, y, angle):
     return x * ca - y * sa, x * sa + y * ca
 
 
-def _lap_telemetry(session, driver_short, lapno, tel_pool=None):
+def _lap_telemetry(session, driver_short, lapno):
     """Telemetry samples belonging to one lap, with a lap-relative time column.
 
     Locates the lap in the global ``laps`` frame (by session / driver / lap
     number), reads its [LapStartTime, LapStartTime+LapTime_s] window, and slices
-    the global ``telemetry`` frame to that driver+window. Returns
-    ``(tel_sub_sorted_by_t_rel, lap_row)`` or ``(None, lap_row_or_None)``.
-
-    ``tel_pool`` — optional pre-filtered telemetry subframe (same session +
-    driver). Callers that window many laps pass per-driver pools so each call
-    slices a few thousand rows instead of re-scanning the full multi-million-
-    row frame; the masks below are identical either way.
+    that driver's telemetry to it via the shared per-(session, driver) row index
+    (f1lib.telemetry_index) — a few ms, instead of masking the multi-million-row
+    frame per lap. Returns ``(tel_sub_sorted_by_t_rel, lap_row)`` or
+    ``(None, lap_row_or_None)``.
     """
-    src = tel_pool if tel_pool is not None else telemetry
-    if src is None or src.empty:
+    if telemetry is None or telemetry.empty:
         return None, None
     lp = laps[(laps["session_name"] == session)
               & (laps["Driver_Short"] == driver_short)
@@ -81,26 +78,20 @@ def _lap_telemetry(session, driver_short, lapno, tel_pool=None):
     if lp.empty:
         return None, None
     row   = lp.iloc[0]
-    dno   = str(row["DriverNo"]).strip()
     start = pd.to_numeric(row.get("LapStartTime"), errors="coerce")
     dur   = pd.to_numeric(row.get("LapTime_s"),    errors="coerce")
     if not (np.isfinite(start) and np.isfinite(dur)):
         return None, row
-    tel = src[
-        (src["session_name"] == session)
-        & (src["DriverNo"].astype(str).str.strip() == dno)
-        & (src["timestamp"] >= start)
-        & (src["timestamp"] <= start + dur)
-    ].copy()
-    if tel.empty:
+    tel = tel_index.window(session, row["DriverNo"], start, start + dur)
+    if tel is None or tel.empty:
         return None, row
-    tel = tel.sort_values("timestamp")
+    tel = tel.copy()
     tel["t_rel"] = tel["timestamp"] - start
     # Distance from the start line (m), integrating speed (km/h→m/s) over time —
     # the same quantity FastF1's Telemetry.add_distance() produces.
     if "Speed" in tel.columns:
         spd = pd.to_numeric(tel["Speed"], errors="coerce").fillna(0).to_numpy() * (1000.0 / 3600.0)
-        t   = pd.to_numeric(tel["t_rel"], errors="coerce").fillna(method="ffill").fillna(0).to_numpy()
+        t   = pd.to_numeric(tel["t_rel"], errors="coerce").ffill().fillna(0).to_numpy()
         if len(t) > 1:
             dt   = np.diff(t)
             avg  = (spd[1:] + spd[:-1]) / 2.0
@@ -113,38 +104,37 @@ def _lap_telemetry(session, driver_short, lapno, tel_pool=None):
 def _best_lap_telemetry_frame(fl):
     """Concatenated telemetry of each driver's single best valid lap across all
     loaded sessions in *fl* (one best lap per driver). Tagged with Driver_Short
-    and Team. Used by the Max-Speed / Gear-usage charts and the style
-    fingerprints. (The zone dominance card does NOT use this — it measures
-    quartile pace over many laps, not a single best lap.)
+    and Team. Used by the Max-Speed / Gear-usage charts and the cornering-
+    speed card. (The style fingerprints measure the leaderboard's own laps,
+    via _laps_telemetry_frame in tab_laps. The zone dominance card does NOT
+    use this — it measures quartile pace over many laps, not a single best
+    lap.)
 
-    Splits the telemetry into per-(session, driver) pools with ONE pass first;
-    windowing each lap then works on a few thousand rows. The old version
-    re-scanned the full frame per driver, which cost ~18 s per call on a
-    five-session weekend."""
+    Each lap is a window lookup in the shared per-(session, driver) row
+    index; the old version split/scanned the full frame on every call (~6 s,
+    twice per TELEMETRY render)."""
     v = fl[fl["ValidLap"]].copy()
     v = v[pd.to_numeric(v["LapTime_s"], errors="coerce") > 0]
     if v.empty or telemetry is None or telemetry.empty:
         return pd.DataFrame()
     idx  = v.groupby("Driver_Short")["LapTime_s"].idxmin()
     best = v.loc[idx]
+    return _laps_telemetry_frame(
+        (r["session_name"], r["Driver_Short"], r["LapNo"], r["Team"])
+        for _, r in best.iterrows())
 
-    pool_src = telemetry[telemetry["session_name"].isin(set(best["session_name"]))]
-    pool_src = pool_src.assign(
-        _dno=pool_src["DriverNo"].astype(str).str.strip())
-    pools = {k: g for k, g in pool_src.groupby(["session_name", "_dno"])}
 
+def _laps_telemetry_frame(specs) -> pd.DataFrame:
+    """Concatenated telemetry of the given laps — *specs* yields
+    (session_name, driver_short, lapno, team) — tagged with Driver_Short and
+    Team. Laps with no telemetry in the loaded window are skipped."""
     parts = []
-    for _, row in best.iterrows():
-        pool = pools.get((row["session_name"], str(row["DriverNo"]).strip()))
-        if pool is None:
-            continue
-        tel, _ = _lap_telemetry(row["session_name"], row["Driver_Short"],
-                                row["LapNo"], tel_pool=pool)
+    for session, driver, lapno, team in specs:
+        tel, _ = _lap_telemetry(session, driver, lapno)
         if tel is None or tel.empty:
             continue
-        tel = tel.copy()
-        tel["Driver_Short"] = row["Driver_Short"]
-        tel["Team"]         = row["Team"]
+        tel["Driver_Short"] = driver
+        tel["Team"]         = team
         parts.append(tel)
     return pd.concat(parts, ignore_index=True) if parts else pd.DataFrame()
 
@@ -309,10 +299,17 @@ def _prewarm_track_maps(session_info_list) -> None:
     threading.Thread(target=_worker, name="track-map-prewarm", daemon=True).start()
 
 
-# From now on, session reloads (Data Selection tab) prewarm the track-map
-# cache in the background. The initial import-time load intentionally runs
-# before this hook exists — same behaviour as before the state extraction.
-state.post_load_hook = _prewarm_track_maps
+def _post_load(session_info_list) -> None:
+    tel_index.prewarm()
+    _prewarm_track_maps(session_info_list)
+
+
+# From now on, session reloads (Data Selection tab) prewarm the telemetry row
+# index and the track-map cache in the background. The initial import-time
+# load runs before this hook exists, so the index is prewarmed here for it
+# (track maps keep their old behaviour: not prewarmed for the boot load).
+state.post_load_hook = _post_load
+tel_index.prewarm()
 
 
 def _empty_channel_fig(msg):
@@ -379,15 +376,24 @@ def _laptel_channel_fig(lap_specs):
         if not corner_df.empty:
             ref_total = float(np.median(lap_totals))
             line_kw = dict(color="rgba(150,150,150,0.45)", width=1, dash="dot")
+            # Built as plain dicts and assigned in ONE layout update: per-call
+            # fig.add_vline(row=, col=) re-validates every existing shape and
+            # scans the traces each time — ~11 s for 76 markers on 4 subplots.
+            shapes, notes = [], []
             for _, cr in corner_df.iterrows():
                 xx = float(cr["frac"]) * ref_total
+                for r in range(1, len(channels) + 1):
+                    sfx = "" if r == 1 else str(r)
+                    shapes.append(dict(type="line", layer="below", line=line_kw,
+                                       x0=xx, x1=xx, xref=f"x{sfx}",
+                                       y0=0, y1=1, yref=f"y{sfx} domain"))
                 # label only on the top subplot; plain dotted lines below
-                fig.add_vline(x=xx, row=1, col=1, layer="below", line=line_kw,
-                              annotation_text=str(cr["label"]),
-                              annotation_position="top",
-                              annotation_font=dict(size=8, color=TEXT_DIM))
-                for r in range(2, len(channels) + 1):
-                    fig.add_vline(x=xx, row=r, col=1, layer="below", line=line_kw)
+                notes.append(dict(text=str(cr["label"]), x=xx, xref="x",
+                                  y=1, yref="y domain", yanchor="bottom",
+                                  showarrow=False,
+                                  font=dict(size=8, color=TEXT_DIM)))
+            fig.update_layout(shapes=shapes,
+                              annotations=list(fig.layout.annotations) + notes)
 
     for r, ch in enumerate(channels, start=1):
         fig.update_yaxes(title_text=ch, gridcolor=GRID_CLR, zeroline=False, row=r, col=1)
@@ -661,10 +667,11 @@ def _delta_decomposition(specs):
         ms_rows.append((tr["label"], tr["team"], np.diff(cum_at)))
 
     # Faint alternating mini-sector bands tie the trace to the bars below.
-    for k in range(n):
-        if k % 2:
-            fig_delta.add_vrect(x0=ms_edges[k], x1=ms_edges[k + 1], layer="below",
-                                line_width=0, fillcolor=_SECTOR_FILL[1])
+    # Shapes go in as one batch (per-call add_vrect/add_vline is O(n²)).
+    shapes = [dict(type="rect", layer="below", line_width=0,
+                   fillcolor=_SECTOR_FILL[1], x0=ms_edges[k], x1=ms_edges[k + 1],
+                   xref="x", y0=0, y1=1, yref="y domain")
+              for k in range(n) if k % 2]
 
     # Corner markers (same source as the channel overlay).
     season, event = _session_meeting_season(ref["row"]["session_name"]) \
@@ -672,8 +679,11 @@ def _delta_decomposition(specs):
     corner_df = _corner_fractions_for(season, event)
     if not corner_df.empty:
         for _, cr in corner_df.iterrows():
-            fig_delta.add_vline(x=float(cr["frac"]) * grid_max, layer="below",
-                                line=dict(color="rgba(150,150,150,0.35)", width=1, dash="dot"))
+            xx = float(cr["frac"]) * grid_max
+            shapes.append(dict(type="line", layer="below", x0=xx, x1=xx, xref="x",
+                               y0=0, y1=1, yref="y domain",
+                               line=dict(color="rgba(150,150,150,0.35)", width=1, dash="dot")))
+    fig_delta.update_layout(shapes=list(fig_delta.layout.shapes) + shapes)
 
     theme(fig_delta, 450, f"Time Delta vs Distance  ·  reference: {ref['label']}")
     fig_delta.update_layout(
@@ -1041,7 +1051,11 @@ def tab_laps(fl, ft):
                    "several to overlay their lines team-coloured. Why: shows the line each "
                    "driver actually takes — turn-in point, apex, how much track they use "
                    "on exit — which lap-time and speed traces alone can't reveal.")),
-        fingerprint_section(blt),
+        # measured on the leaderboard's own laps (one per driver), so a
+        # ticked row and its fingerprint are guaranteed to be the same lap
+        fingerprint_section(_laps_telemetry_frame(
+            (r["Session"], r["Driver"], r["Lap #"], r["Team"])
+            for _, r in disp.iterrows())),
     ])
 
 

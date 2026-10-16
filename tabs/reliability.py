@@ -416,7 +416,7 @@ def reliability_card(season: int, teams=None):
         "the most reliable, finishing the biggest share of their races — pace "
         "means nothing if the car doesn't make it home.")
     return card(
-        ["Reliability & ", *gloss("dnf", "DNFs")],
+        ["Reliability & ", *gloss("dnf", "DNFs"), " - Race only"],
         dcc.Graph(figure=_reliability_fig(season, teams), config=GFX),
         plain=_plain,
         info=("Data: every car-race in the historical results archive for this "

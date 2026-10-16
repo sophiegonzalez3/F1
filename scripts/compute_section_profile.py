@@ -30,12 +30,12 @@ What failed, so nobody re-adds it:
   * braking: passes 2026 qualifying only.
 
 Pipeline, per event:
-  1. Reference = the session's fastest lap with a healthy speed channel (no
-     frozen plateau), NOT the cached X/Y track line (the 2026 Suzuka line has a
+  1. Reference = the session's fastest lap with a healthy car feed (not
+     car_bad in f1lib/telemetry_quality), NOT the cached X/Y track line (the 2026 Suzuka line has a
      30% hole). Phase labels come from the QUALIFYING reference so a stretch of
      track carries the same label in both sessions.
   2. Every candidate lap is gated (distance within 2% of the reference;
-     speed-channel plateau) and ALIGNED to the reference speed trace by a
+     car feed not degraded) and ALIGNED to the reference speed trace by a
      circular shift — lap-start timestamps can sit seconds off (Austria 2026).
   3. Time per slice from the lap's time-vs-fraction curve; summed per phase.
      Qualifying = each team's best clean lap; race = every lap of each driver's
@@ -85,24 +85,11 @@ PHASES = ("low_speed", "traction", "top_speed", "high_speed", "braking",
 
 # Lap gates (see the research note in the module docstring)
 DIST_TOL = 0.02          # integrated distance within 2% of the reference
-MAX_FLAT = 6             # samples (~1.5 s) — longer = frozen speed channel
 ALIGN_GRID = 2000
 MAX_SHIFT = 0.10         # search ±10% of a lap
 MATCH_TOL_KMH = 18.0     # mean |Δspeed| after alignment above this = reject
 RACE_QUARTILE = 0.25
 RACE_MIN_LAPS = 3
-
-
-def _flat_run(v: np.ndarray) -> int:
-    """Longest run of identical consecutive speed samples (frozen channel)."""
-    if v.size < 2:
-        return 0
-    same = np.concatenate([[False], np.diff(v) == 0])
-    best = cur = 0
-    for x in same:
-        cur = cur + 1 if x else 0
-        best = max(best, cur)
-    return best
 
 
 def _lap_curve(tel: pd.DataFrame, start: float, dur: float):
@@ -114,8 +101,12 @@ def _lap_curve(tel: pd.DataFrame, start: float, dur: float):
         return None
     tt = car["timestamp"].to_numpy(float) - start
     v = pd.to_numeric(car["Speed"], errors="coerce").fillna(0).to_numpy(float) / 3.6
-    if _flat_run(v) > MAX_FLAT:
-        return None
+    # A frozen feed is excluded upstream through degraded_mask(.., "car"),
+    # whose car_bad now includes a frozen car PACKET (Speed+RPM+Throttle,
+    # f1lib/telemetry_quality.MAX_FROZEN_S). The old Speed-only plateau gate
+    # (> 6 identical samples) is gone: a constant top speed - or 2026 energy
+    # clipping - is real, and it rejected 15-94% of every team's laps,
+    # Aston Martin's most (Singapore 2026 Q: 94% rejected, 12% truly frozen).
     d = np.concatenate([[0.0], np.cumsum((v[1:] + v[:-1]) / 2 * np.diff(tt))])
     if d[-1] <= 0:
         return None

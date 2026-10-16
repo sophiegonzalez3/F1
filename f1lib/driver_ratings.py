@@ -283,6 +283,15 @@ def build_pace_table() -> pd.DataFrame:
 # Fixed-effects rating fit
 # ─────────────────────────────────────────────────────────────
 
+def _n_components(ci: np.ndarray, di: np.ndarray, nc: int, nd: int) -> int:
+    """Connected components of the bipartite car–driver graph (rows = edges)."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    n = nc + nd
+    g = coo_matrix((np.ones(len(ci)), (ci, nc + di)), shape=(n, n))
+    return int(connected_components(g, directed=False)[0])
+
+
 class DriverRatings:
     def __init__(self, pace_table: str | Path = PACE_TABLE):
         df = pd.read_csv(pace_table)
@@ -292,6 +301,7 @@ class DriverRatings:
         key["event_idx"] = range(len(key))
         self.pace = df.merge(key, on=["season", "round"], how="left")
         self._max_idx = self.pace["event_idx"].max()
+        self._effects_memo: dict[tuple, pd.DataFrame] = {}
 
     def _fit(self, sub: pd.DataFrame, as_of_idx: float,
              kind: str | None = None) -> pd.DataFrame:
@@ -323,47 +333,67 @@ class DriverRatings:
             return pd.DataFrame(columns=["driver", "effect", "se", "n_events"])
         w = 0.5 ** ((as_of_idx - sub["event_idx"]).clip(lower=0)
                     / HALF_LIFE_EVENTS)
-        car = pd.get_dummies(
-            sub["season"].astype(str) + "|" + sub["event"].astype(str)
-            + "|" + sub["team"].astype(str), prefix="car")
-        drv = pd.get_dummies(sub["driver"], prefix="d")
-        X = pd.concat([car, drv], axis=1).astype(float)
-        cols = list(X.columns)
-        Xv = X.values
-        y = sub["gap_pct"].values
-        lam = np.array([RIDGE if c.startswith("d_") else 0.0 for c in cols])
+        # Design: one car dummy + one driver dummy per row. Built as integer
+        # codes, not a dense dummy matrix — the normal equations have a
+        # DIAGONAL car block (each row belongs to exactly one car), so the
+        # system is solved exactly by eliminating the cars onto the small
+        # driver block (Schur complement). Same estimator as the dense
+        # inv(XᵀWX) solve, ~50x faster (the dense version was ~3 s per fit,
+        # three fits per WEEK END PRED render).
+        car_lab = (sub["season"].astype(str) + "|" + sub["event"].astype(str)
+                   + "|" + sub["team"].astype(str))
+        car_names = np.sort(car_lab.unique())          # get_dummies column order
+        drv_names = np.sort(sub["driver"].unique())
+        ci = np.searchsorted(car_names, car_lab.to_numpy())
+        di = np.searchsorted(drv_names, sub["driver"].to_numpy())
+        nc, nd = len(car_names), len(drv_names)
+        y = sub["gap_pct"].to_numpy(float)
+        lam_d = RIDGE                                   # ridge on drivers only
 
         def _solve(W):
-            XtWX = Xv.T @ (W[:, None] * Xv) + np.diag(lam)
+            a = np.bincount(ci, weights=W, minlength=nc)            # car block (diag)
+            Dd = np.bincount(di, weights=W, minlength=nd) + lam_d   # driver block (diag)
+            B = np.zeros((nc, nd))
+            np.add.at(B, (ci, di), W)                               # car × driver
+            yc = np.bincount(ci, weights=W * y, minlength=nc)
+            yd = np.bincount(di, weights=W * y, minlength=nd)
+            Ba = B / a[:, None]                                     # A⁻¹B
+            S = np.diag(Dd) - B.T @ Ba                              # Schur complement
             try:
-                inv = np.linalg.inv(XtWX)
+                Sinv = np.linalg.inv(S)
             except np.linalg.LinAlgError:
-                inv = np.linalg.pinv(XtWX)
-            beta = inv @ (Xv.T @ (W * y))
-            return beta, inv
+                Sinv = np.linalg.pinv(S)
+            bd = Sinv @ (yd - Ba.T @ yc)
+            bc = (yc - B @ bd) / a
+            return bc, bd, np.diag(Sinv)
 
-        W = w.values
-        beta, inv = _solve(W)
-        resid = y - Xv @ beta
+        def _fitted(bc, bd):
+            return bc[ci] + bd[di]
+
+        W = w.to_numpy(float)
+        bc, bd, vdiag = _solve(W)
+        resid = y - _fitted(bc, bd)
         # Huber reweight: shrink the influence of laps far from the fit
         mad = 1.4826 * np.median(np.abs(resid - np.median(resid)))
         if mad > 1e-6:
             r = np.abs(resid) / (_HUBER_K * mad)
             W = W * np.where(r <= 1, 1.0, 1.0 / r)
-            beta, inv = _solve(W)
-            resid = y - Xv @ beta
+            bc, bd, vdiag = _solve(W)
+            resid = y - _fitted(bc, bd)
         # dof from the number of OBSERVATIONS minus parameters (not the summed
         # recency weights — those are far smaller than the car-dummy count and
         # would collapse dof, exploding s2). s2 is the weighted mean square
         # error normalised by the mean weight so it stays a proper variance.
-        dof = max(len(y) - np.linalg.matrix_rank(Xv), 1.0)
+        # rank(X) of a car+driver incidence design = columns − connected
+        # components of the car–driver graph (one dependency per component:
+        # its car dummies sum to its driver dummies) — exact, no SVD needed.
+        dof = max(len(y) - (nc + nd - _n_components(ci, di, nc, nd)), 1.0)
         s2 = float((W * resid**2).sum() / (W.mean() * dof))
-        var = np.clip(np.diag(inv) * s2, 0.0, None)
-        d_idx = [i for i, c in enumerate(cols) if c.startswith("d_")]
+        var = np.clip(vdiag * s2, 0.0, None)
         eff = pd.DataFrame({
-            "driver": [cols[i][2:] for i in d_idx],
-            "effect": [beta[i] for i in d_idx],
-            "se": [np.sqrt(var[i]) for i in d_idx],
+            "driver": list(drv_names),
+            "effect": list(bd),
+            "se": list(np.sqrt(var)),
         })
         n_ev = sub.groupby("driver")["event_idx"].nunique()
         eff["n_events"] = eff["driver"].map(n_ev).fillna(0).astype(int)
@@ -374,7 +404,17 @@ class DriverRatings:
     def effects(self, kind: str, as_of: tuple[int, int] | None = None
                 ) -> pd.DataFrame:
         """Driver effects for `kind` ('race'|'quali') using events strictly
-        before as_of=(season, round). Without as_of, uses everything."""
+        before as_of=(season, round). Without as_of, uses everything.
+        Memoised per (kind, as_of): the pace table is fixed for this
+        instance's life, and a WEEK END PRED render asks for the same fits
+        several times. Callers get a copy, so they may mutate freely."""
+        key = (kind, None if as_of is None else tuple(int(v) for v in as_of))
+        hit = self._effects_memo.get(key)
+        if hit is None:
+            hit = self._effects_memo[key] = self._effects(kind, as_of)
+        return hit.copy()
+
+    def _effects(self, kind: str, as_of: tuple[int, int] | None) -> pd.DataFrame:
         sub = self.pace[self.pace["kind"] == kind]
         if as_of is not None:
             season, rnd = as_of

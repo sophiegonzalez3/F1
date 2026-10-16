@@ -946,19 +946,68 @@ _SKY, _AMBER, _MID = "#2F7FA3", "#A8781E", "#24243A"
 _SECTION_CACHE: dict = {}
 
 
-def _phase_residuals(d: pd.DataFrame):
-    """(residual pp team×phase, lap deficit % per team, raw phase %)."""
-    g = d.groupby(["team", "section"])[["team_s", "median_s"]].sum()
-    raw = ((g["team_s"] / g["median_s"] - 1) * 100).unstack()
-    lap = (d.groupby("team")[["team_s", "median_s"]].sum())
-    lap = (lap["team_s"] / lap["median_s"] - 1) * 100
-    res = pd.DataFrame(index=raw.index)
-    for k in raw.columns:
-        ok = raw[k].notna() & lap.reindex(raw.index).notna()
+def _phase_tensor(d: pd.DataFrame) -> dict:
+    """Per-(round, team, section) sums of team_s / median_s and row counts —
+    computed once, so every resample of rounds (track halves, bootstraps)
+    is a weighted sum over the round axis instead of a fresh pandas groupby
+    (341 groupbys per session made the Car Character card ~9 s)."""
+    d = d.dropna(subset=["round", "team", "section"])
+    rounds = np.sort(d["round"].unique())
+    teams = np.sort(d["team"].unique())
+    secs = np.sort(d["section"].unique())
+    ri = np.searchsorted(rounds, d["round"].to_numpy())
+    ti = np.searchsorted(teams, d["team"].to_numpy())
+    si = np.searchsorted(secs, d["section"].to_numpy())
+    shape = (len(rounds), len(teams), len(secs))
+    flat = np.ravel_multi_index((ri, ti, si), shape)
+    size = int(np.prod(shape))
+    # groupby().sum() skips NaN, so NaN cells count as 0 (a group of only
+    # NaNs still exists, with sum 0) — mirror that exactly
+    sums = lambda col: np.bincount(
+        flat, weights=np.nan_to_num(d[col].to_numpy(float), nan=0.0),
+        minlength=size).reshape(shape)
+    return {"rounds": rounds, "teams": teams, "secs": secs,
+            "team_s": sums("team_s"), "median_s": sums("median_s"),
+            "n": np.bincount(flat, minlength=size).reshape(shape)}
+
+
+def _phase_arrays(t: dict, w):
+    """Core of _phase_residuals_w on plain arrays over the FULL team × section
+    grid: (res, raw, lap, team present, section present, residual computed).
+    Absent teams/sections and uncomputed residual columns are NaN."""
+    if w is None:
+        w = np.ones(len(t["rounds"]))
+    ts = np.tensordot(w, t["team_s"], axes=1)          # team × section
+    ms = np.tensordot(w, t["median_s"], axes=1)
+    present = np.tensordot(w, t["n"], axes=1) > 0
+    trow, scol = present.any(axis=1), present.any(axis=0)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        raw = np.where(present, (ts / ms - 1) * 100, np.nan)
+        lap = np.where(trow, (ts.sum(axis=1) / ms.sum(axis=1) - 1) * 100, np.nan)
+    res = np.full(raw.shape, np.nan)
+    done = np.zeros(raw.shape[1], dtype=bool)
+    for k in np.flatnonzero(scol):
+        rk = raw[:, k]
+        ok = trow & ~np.isnan(rk) & ~np.isnan(lap)
         if ok.sum() < 6:
             continue
-        b = np.polyfit(lap[raw.index[ok]], raw[k][ok], 1)
-        res[k] = raw[k] - np.polyval(b, lap.reindex(raw.index))
+        b = np.polyfit(lap[ok], rk[ok], 1)
+        res[trow, k] = rk[trow] - np.polyval(b, lap[trow])
+        done[k] = True
+    return res, raw, lap, trow, scol, done
+
+
+def _phase_residuals_w(t: dict, w):
+    """(residual pp team×phase, lap deficit % per team, raw phase %) over the
+    rounds weighted by *w* — a count per round: 1/0 for a track half,
+    multiplicity for a bootstrap draw; None = every round once."""
+    resv, rawv, lapv, trow, scol, done = _phase_arrays(t, w)
+    teams = pd.Index(t["teams"][trow], name="team")
+    raw = pd.DataFrame(rawv[np.ix_(trow, scol)], index=teams,
+                       columns=pd.Index(t["secs"][scol], name="section"))
+    lap = pd.Series(lapv[trow], index=teams)
+    res = pd.DataFrame(resv[np.ix_(trow, done)], index=teams,
+                       columns=list(t["secs"][done]))
     return res, lap, raw
 
 
@@ -967,26 +1016,35 @@ def _character_stats(d: pd.DataFrame, key) -> dict:
     and bootstrap SE — cached on the CSV's mtime."""
     if key in _SECTION_CACHE:
         return _SECTION_CACHE[key]
-    res, lap, raw = _phase_residuals(d)
+    tens = _phase_tensor(d)
+    res, lap, raw = _phase_residuals_w(tens, None)
     rng = np.random.default_rng(0)
     rounds = np.array(sorted(d["round"].unique()))
+    pos = np.searchsorted(tens["rounds"], rounds)       # round → tensor row
+    nr = len(tens["rounds"])
+
+    def _weights(picks):                                # rounds drawn → counts
+        return np.bincount(pos[np.searchsorted(rounds, picks)], minlength=nr)
+
     rs = {c: [] for c in res.columns}
+    col_of = {c: int(np.searchsorted(tens["secs"], c)) for c in rs}
     # 120 splits / 100 bootstraps: the reliability figure is stable to ±0.01
-    # by then (checked against 300), and the first render stays ~3 s
+    # by then (checked against 300). The splits only feed a correlation, so
+    # they stay on plain arrays (absent team = NaN, same pairing as the old
+    # index intersection).
     for _ in range(120):
         perm = rng.permutation(rounds)
         h = len(rounds) // 2
-        ra = _phase_residuals(d[d["round"].isin(perm[:h])])[0]
-        rb = _phase_residuals(d[d["round"].isin(perm[h:])])[0]
-        for c in rs:
-            if c in ra and c in rb:
-                j = ra[c].dropna().index.intersection(rb[c].dropna().index)
-                if len(j) >= 6:
-                    rs[c].append(np.corrcoef(ra.loc[j, c], rb.loc[j, c])[0, 1])
+        ra, *_, done_a = _phase_arrays(tens, _weights(perm[:h]))
+        rb, *_, done_b = _phase_arrays(tens, _weights(perm[h:]))
+        for c, k in col_of.items():
+            if done_a[k] and done_b[k]:
+                j = ~np.isnan(ra[:, k]) & ~np.isnan(rb[:, k])
+                if j.sum() >= 6:
+                    rs[c].append(np.corrcoef(ra[j, k], rb[j, k])[0, 1])
     rel = {c: float(np.nanmean(v)) if v else float("nan") for c, v in rs.items()}
-    boots = [_phase_residuals(pd.concat(
-        [d[d["round"] == r] for r in rng.choice(rounds, len(rounds))]))[0]
-        for _ in range(100)]
+    boots = [_phase_residuals_w(tens, _weights(rng.choice(rounds, len(rounds))))[0]
+             for _ in range(100)]
     se = pd.concat(boots).groupby(level=0).std()
     share = (d.drop_duplicates(["round", "section"])
              .groupby("section")["lap_share"].mean())

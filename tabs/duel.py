@@ -33,6 +33,7 @@ from dash import html, dcc, dash_table, callback, Input, Output
 import dash_bootstrap_components as dbc
 
 import f1lib.state as state
+import f1lib.telemetry_index as tel_index
 from f1lib.components import (
     theme, card, kpi, GFX, TABLE_STYLE, abbr as _abbr,
     hex_to_rgba as _hex_to_rgba,
@@ -217,9 +218,10 @@ def _best_lap_tel_loaded(drv: str) -> tuple[pd.DataFrame | None, str]:
     if v.empty:
         return None, ""
     row = v.loc[v["LapTime_s"].idxmin()]
-    pool = tel[(tel["session_name"] == row["session_name"])
-               & (tel["DriverNo"].astype(str).str.strip()
-                  == str(row["DriverNo"]).strip())]
+    # shared per-(session, driver) row index — not a mask over the full frame
+    pool = tel_index.driver_frame(row["session_name"], row["DriverNo"])
+    if pool is None:
+        return None, ""
     t = _window_lap(pool, float(row["LapStartTime"]), float(row["LapTime_s"]))
     label = str(row["session_name"]).split("_")[0]
     return t, f"{label} lap {int(row['LapNo'])} ({row['LapTime_s']:.3f}s)"

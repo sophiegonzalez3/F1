@@ -326,6 +326,49 @@ def _memo_key(tab, ss, sd, st):
 # in the memo from the interactive render before this sweep starts — it stays
 # in the list only to cover the filter-change case, where it is not the one
 # being viewed.
+# ── One build per tab layout at a time ───────────────────────
+# Without this, a click on a tab the prewarm thread is still building started
+# a SECOND build of the same layout (and a page reload mid-sweep a third, from
+# the new sweep): measured on SEASON, three concurrent builds fighting over the
+# GIL turned a ~5 s build into a 16 s wait. Now whoever comes second waits for
+# the build in flight and takes its result from the memo.
+import threading as _threading
+_INFLIGHT: dict = {}                   # memo key → Event set when its build ends
+_INFLIGHT_LOCK = _threading.Lock()
+
+
+def _build_memoized(tab, ss, sd, st, key, gen):
+    """(layout, how) for one memo key, how ∈ {"memo hit", "built", "joined"}.
+    Builds at most once per key across the request and prewarm threads; a
+    result is memoized only if the data did not reload during the build."""
+    with _INFLIGHT_LOCK:
+        if key in _TAB_RENDER_MEMO:
+            _TAB_RENDER_MEMO.move_to_end(key)
+            return _TAB_RENDER_MEMO[key], "memo hit"
+        ev = _INFLIGHT.get(key)
+        owner = ev is None
+        if owner:
+            ev = _INFLIGHT[key] = _threading.Event()
+    if not owner:
+        ev.wait(timeout=300)
+        out = _TAB_RENDER_MEMO.get(key)
+        if out is not None:
+            return out, "joined"
+        return _render_tab(tab, ss, sd, st), "built"   # the owner failed — build
+    try:
+        out = _render_tab(tab, ss, sd, st)
+        if gen == state.DATA_GENERATION:
+            with _INFLIGHT_LOCK:
+                _TAB_RENDER_MEMO[key] = out
+                while len(_TAB_RENDER_MEMO) > _TAB_MEMO_MAX:
+                    _TAB_RENDER_MEMO.popitem(last=False)
+        return out, "built"
+    finally:
+        with _INFLIGHT_LOCK:
+            _INFLIGHT.pop(key, None)
+        ev.set()
+
+
 _PREWARM_TABS = ("tab-race", "tab-weekend", "tab-laps", "tab-teams",
                  "tab-season", "tab-stints", "tab-quali", "tab-track",
                  "tab-duel", "tab-context")
@@ -352,16 +395,15 @@ def _schedule_tab_prewarm(ss, sd, st, skip=None, delay=0.75):
                 continue
             t0 = perf_counter()
             try:
-                out = _render_tab(tab, ss, sd, st)
+                # joins (waits for) a build of the same layout already in
+                # flight instead of starting a competing one
+                _out, how = _build_memoized(tab, ss, sd, st, key, gen)
             except Exception as exc:
                 print(f"prewarm {tab}: failed ({exc})", flush=True)
                 continue
             if gen != state.DATA_GENERATION:
-                return                     # data reloaded mid-build — drop it
-            _TAB_RENDER_MEMO[key] = out
-            while len(_TAB_RENDER_MEMO) > _TAB_MEMO_MAX:
-                _TAB_RENDER_MEMO.popitem(last=False)
-            print(f"prewarm {tab}: built in {(perf_counter()-t0)*1000:.0f} ms",
+                return                     # data reloaded mid-build — dropped
+            print(f"prewarm {tab}: {how} in {(perf_counter()-t0)*1000:.0f} ms",
                   flush=True)
             sleep(0.1)                     # breathe between builds
 
@@ -392,14 +434,11 @@ def _render_tab(tab, ss, sd, st):
             tab_data_quality(fl_d, fs_d),
         ])
     if tab=="tab-laps":
-        # the 2M+-row telemetry slice is only needed here —
-        # filtering it lazily keeps every other tab switch cheap
-        dnos = fl_d["DriverNo"].unique()
-        ft   = (telemetry[telemetry["DriverNo"].isin(dnos)
-                          & telemetry["session_name"].isin(ss)].copy()
-                if not telemetry.empty else telemetry)
-        # merged view: the session overview cards first, telemetry below
-        return html.Div([tab_overview(fl_d, fs_d, ft), tab_laps(fl_d, ft)])
+        # merged view: the session overview cards first, telemetry below.
+        # No pre-filtered telemetry copy: the cards window laps through
+        # f1lib.telemetry_index (the old .copy() of the 5M-row frame was
+        # unused and cost seconds + ~1 GB per render).
+        return html.Div([tab_overview(fl_d, fs_d), tab_laps(fl_d, None)])
     if tab=="tab-teams":
         # Merged TEAM & TEAMATE tab, computed over a "last N events" window
         # from data/driver_event_kpis.csv. The slider is in this layout; the
@@ -505,17 +544,8 @@ def render(tab, ss, sd, st):
         _schedule_tab_prewarm(ss, sd, st)
         return out
     key = _memo_key(tab, ss, sd, st)
-    hit = key in _TAB_RENDER_MEMO
-    if hit:
-        _TAB_RENDER_MEMO.move_to_end(key)
-        out = _TAB_RENDER_MEMO[key]
-    else:
-        out = _render_tab(tab, ss, sd, st)
-        _TAB_RENDER_MEMO[key] = out
-        while len(_TAB_RENDER_MEMO) > _TAB_MEMO_MAX:
-            _TAB_RENDER_MEMO.popitem(last=False)
-    print(f"render {tab}: {'memo hit' if hit else 'built'} "
-          f"in {(perf_counter()-t0)*1000:.0f} ms", flush=True)
+    out, how = _build_memoized(tab, ss, sd, st, key, state.DATA_GENERATION)
+    print(f"render {tab}: {how} in {(perf_counter()-t0)*1000:.0f} ms", flush=True)
     _schedule_tab_prewarm(ss, sd, st, skip=tab)
     return out
 

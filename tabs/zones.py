@@ -33,6 +33,7 @@ import plotly.graph_objects as go
 from dash import html, dcc, callback, no_update, Input, Output, State, ctx
 
 import f1lib.state as state
+import f1lib.telemetry_index as tel_index
 from f1lib.components import theme, card, GFX, hex_to_rgba as _hex_to_rgba
 from f1lib.config import (
     TEAM_COLORS, ACCENT, CARD_BG, TEXT_MAIN, TEXT_DIM,
@@ -160,40 +161,35 @@ def _cache_key(season, event, nz: int, laps_df: pd.DataFrame) -> str:
 def _compute_lap_zone_times(laps_df: pd.DataFrame, fracs: np.ndarray) -> pd.DataFrame:
     """One row per lap: identity columns plus z0..z{n-1} zone times.
 
-    Windows the telemetry per lap (using per-(session, driver) pools so each
-    lap slices a few thousand rows rather than the multi-million-row frame),
+    Windows the telemetry per lap through the shared per-(session, driver) row
+    index (f1lib.telemetry_index) — pure numpy, no per-lap frame slicing —
     integrates distance from speed, then rescales the lap's clock onto its
     official LapTime_s — the telemetry window is truncated at both ends by the
     sample rate, by a different amount per lap, which would otherwise bias
     every cross-driver gap.
     """
-    tel = state.telemetry
+    tel, index = tel_index.snapshot()   # frame + its row index, one consistent pair
     if tel is None or tel.empty or laps_df.empty:
         return pd.DataFrame()
 
     nz = len(fracs)
-    src = tel[tel["session_name"].isin(set(laps_df["session_name"]))]
-    if src.empty:
-        return pd.DataFrame()
-    src = src.assign(_dno=src["DriverNo"].astype(str).str.strip())
-    pools = {k: g.sort_values("timestamp") for k, g in src.groupby(["session_name", "_dno"])}
+    speed_all = pd.to_numeric(tel["Speed"], errors="coerce").fillna(0).to_numpy(float)
 
     rows, zmat = [], []
     for r in laps_df.itertuples(index=False):
-        pool = pools.get((r.session_name, str(r.DriverNo).strip()))
-        if pool is None:
+        hit = index.get((r.session_name, str(r.DriverNo).strip()))
+        if hit is None:
             continue
         start = pd.to_numeric(r.LapStartTime, errors="coerce")
         dur = pd.to_numeric(r.LapTime_s, errors="coerce")
         if not (np.isfinite(start) and np.isfinite(dur) and dur > 0):
             continue
-        ts = pool["timestamp"].to_numpy()
+        pos, ts = hit
         i0, i1 = np.searchsorted(ts, start), np.searchsorted(ts, start + dur, side="right")
         if i1 - i0 < nz + 1:
             continue
-        w = pool.iloc[i0:i1]
-        trel = (w["timestamp"].to_numpy(float) - float(start))
-        spd = pd.to_numeric(w["Speed"], errors="coerce").fillna(0).to_numpy(float) * (1000.0 / 3600.0)
+        trel = ts[i0:i1] - float(start)
+        spd = speed_all[pos[i0:i1]] * (1000.0 / 3600.0)
         if trel.size < 2:
             continue
         dist = np.concatenate([[0.0], np.cumsum((spd[1:] + spd[:-1]) / 2.0 * np.diff(trel))])

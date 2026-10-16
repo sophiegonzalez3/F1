@@ -21,9 +21,9 @@ from f1lib.data_loader import _sanitize  # noqa: E402
 from f1lib.lap_sync import read_telemetry  # noqa: E402
 
 SESSIONS = Path("data/sessions")
-TEL_COLS = ["DriverNo", "timestamp", "X", "Y", "Speed", "RPM", "Source"]
+TEL_COLS = ["DriverNo", "timestamp", "X", "Y", "Speed", "RPM", "Throttle", "Source"]
 DEG_COLS = ["DriverNo", "LapNo", "pos_cov", "pos_moving", "car_cov", "car_moving",
-            "pos_bad", "car_bad"]
+            "car_frozen_s", "pos_bad", "car_bad"]
 
 
 def _audit(stem: str):
@@ -39,6 +39,7 @@ def _audit(stem: str):
     for c in ("pos_cov", "pos_moving", "car_cov", "car_moving"):
         summ[f"{c}_med"] = round(float(q[c].median()), 3)
     summ.update({"n_pos_bad": int(q["pos_bad"].sum()), "n_car_bad": int(q["car_bad"].sum()),
+                 "n_car_frozen": int((q["car_frozen_s"] >= tq.MAX_FROZEN_S).sum()),
                  "n_degraded": int(q["degraded"].sum()),
                  "share_degraded": round(float(q["degraded"].mean()), 3) if len(q) else 0.0})
     bad = q[q["degraded"]].assign(stem=stem)

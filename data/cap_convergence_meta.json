@@ -2,7 +2,7 @@
   "split_half": {
     "spread_pct": 0.97,
     "mid_gap_pct": 0.95,
-    "big4_dnf_pct": 0.76,
+    "big4_dnf_pct": 0.77,
     "merit_beat_pct": 0.92,
     "mid_share_race": 0.93
   },

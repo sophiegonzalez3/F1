@@ -89,6 +89,9 @@ TRANSCRIBED = {
     (2026, 14): "Car 87 - Required to start from the pit lane - Car modified "
                 "whilst under Parc Fermé conditions and additional power unit "
                 "elements have been used - Stewards' document no. 63",
+    (2026, 18): "Car 18 - Required to start from the pit lane - Car modified "
+                "whilst under Parc Fermé conditions and additional power unit "
+                "elements have been used - Stewards' document no. 48",
 }
 
 

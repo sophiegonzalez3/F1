@@ -25,6 +25,7 @@ All analysis is for the event loaded in the DATA tab.
 from __future__ import annotations
 
 import logging
+import threading
 
 import numpy as np
 import pandas as pd
@@ -47,7 +48,7 @@ import f1lib.duel as duel
 from f1lib.circuits import circuit_id
 from f1lib.mistakes import (
     load_corner_fractions, load_track_line,
-    corner_features_for_session, aggregate_mistakes,
+    driver_feature_rows, aggregate_mistakes,
 )
 from f1lib.standings import (
     HIST_RACE, _loaded_meeting_season_round, _driver_standings_after_round,
@@ -273,21 +274,46 @@ def _pair_best_laps(a: str, b: str, ctx: dict):
     return ta, tb, la, lb, src
 
 
+_LIVE_FEATS: dict = {}     # (generation, session, DriverNo, fracs) → feature rows
+
+
 def _live_weekend_mistakes(a: str, b: str, ctx: dict) -> pd.DataFrame:
-    """Per-corner mistake counts for the pair across the LOADED sessions."""
-    lp, tel = state.laps, state.telemetry
+    """Per-corner mistake counts for the pair across the LOADED sessions.
+
+    Same result as corner_features_for_session + aggregate_mistakes on the
+    pair, assembled per driver: a driver's corner features in a session
+    don't depend on who they're paired with, so each driver's rows are cached
+    (per data generation) and only a newly picked driver is computed. Their
+    telemetry comes from the shared row index, in the frame's original row
+    order — masking the 5M-row frame per session cost ~3 s each."""
+    lp = state.laps
+    tel, index = tel_index.snapshot()
     if lp is None or lp.empty or tel is None or tel.empty:
         return pd.DataFrame()
     fracs = load_corner_fractions(ctx["event"], ctx["season"])
     if fracs.empty:
         return pd.DataFrame()
+    fkey = (tuple(fracs["label"].astype(str)), tuple(fracs["frac"].astype(float)))
+    if len(_LIVE_FEATS) > 400:
+        _LIVE_FEATS.clear()
     parts = []
     for sess, g in lp.groupby("session_name"):
-        tl = tel[tel["session_name"] == sess]
-        if tl.empty:
+        # the pair's analysable laps, grouped exactly as
+        # corner_features_for_session groups them (stripped DriverNo, sorted)
+        lp_s = g[pd.to_numeric(g["LapTime_s"], errors="coerce") > 0]
+        lp_s = lp_s[lp_s["Driver_Short"].isin([a, b])]
+        rows = []
+        for dno, gd in lp_s.groupby(lp_s["DriverNo"].astype(str).str.strip()):
+            if (sess, dno) not in index:
+                continue                     # no telemetry for this driver
+            key = (state.DATA_GENERATION, sess, dno, fkey)
+            if key not in _LIVE_FEATS:
+                pool = tel.iloc[np.sort(index[(sess, dno)][0])]
+                _LIVE_FEATS[key] = driver_feature_rows(gd, pool, fracs)
+            rows.extend(_LIVE_FEATS[key])
+        if not rows:
             continue
-        feats = corner_features_for_session(g, tl, fracs, drivers=[a, b])
-        agg, _ = aggregate_mistakes(feats, g)
+        agg, _ = aggregate_mistakes(pd.DataFrame(rows), g)
         if not agg.empty:
             agg["session"] = str(sess).split("_")[0]
             parts.append(agg)
@@ -1379,11 +1405,68 @@ def render_duel(a, b):
 
     global LAST_PAIR
     LAST_PAIR = (a, b)
+    from time import perf_counter
+    t0 = perf_counter()
+    out, how = _duel_body(a, b, ctx, roster)
+    print(f"render duel {a} vs {b}: {how} in "
+          f"{(perf_counter()-t0)*1000:.0f} ms", flush=True)
+    return out
 
+
+# One build per pair at a time: the background prewarm builds the default
+# pair, and a user opening the tab meanwhile joins that build instead of
+# starting a competing one.
+_BODY_INFLIGHT: dict = {}
+_BODY_LOCK = threading.Lock()
+
+
+def duel_body(a: str, b: str, ctx: dict, roster: pd.DataFrame):
+    """The DUEL battle plan for (attacker a, target b), cached per data
+    generation. Unlike render_duel it never touches LAST_PAIR, so the
+    prewarm can build the default pair without moving the QUALI replay."""
+    return _duel_body(a, b, ctx, roster)[0]
+
+
+def _duel_body(a, b, ctx, roster):
+    """(body, how) — how ∈ {"cache hit", "built", "joined"}."""
     key = (a, b, state.DATA_GENERATION)
-    if key in _BODY_CACHE:
-        return _BODY_CACHE[key]
+    with _BODY_LOCK:
+        if key in _BODY_CACHE:
+            return _BODY_CACHE[key], "cache hit"
+        ev = _BODY_INFLIGHT.get(key)
+        owner = ev is None
+        if owner:
+            ev = _BODY_INFLIGHT[key] = threading.Event()
+    if not owner:
+        ev.wait(timeout=300)
+        hit = _BODY_CACHE.get(key)
+        if hit is not None:
+            return hit, "joined"
+        return _build_body(a, b, ctx, roster, key), "built"   # owner failed
+    try:
+        return _build_body(a, b, ctx, roster, key), "built"
+    finally:
+        with _BODY_LOCK:
+            _BODY_INFLIGHT.pop(key, None)
+        ev.set()
 
+
+def prewarm_default_body() -> str | None:
+    """Build the default pair's battle plan ahead of the first visit (called
+    from app.py's background tab prewarm) — the DUEL layout itself is cheap,
+    the body behind it is the 5-30 s part. Returns how it was obtained
+    ("built" / "joined" / "cache hit"), None when there is no pair."""
+    ctx = _event_context()
+    roster = _roster()
+    if ctx is None or roster.empty:
+        return None
+    a, b = _default_pair(ctx, roster)
+    if not a or not b or a == b:
+        return None
+    return _duel_body(a, b, ctx, roster)[1]
+
+
+def _build_body(a, b, ctx, roster, key):
     ta, tb, ca, cb = _pair_colors(a, b, roster)
 
     # championship context
@@ -1465,7 +1548,8 @@ def render_duel(a, b):
                   ctx, a, b, ta, tb, ca, cb)
 
     out = html.Div(sections)
-    _BODY_CACHE[key] = out
-    while len(_BODY_CACHE) > 8:
-        _BODY_CACHE.pop(next(iter(_BODY_CACHE)))
+    with _BODY_LOCK:
+        _BODY_CACHE[key] = out
+        while len(_BODY_CACHE) > 8:
+            _BODY_CACHE.pop(next(iter(_BODY_CACHE)))
     return out

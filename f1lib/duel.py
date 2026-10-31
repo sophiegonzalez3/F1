@@ -226,6 +226,10 @@ def h2h_record(a: str, b: str, circuit: str | None = None,
     finished = s.str.startswith("Finished") | s.str.match(r"^\+\d") \
         | s.str.contains("Lap", na=False)
     r = r.assign(_fin=finished)
+    # Only the pair's rows can matter (each weekend looks up a and b alone);
+    # filtering first keeps their order, so the result is unchanged and the
+    # loop runs over a few hundred rows instead of the whole archive.
+    r = r[r["Abbreviation"].isin([a, b])]
 
     for (season, rnd), g in r.groupby(["season", "round_number"]):
         ra = g[g["Abbreviation"] == a]
@@ -252,6 +256,7 @@ def h2h_record(a: str, b: str, circuit: str | None = None,
         if seasons:
             q = q[q["season"].isin(seasons)]
         q = _filter_circuit(q, circuit)
+        q = q[q["Abbreviation"].isin([a, b])]          # same reason as above
         for (season, rnd), g in q.groupby(["season", "round_number"]):
             qa = g[g["Abbreviation"] == a]
             qb = g[g["Abbreviation"] == b]
@@ -637,11 +642,33 @@ def load_mistakes(circuit: str | None = None,
     """
     if not MISTAKES_ALL.exists():
         return pd.DataFrame()
-    d = pd.read_parquet(MISTAKES_ALL)
-    d = _filter_circuit(d, circuit, event_col="meeting")
+    raw, with_cid = _mistakes_archive()
+    if circuit and not raw.empty and "meeting" in raw.columns:
+        d = with_cid[with_cid["circuit_id"] == circuit]
+    else:
+        d = raw
     if drivers:
         d = d[d["Driver_Short"].isin(drivers)]
-    return d
+    return d.copy()
+
+
+_MISTAKES_MEMO: tuple = (None, None, None)   # (file stamp, raw, raw+circuit_id)
+
+
+def _mistakes_archive() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """The mistakes archive as read from disk, and the same frame with
+    `circuit_id` attached (what _filter_circuit builds) — memoised on the
+    file's mtime+size. The DUEL tab reads it four times per pair, and
+    resolving a circuit for every row of it was ~1 s each time."""
+    global _MISTAKES_MEMO
+    st = MISTAKES_ALL.stat()
+    stamp = (st.st_mtime, st.st_size)
+    if _MISTAKES_MEMO[0] != stamp:
+        raw = pd.read_parquet(MISTAKES_ALL)
+        with_cid = (add_circuit_id(raw, event_col="meeting")
+                    if not raw.empty and "meeting" in raw.columns else raw)
+        _MISTAKES_MEMO = (stamp, raw, with_cid)
+    return _MISTAKES_MEMO[1], _MISTAKES_MEMO[2]
 
 
 def load_pressure(drivers: list[str] | None = None) -> pd.DataFrame:

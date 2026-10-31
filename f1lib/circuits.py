@@ -261,8 +261,23 @@ def add_circuit_id(df: pd.DataFrame,
         return out
     seasons = (out[season_col] if season_col in out.columns
                else pd.Series([None] * len(out), index=out.index))
+    # circuit_id is pure, and an archive has only a few hundred distinct
+    # (event, season) pairs across 100k+ rows — resolve each pair once
+    # (per-row resolution was ~5 s per call on the mistakes archive).
+    memo: dict = {}
+
+    def _cid(e, s):
+        k = (e, s)
+        try:
+            return memo[k]
+        except KeyError:
+            v = memo[k] = circuit_id(e, s)
+            return v
+        except TypeError:                    # unhashable cell — no memo
+            return circuit_id(e, s)
+
     out[out_col] = [
-        circuit_id(e, s if pd.notna(s) else None)
+        _cid(e, s if pd.notna(s) else None)
         for e, s in zip(out[event_col], seasons)
     ]
     return out

@@ -120,6 +120,14 @@ def _same_circuit_maps(event_name: str, season: int | None,
     Anniversary map is usable for the British GP, and Barcelona's 2026
     "Barcelona Grand Prix" map for the pre-2026 "Spanish Grand Prix".
     """
+    try:
+        dir_stamp = TRACK_MAPS_DIR.stat().st_mtime
+    except OSError:
+        dir_stamp = None
+    key = (event_name, season, pattern, dir_stamp)
+    hit = _MAPS_MEMO.get(key)
+    if hit is not None:
+        return list(hit)
     target = circuit_id(event_name, season)
     out: list[tuple[int, Path]] = []
     for p in TRACK_MAPS_DIR.glob(pattern):
@@ -129,7 +137,39 @@ def _same_circuit_maps(event_name: str, season: int | None,
         f_season, f_slug = parsed
         if circuit_id(f_slug, f_season) == target:
             out.append((f_season, p))
-    return sorted(out)
+    out = sorted(out)
+    if len(_MAPS_MEMO) > 512:
+        _MAPS_MEMO.clear()
+    _MAPS_MEMO[key] = tuple(out)
+    return out
+
+
+# Track-map lookups are pure functions of the files on disk. The DUEL tab
+# asks for ~25 circuits' maps per pair (corner_type_profile), each a glob of
+# the map folder plus parquet reads, so both levels are memoised: the glob on
+# the folder's mtime (a new map file changes it), and each loaded frame on
+# the mtimes of the files it was read from (a map rewritten in place too).
+_MAPS_MEMO: dict = {}
+_FRAME_MEMO: dict = {}
+
+
+def _file_stamp(*paths: Path) -> tuple:
+    out = []
+    for p in paths:
+        try:
+            out.append((str(p), p.stat().st_mtime))
+        except OSError:
+            out.append((str(p), None))
+    return tuple(out)
+
+
+def _memo_frame(key: tuple, build):
+    hit = _FRAME_MEMO.get(key)
+    if hit is None:
+        if len(_FRAME_MEMO) > 256:
+            _FRAME_MEMO.clear()
+        hit = _FRAME_MEMO[key] = build()
+    return hit.copy()
 
 
 def load_corner_fractions(event_name: str,
@@ -153,13 +193,17 @@ def load_corner_fractions(event_name: str,
     line_path = Path(str(pick).replace("_corners.parquet", ".parquet"))
     if not line_path.exists():
         return pd.DataFrame()
-    try:
-        corners = pd.read_parquet(pick)
-        line = pd.read_parquet(line_path)
-    except Exception as exc:
-        logger.warning("track map read failed for %s: %s", event_name, exc)
-        return pd.DataFrame()
-    return corner_fractions_from_geometry(line, corners)
+
+    def _build():
+        try:
+            corners = pd.read_parquet(pick)
+            line = pd.read_parquet(line_path)
+        except Exception as exc:
+            logger.warning("track map read failed for %s: %s", event_name, exc)
+            return pd.DataFrame()
+        return corner_fractions_from_geometry(line, corners)
+
+    return _memo_frame(("fracs",) + _file_stamp(Path(pick), line_path), _build)
 
 
 def load_track_line(event_name: str, season: int | None = None) -> pd.DataFrame:
@@ -176,6 +220,12 @@ def load_track_line(event_name: str, season: int | None = None) -> pd.DataFrame:
         pick = same[-1] if same else None
     if pick is None:
         pick = cands[-1][1]
+    meta = Path(str(pick).replace(".parquet", ".json"))
+    return _memo_frame(("line",) + _file_stamp(Path(pick), meta),
+                       lambda: _read_track_line(pick, meta))
+
+
+def _read_track_line(pick: Path, meta: Path) -> pd.DataFrame:
     try:
         line = pd.read_parquet(pick)
     except Exception:
@@ -188,7 +238,6 @@ def load_track_line(event_name: str, season: int | None = None) -> pd.DataFrame:
     line = line.copy()
     line["frac"] = cum / total if total > 0 else 0.0
     # rotation lives in the meta json next to the line parquet
-    meta = Path(str(pick).replace(".parquet", ".json"))
     rot = 0.0
     if meta.exists():
         try:
@@ -298,39 +347,50 @@ def corner_features_for_session(laps: pd.DataFrame, telemetry: pd.DataFrame,
         pool = tel[tel["DriverNo"].astype(str).str.strip() == dno]
         if pool.empty:
             continue
-        pool = pool.sort_values("timestamp")
-        ts = pool["timestamp"].to_numpy(float)
-        spd_all = pd.to_numeric(pool["Speed"], errors="coerce").to_numpy(float)
-        thr_all = (pd.to_numeric(pool["Throttle"], errors="coerce").to_numpy(float)
-                   if "Throttle" in pool.columns else None)
-        brk_all = (pd.to_numeric(pool["Brake"], errors="coerce").fillna(0)
-                   .to_numpy(float) if "Brake" in pool.columns else None)
-        drv = g["Driver_Short"].iloc[0]
-        team = g["Team"].iloc[0] if "Team" in g.columns else ""
-        for _, lap in g.iterrows():
-            start = pd.to_numeric(lap.get("LapStartTime"), errors="coerce")
-            dur = pd.to_numeric(lap.get("LapTime_s"), errors="coerce")
-            if not (np.isfinite(start) and np.isfinite(dur)):
-                continue
-            i0, i1 = np.searchsorted(ts, [start, start + dur])
-            if i1 - i0 < 20:
-                continue
-            t_rel = ts[i0:i1] - start
-            spd = spd_all[i0:i1]
-            # distance by integrating speed (km/h → m/s), same as the
-            # telemetry tab
-            v = np.nan_to_num(spd, nan=0.0) * (1000.0 / 3600.0)
-            dt = np.diff(t_rel)
-            dist = np.concatenate([[0.0], np.cumsum((v[1:] + v[:-1]) / 2 * dt)])
-            feats = _lap_corner_features(
-                t_rel, dist, spd,
-                thr_all[i0:i1] if thr_all is not None else None,
-                brk_all[i0:i1] if brk_all is not None else None, fracs)
-            for f in feats:
-                f.update({"Driver_Short": drv, "Team": team,
-                          "LapNo": int(lap["LapNo"])})
-            rows.extend(feats)
+        rows.extend(driver_feature_rows(g, pool, fracs))
     return pd.DataFrame(rows)
+
+
+def driver_feature_rows(g: pd.DataFrame, pool: pd.DataFrame,
+                        fracs: pd.DataFrame) -> list[dict]:
+    """corner_features_for_session's rows for ONE driver: `g` that driver's
+    laps (LapTime_s > 0), `pool` their telemetry for the session. Split out so
+    a caller can cache one driver's rows (the DUEL tab: a driver's features
+    don't depend on who they are paired with)."""
+    rows = []
+    pool = pool.sort_values("timestamp")
+    ts = pool["timestamp"].to_numpy(float)
+    spd_all = pd.to_numeric(pool["Speed"], errors="coerce").to_numpy(float)
+    thr_all = (pd.to_numeric(pool["Throttle"], errors="coerce").to_numpy(float)
+               if "Throttle" in pool.columns else None)
+    brk_all = (pd.to_numeric(pool["Brake"], errors="coerce").fillna(0)
+               .to_numpy(float) if "Brake" in pool.columns else None)
+    drv = g["Driver_Short"].iloc[0]
+    team = g["Team"].iloc[0] if "Team" in g.columns else ""
+    for _, lap in g.iterrows():
+        start = pd.to_numeric(lap.get("LapStartTime"), errors="coerce")
+        dur = pd.to_numeric(lap.get("LapTime_s"), errors="coerce")
+        if not (np.isfinite(start) and np.isfinite(dur)):
+            continue
+        i0, i1 = np.searchsorted(ts, [start, start + dur])
+        if i1 - i0 < 20:
+            continue
+        t_rel = ts[i0:i1] - start
+        spd = spd_all[i0:i1]
+        # distance by integrating speed (km/h → m/s), same as the
+        # telemetry tab
+        v = np.nan_to_num(spd, nan=0.0) * (1000.0 / 3600.0)
+        dt = np.diff(t_rel)
+        dist = np.concatenate([[0.0], np.cumsum((v[1:] + v[:-1]) / 2 * dt)])
+        feats = _lap_corner_features(
+            t_rel, dist, spd,
+            thr_all[i0:i1] if thr_all is not None else None,
+            brk_all[i0:i1] if brk_all is not None else None, fracs)
+        for f in feats:
+            f.update({"Driver_Short": drv, "Team": team,
+                      "LapNo": int(lap["LapNo"])})
+        rows.extend(feats)
+    return rows
 
 
 # ─────────────────────────────────────────────────────────────

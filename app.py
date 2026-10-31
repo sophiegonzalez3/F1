@@ -369,9 +369,13 @@ def _build_memoized(tab, ss, sd, st, key, gen):
         ev.set()
 
 
-_PREWARM_TABS = ("tab-race", "tab-weekend", "tab-laps", "tab-teams",
-                 "tab-season", "tab-stints", "tab-quali", "tab-track",
-                 "tab-duel", "tab-context")
+# tab-duel sits right after tab-weekend: its layout is trivial, but the sweep
+# also builds the default pair's battle plan (the DUEL body, normally built by
+# a callback after the layout lands — 5-30 s cold), and that reuses the
+# practice measurements tab-weekend has just cached.
+_PREWARM_TABS = ("tab-race", "tab-weekend", "tab-duel", "tab-laps",
+                 "tab-teams", "tab-season", "tab-stints", "tab-quali",
+                 "tab-track", "tab-context")
 _prewarm_seq = 0
 
 
@@ -388,6 +392,16 @@ def _schedule_tab_prewarm(ss, sd, st, skip=None, delay=0.75):
         for tab in _PREWARM_TABS:
             if my_seq != _prewarm_seq or gen != state.DATA_GENERATION:
                 return                     # superseded — stop the sweep
+            if tab == "tab-duel":
+                t0 = perf_counter()
+                try:
+                    import tabs.duel as _duel_mod
+                    how = _duel_mod.prewarm_default_body()
+                    if how and how != "cache hit":
+                        print(f"prewarm duel body: {how} in "
+                              f"{(perf_counter()-t0)*1000:.0f} ms", flush=True)
+                except Exception as exc:
+                    print(f"prewarm duel body: failed ({exc})", flush=True)
             if tab == skip:
                 continue
             key = _memo_key(tab, ss, sd, st)

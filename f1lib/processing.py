@@ -2022,15 +2022,20 @@ def enrich_weather(laps: pd.DataFrame, weather: pd.DataFrame) -> pd.DataFrame:
         # Save original index as a column so merge_asof's fresh RangeIndex
         # doesn't destroy it — merge_asof always returns a 0-based index.
         lap_sorted = lap_sub.sort_values("_lst_wx").reset_index(names=["_orig_idx"])
+        # merge_asof refuses null keys: laps without a LapStartTime (seen on
+        # Mexico 2026 FP) skip the join and keep NaN weather.
+        no_time = lap_sorted["_lst_wx"].isna()
 
         merged = pd.merge_asof(
-            lap_sorted,
+            lap_sorted[~no_time],
             wx_sub[["_wx_time_s"] + avail_wx].drop_duplicates("_wx_time_s"),
             left_on="_lst_wx",
             right_on="_wx_time_s",
             direction="backward",
             tolerance=300.0,   # 5 min gap tolerance
         )
+        if no_time.any():
+            merged = pd.concat([merged, lap_sorted[no_time]], ignore_index=True)
         merged = merged.drop(columns=["_wx_time_s"], errors="ignore")
         # Restore the original index and row order
         merged = merged.set_index("_orig_idx")

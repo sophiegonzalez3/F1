@@ -105,7 +105,93 @@ def flag_race_drivers(df: pd.DataFrame,
             continue                        # fail open for this season
         m = seasons == season
         out.loc[m] = codes[m].isin(roster)
+
+    # A substitute who took a race seat mid-season is not a tester, whatever
+    # the season roster says (see `substitutes`).
+    if {"meeting", "session"}.issubset(df.columns):
+        cand = ~out
+        for (season, meeting), g in df[cand].groupby(
+                [seasons[cand], df.loc[cand, "meeting"]]):
+            subs = substitutes(int(season), meeting)
+            for session, s_codes in subs.items():
+                hit = g.index[(g["session"] == session)
+                              & codes[g.index].isin(s_codes)]
+                out.loc[hit] = True
     return out
+
+
+# Order of the sessions inside one weekend; Practice 3 and the sprint
+# qualifying never share a weekend, so they can share a slot.
+_SESSION_ORDER = {"Practice 1": 1, "Practice 2": 2, "Practice 3": 3,
+                  "Sprint Qualifying": 3, "Sprint Shootout": 3, "Sprint": 4,
+                  "Qualifying": 5, "Race": 6}
+_COMPETITIVE = {"Sprint Qualifying", "Sprint Shootout", "Sprint",
+                "Qualifying", "Race"}
+_SUBS_CACHE: dict = {}
+
+
+def substitutes(season: int, meeting: str) -> dict[str, frozenset[str]]:
+    """{session: codes} of off-roster drivers who raced a car at this event.
+
+    driver_info.csv is per SEASON, but a seat can change hands mid-weekend:
+    Mexico 2026, Haas dropped Ocon after FP2 and Hirakawa — a reserve who had
+    already done rookie FP1 outings in Austria and Hungary — ran FP3,
+    qualifying and the race. Adding him to the season roster would wrongly
+    count those FP1s; leaving him off classed his race-seat laps as a tester's
+    and moved every team's field-relative number (failure mode 9).
+
+    So the rule is per event, from the session results on disk: an off-roster
+    driver who appears in a competitive session (qualifying, sprint, race) is a
+    race driver in every session AFTER the last one driven by the rostered
+    team-mate he replaced (Mexico: FP3 onwards, FP1 stays a rookie outing).
+    Before qualifying is cached nothing changes, so a Friday rookie outing is
+    never promoted.
+    """
+    from f1lib.config import SESSIONS_DIR
+    from f1lib.data_loader import _sanitize
+    roster = race_drivers(season)
+    if roster is None:
+        return {}
+    base = Path(SESSIONS_DIR)
+    files = {s: base / f"{_sanitize(season)}__{_sanitize(meeting)}"
+                       f"__{_sanitize(s)}__results.parquet"
+             for s in _SESSION_ORDER}
+    files = {s: p for s, p in files.items() if p.exists()}
+    key = (season, meeting, tuple(sorted(files)))
+    if key in _SUBS_CACHE:
+        return _SUBS_CACHE[key]
+
+    entries: dict[str, pd.DataFrame] = {}
+    for s, p in files.items():
+        try:
+            r = pd.read_parquet(p, columns=["Abbreviation", "TeamName"])
+        except Exception:
+            continue
+        r["Abbreviation"] = r["Abbreviation"].astype(str).str.strip().str.upper()
+        entries[s] = r
+    competitive = {c for s, r in entries.items() if s in _COMPETITIVE
+                   for c in r["Abbreviation"]}
+
+    out: dict[str, set[str]] = {}
+    for s, r in entries.items():
+        if s not in _COMPETITIVE:
+            continue
+        for code, team in zip(r["Abbreviation"], r["TeamName"]):
+            if code in roster:
+                continue
+            # the rostered team-mate(s) who drove this weekend but no longer race
+            replaced_last = max(
+                (_SESSION_ORDER[s2] for s2, r2 in entries.items()
+                 if ((r2["TeamName"] == team) & r2["Abbreviation"].isin(roster)
+                     & ~r2["Abbreviation"].isin(competitive)).any()),
+                default=0)
+            for s2, r2 in entries.items():
+                if (_SESSION_ORDER[s2] > replaced_last
+                        and code in set(r2["Abbreviation"])):
+                    out.setdefault(s2, set()).add(code)
+    result = {s: frozenset(c) for s, c in out.items()}
+    _SUBS_CACHE[key] = result
+    return result
 
 
 def non_race_drivers_in(df: pd.DataFrame,

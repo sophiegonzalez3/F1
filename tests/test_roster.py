@@ -126,3 +126,44 @@ def test_driver_info_covers_the_current_season():
     assert CURRENT_SEASON in known_seasons(), (
         f"data/driver_info.csv has no {CURRENT_SEASON} roster — test drivers "
         "will no longer be filtered out")
+
+
+# ── a race seat changing hands mid-weekend ───────────────────
+
+def _results(path, rows):
+    pd.DataFrame(rows, columns=["Abbreviation", "TeamName"]).to_parquet(path)
+
+
+def test_substitute_counts_from_the_session_after_the_replaced_driver(
+        tmp_path, monkeypatch):
+    """Mexico 2026: Hirakawa (off-roster) did the rookie FP1 in Ocon's Haas,
+    Ocon drove FP2, then Hirakawa replaced him for FP3, qualifying and the
+    race. FP1 stays a tester's outing; FP3 onwards are race-seat laps."""
+    import f1lib.config as cfg
+    from f1lib import roster
+    monkeypatch.setattr(cfg, "SESSIONS_DIR", str(tmp_path))
+    roster._SUBS_CACHE.clear()
+    stem = "2026__Test_Grand_Prix__"
+    haas = "Haas F1 Team"
+    _results(tmp_path / f"{stem}Practice_1__results.parquet",
+             [("BEA", haas), ("HIR", haas), ("VER", "Red Bull Racing")])
+    _results(tmp_path / f"{stem}Practice_2__results.parquet",
+             [("BEA", haas), ("OCO", haas), ("VER", "Red Bull Racing")])
+    _results(tmp_path / f"{stem}Practice_3__results.parquet",
+             [("BEA", haas), ("HIR", haas), ("VER", "Red Bull Racing")])
+
+    # before qualifying is cached a Friday rookie is never promoted
+    assert roster.substitutes(2026, "Test Grand Prix") == {}
+
+    _results(tmp_path / f"{stem}Qualifying__results.parquet",
+             [("BEA", haas), ("HIR", haas), ("VER", "Red Bull Racing")])
+    subs = roster.substitutes(2026, "Test Grand Prix")
+    assert subs == {"Practice 3": {"HIR"}, "Qualifying": {"HIR"}}
+
+    laps = pd.DataFrame({
+        "Driver_Short": ["HIR", "HIR", "HIR", "IWA"],
+        "season": [2026] * 4,
+        "meeting": ["Test Grand Prix"] * 4,
+        "session": ["Practice 1", "Practice 3", "Qualifying", "Practice 3"],
+    })
+    assert flag_race_drivers(laps).tolist() == [False, True, True, False]

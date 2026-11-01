@@ -390,8 +390,11 @@ def parse_ts(v) -> datetime | None:
 # regress. The codes mostly prefix their event's first word ("DUT"->"Dutch");
 # _VENUE_ALIASES holds the few that don't (Kalshi uses AUT for Austria to keep
 # it distinct from Australia's AUS).
-_VENUE_RE = re.compile(r"-([A-Z]{2,4})GP\d{2}")
-_VENUE_ALIASES = {"aut": "austrian"}
+# Since Bahrain 2026 Kalshi drops the "GP" ("KXF1RACE-MEX26", "-UNIS26"), so it
+# is optional: missing it sent Bahrain's book to Singapore and Mexico's to São
+# Paulo through the provisional-settlement date match described above.
+_VENUE_RE = re.compile(r"-([A-Z]{2,4}?)(?:GP)?\d{2}")
+_VENUE_ALIASES = {"aut": "austrian", "unis": "united"}
 
 
 def _event_first_word(event: str) -> str:

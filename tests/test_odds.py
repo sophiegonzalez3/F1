@@ -189,6 +189,27 @@ def test_venue_code_beats_a_far_provisional_settlement_date():
     assert zzz[2] == "Italian Grand Prix", f"got {zzz[2]}"
 
 
+def test_venue_code_without_gp_suffix():
+    """Since Bahrain 2026 Kalshi drops the "GP" from its tickers. Missing that
+    filed the live Mexico book (provisional close 2026-11-09) under São Paulo
+    and Bahrain's under Singapore."""
+    cal = load_calendar()
+    if cal.empty:
+        pytest.skip("season_calendar.csv not present")
+    names = set(cal[cal["season"].astype(int) == 2026]["event"])
+    if not {"Mexico City Grand Prix", "United States Grand Prix"} <= names:
+        pytest.skip("2026 Mexico / US GP not in calendar")
+    from datetime import datetime, timezone
+    near_sao_paulo = datetime(2026, 11, 9, 2, 0, tzinfo=timezone.utc)
+    mex = resolve_event(near_sao_paulo, "Mexico Grand Prix 2026", "", cal,
+                        event_ticker="KXF1RACE-MEX26")
+    assert mex[2] == "Mexico City Grand Prix", f"got {mex[2]}"
+    # UNIS is not a prefix of "United": it needs the alias
+    us = resolve_event(near_sao_paulo, "", "", cal,
+                       event_ticker="KXF1RACEPODIUM-UNIS26")
+    assert us[2] == "United States Grand Prix", f"got {us[2]}"
+
+
 # ─────────────────────────────────────────────────────────────
 # the lock-time trap
 # ─────────────────────────────────────────────────────────────
